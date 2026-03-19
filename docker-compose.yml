@@ -1,0 +1,149 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      FINDVERSE_API_BIND: 0.0.0.0:8080
+      FINDVERSE_INDEX_PATH: /data/bootstrap_documents.json
+      FINDVERSE_DEVELOPER_STORE: /data/developer_store.json
+      FINDVERSE_CRAWLER_STORE: /data/crawler_store.json
+      FINDVERSE_FRONTEND_ORIGIN: http://localhost:${FINDVERSE_WEB_PORT:-3000}
+    ports:
+      - "${FINDVERSE_API_PORT:-8080}:8080"
+    volumes:
+      - api_data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_FINDVERSE_API_URL: http://api:8080
+      AUTH_SECRET: ${AUTH_SECRET:-replace-me}
+      FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
+      FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
+    ports:
+      - "${FINDVERSE_WEB_PORT:-3000}:3000"
+
+  crawler-worker:
+    build:
+      context: .
+      dockerfile: services/crawler/Dockerfile
+    profiles: ["crawler"]
+    restart: unless-stopped
+    depends_on:
+      - api
+    command:
+      - worker
+      - --server
+      - http://api:8080
+      - --crawler-id
+      - ${FINDVERSE_CRAWLER_ID:-missing-crawler-id}
+      - --crawler-key
+      - ${FINDVERSE_CRAWLER_KEY:-missing-crawler-key}
+      - --max-jobs
+      - "10"
+      - --poll-interval-secs
+      - "5"
+
+  postgres:
+    profiles: ["infra"]
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: findverse
+      POSTGRES_USER: findverse
+      POSTGRES_PASSWORD: findverse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  valkey:
+    profiles: ["infra"]
+    image: valkey/valkey:8.1
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  minio:
+    profiles: ["infra"]
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  opensearch:
+    profiles: ["infra"]
+    image: opensearchproject/opensearch:3.0.0
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: FindVerseAdmin123!
+      DISABLE_SECURITY_PLUGIN: "true"
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+
+  clickhouse:
+    profiles: ["infra"]
+    image: clickhouse/clickhouse-server:25.2
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+      - "9002:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  redpanda:
+    profiles: ["infra"]
+    image: redpandadata/redpanda:v25.1.1
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=0.0.0.0:9092
+      - --advertise-kafka-addr=redpanda:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --advertise-pandaproxy-addr=redpanda:8082
+    ports:
+      - "9092:9092"
+      - "8082:8082"
+      - "9644:9644"
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+
+volumes:
+  api_data:
+  postgres_data:
+  minio_data:
+  opensearch_data:
+  clickhouse_data:
+  redpanda_data:

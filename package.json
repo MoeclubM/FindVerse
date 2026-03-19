@@ -1,0 +1,24 @@
+{
+  "name": "findverse",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present && cargo build --workspace",
+    "build:web": "npm --workspace @findverse/web run build",
+    "build:contracts": "npm --workspace @findverse/contracts run build",
+    "dev:web": "npm --workspace @findverse/web run dev",
+    "lint:web": "npm --workspace @findverse/web run typecheck",
+    "typecheck:web": "npm --workspace @findverse/web run typecheck",
+    "test:e2e": "playwright test",
+    "test:e2e:podman": "powershell -ExecutionPolicy Bypass -File scripts/e2e-podman.ps1",
+    "test": "npm run test --workspaces --if-present && cargo test --workspace",
+    "format": "npm run format --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}

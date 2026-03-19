@@ -1,0 +1,9 @@
+seeds:
+  - name: Rust
+    url: https://www.rust-lang.org/
+    sitemap: https://www.rust-lang.org/sitemap.xml
+  - name: Next.js
+    url: https://nextjs.org/
+    sitemap: https://nextjs.org/sitemap.xml
+  - name: MDN Web Docs
+    url: https://developer.mozilla.org/
