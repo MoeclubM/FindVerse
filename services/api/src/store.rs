@@ -492,7 +492,7 @@ impl DeveloperStore {
 
     pub async fn validate_and_track(&self, auth_header: Option<&str>) -> Result<(), ApiError> {
         let Some(header) = auth_header else {
-            return Ok(());
+            return Err(ApiError::Unauthorized("api key required".to_string()));
         };
 
         let token_hash = bearer_hash(header)?;

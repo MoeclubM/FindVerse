@@ -23,9 +23,11 @@ import {
 } from "./api";
 
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
+const DEV_TOKEN_KEY = "findverse_dev_token";
 
 export function App() {
   const [path, setPath] = useState(() => window.location.pathname);
+  const [devToken, setDevToken] = useState<string | null>(() => localStorage.getItem(DEV_TOKEN_KEY));
 
   useEffect(() => {
     const onPopState = () => setPath(window.location.pathname);
@@ -33,14 +35,47 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  useEffect(() => {
+    if (!devToken && !path.startsWith("/dev") && !path.startsWith("/console")) {
+      navigate("/dev", setPath);
+    }
+  }, [devToken, path]);
+
+  function handleDevToken(token: string | null) {
+    if (token) {
+      localStorage.setItem(DEV_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(DEV_TOKEN_KEY);
+    }
+    setDevToken(token);
+  }
+
   if (path.startsWith("/console")) {
     return <ConsolePage onNavigateHome={() => navigate("/", setPath)} />;
   }
 
-  return <SearchPage onNavigateConsole={() => navigate("/console", setPath)} />;
+  if (path.startsWith("/dev") || !devToken) {
+    return (
+      <DevPortalPage
+        devToken={devToken}
+        onTokenChange={handleDevToken}
+        onNavigateSearch={() => navigate("/", setPath)}
+      />
+    );
+  }
+
+  return (
+    <SearchPage
+      devToken={devToken}
+      onTokenExpired={() => {
+        handleDevToken(null);
+        navigate("/dev", setPath);
+      }}
+    />
+  );
 }
 
-function SearchPage(props: { onNavigateConsole: () => void }) {
+function SearchPage(props: { devToken: string; onTokenExpired: () => void }) {
   const [query, setQuery] = useState(currentSearchQuery);
   const [submittedQuery, setSubmittedQuery] = useState(currentSearchQuery);
   const [results, setResults] = useState<Awaited<ReturnType<typeof search>> | null>(null);
@@ -58,16 +93,20 @@ function SearchPage(props: { onNavigateConsole: () => void }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    search(submittedQuery)
+    search(submittedQuery, props.devToken)
       .then((response) => {
         if (!cancelled) {
           setResults(response);
         }
       })
-      .catch((nextError: Error) => {
+      .catch((nextError: Error & { status?: number }) => {
         if (!cancelled) {
-          setError(nextError.message);
-          setResults(null);
+          if (nextError.status === 401) {
+            props.onTokenExpired();
+          } else {
+            setError(nextError.message);
+            setResults(null);
+          }
         }
       })
       .finally(() => {
@@ -93,9 +132,6 @@ function SearchPage(props: { onNavigateConsole: () => void }) {
 
   return (
     <div className="search-shell">
-      <button className="console-link" type="button" onClick={props.onNavigateConsole}>
-        Console
-      </button>
       <main className={hasResults ? "search-page search-page-top" : "search-page"}>
         {!hasResults && <h1 className="search-brand">FindVerse</h1>}
         <form className="search-form" onSubmit={handleSubmit}>
@@ -126,6 +162,78 @@ function SearchPage(props: { onNavigateConsole: () => void }) {
             ))}
           </section>
         ) : null}
+      </main>
+    </div>
+  );
+}
+
+function DevPortalPage(props: {
+  devToken: string | null;
+  onTokenChange: (token: string | null) => void;
+  onNavigateSearch: () => void;
+}) {
+  const [inputKey, setInputKey] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const key = inputKey.trim();
+    if (!key.startsWith("fvk_") || key.length < 12) {
+      setInputError("Invalid key format — keys start with fvk_");
+      return;
+    }
+    setInputError(null);
+    props.onTokenChange(key);
+    props.onNavigateSearch();
+  }
+
+  if (props.devToken) {
+    const preview = `${props.devToken.slice(0, 8)}...${props.devToken.slice(-4)}`;
+    return (
+      <div className="console-page">
+        <header className="console-topbar">
+          <strong>FindVerse Developer</strong>
+          <div className="topbar-actions">
+            <button type="button" className="plain-link" onClick={props.onNavigateSearch}>
+              Search
+            </button>
+            <button type="button" className="plain-link" onClick={() => props.onTokenChange(null)}>
+              Sign out
+            </button>
+          </div>
+        </header>
+        <main className="console-login">
+          <h1>API access</h1>
+          <p>Active key: <code>{preview}</code></p>
+          <p>Use as a Bearer token to call the search API:</p>
+          <pre>{`GET /api/v1/search?q=your+query\nAuthorization: Bearer fvk_...`}</pre>
+          <button type="button" onClick={props.onNavigateSearch}>
+            Go to search
+          </button>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="console-page">
+      <header className="console-topbar">
+        <strong>FindVerse Developer Portal</strong>
+      </header>
+      <main className="console-login">
+        <h1>Sign in</h1>
+        <form onSubmit={handleSubmit}>
+          <input
+            value={inputKey}
+            onChange={(e) => setInputKey(e.target.value)}
+            placeholder="fvk_..."
+            spellCheck={false}
+            autoComplete="off"
+          />
+          <button type="submit">Sign in</button>
+        </form>
+        {inputError ? <p className="search-error">{inputError}</p> : null}
+        <p className="dev-hint">Don't have an API key? Contact the administrator.</p>
       </main>
     </div>
   );

@@ -25,7 +25,10 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByPlaceholder("Key name").fill("E2E key");
   await page.getByRole("button", { name: "Create" }).first().click();
-  await expect(page.locator("pre").filter({ hasText: "fvk_" }).first()).toBeVisible();
+  const apiKeyEl = page.locator("pre").filter({ hasText: "fvk_" }).first();
+  await expect(apiKeyEl).toBeVisible();
+  const apiKey = (await apiKeyEl.textContent())?.trim();
+  expect(apiKey).toBeTruthy();
 
   await page.getByRole("button", { name: "Workers" }).click();
   await page.getByPlaceholder("Crawler name").fill("e2e-worker");
@@ -76,6 +79,7 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
   await page.getByRole("button", { name: "Workers" }).click();
   await expect(page.getByText(/claimed 1, reported 1/i)).toBeVisible();
 
+  await page.evaluate((token) => localStorage.setItem("findverse_dev_token", token), apiKey!);
   await page.goto("/?q=Example%20Domain");
   await expect(page.getByRole("link", { name: "Example Domain" }).first()).toBeVisible();
 });

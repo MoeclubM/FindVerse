@@ -130,16 +130,6 @@ a {
   margin: 8px 0 0;
 }
 
-.console-link {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  border: 0;
-  background: transparent;
-  color: #666666;
-  cursor: pointer;
-}
-
 .console-page {
   min-height: 100vh;
   background: #f7f7f7;
@@ -199,6 +189,12 @@ a {
   padding: 24px;
   border: 1px solid #e4e4e4;
   background: #ffffff;
+}
+
+.dev-hint {
+  margin-top: 16px;
+  color: #666666;
+  font-size: 14px;
 }
 
 .console-login form,

@@ -110,7 +110,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed with ${response.status}`);
+    const error = new Error(text || `Request failed with ${response.status}`);
+    (error as Error & { status: number }).status = response.status;
+    throw error;
   }
 
   if (response.status === 204) {
@@ -120,8 +122,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return (await response.json()) as T;
 }
 
-export function search(query: string) {
-  return request<SearchResponse>(`/v1/search?q=${encodeURIComponent(query)}`);
+export function search(query: string, apiKey: string) {
+  return request<SearchResponse>(`/v1/search?q=${encodeURIComponent(query)}`, { token: apiKey });
 }
 
 export function login(username: string, password: string) {
