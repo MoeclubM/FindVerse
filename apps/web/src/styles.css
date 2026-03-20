@@ -70,7 +70,7 @@ a {
 }
 
 .search-form input,
-.admin-login input,
+.console-login input,
 .inline-form input,
 .panel textarea {
   width: 100%;
@@ -88,7 +88,7 @@ a {
 }
 
 .search-form button,
-.admin-login button,
+.console-login button,
 .panel button {
   min-height: 48px;
   border: 1px solid #111111;
@@ -101,7 +101,7 @@ a {
 
 .search-meta,
 .result-url,
-.admin-topbar span,
+.console-topbar span,
 .list-row div {
   color: #666666;
 }
@@ -130,7 +130,7 @@ a {
   margin: 8px 0 0;
 }
 
-.admin-link {
+.console-link {
   position: absolute;
   top: 16px;
   right: 16px;
@@ -140,12 +140,12 @@ a {
   cursor: pointer;
 }
 
-.admin-page {
+.console-page {
   min-height: 100vh;
   background: #f7f7f7;
 }
 
-.admin-topbar {
+.console-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -153,6 +153,29 @@ a {
   padding: 16px 24px;
   border-bottom: 1px solid #e4e4e4;
   background: #ffffff;
+}
+
+.console-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid #e4e4e4;
+  background: #ffffff;
+}
+
+.console-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 12px 16px;
+  color: #666666;
+  cursor: pointer;
+  font: inherit;
+}
+
+.console-tabs button.active {
+  color: #111111;
+  border-bottom-color: #111111;
 }
 
 .topbar-actions {
@@ -170,7 +193,7 @@ a {
   padding: 0;
 }
 
-.admin-login {
+.console-login {
   width: min(420px, calc(100% - 32px));
   margin: 80px auto;
   padding: 24px;
@@ -178,13 +201,13 @@ a {
   background: #ffffff;
 }
 
-.admin-login form,
+.console-login form,
 .panel form {
   display: grid;
   gap: 10px;
 }
 
-.admin-loading {
+.console-loading {
   min-height: 100vh;
   display: grid;
   place-items: center;
@@ -197,7 +220,7 @@ a {
   background: #ffffff;
 }
 
-.admin-grid {
+.console-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
@@ -295,7 +318,7 @@ pre {
 }
 
 @media (max-width: 960px) {
-  .admin-grid,
+  .console-grid,
   .stats-grid {
     grid-template-columns: 1fr;
   }
@@ -306,12 +329,12 @@ pre {
     flex-direction: column;
   }
 
-  .admin-topbar {
+  .console-topbar {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .admin-grid {
+  .console-grid {
     padding-left: 12px;
     padding-right: 12px;
   }

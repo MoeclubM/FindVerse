@@ -10,8 +10,8 @@ FindVerse is now split into three runtime modules and one docs module:
 ## Current product shape
 
 - Home page: one flat search bar and search results
-- Admin panel: `/admin`
-- Admin features:
+- Console: `/console`
+- Console features:
   - local username/password login
   - API key management
   - crawler credential management
@@ -71,13 +71,9 @@ FindVerse is now split into three runtime modules and one docs module:
 4. Open:
 
    - search: `http://127.0.0.1:3000/`
-   - admin: `http://127.0.0.1:3000/admin`
+   - console: `http://127.0.0.1:3000/console`
 
-5. Run a crawler worker after creating a crawler credential:
-
-   ```powershell
-   cargo run -p findverse-crawler -- worker --server http://127.0.0.1:8080 --crawler-id YOUR_ID --crawler-key YOUR_KEY
-   ```
+5. Set up a crawler worker — see [docs/deployment.md](docs/deployment.md) for the complete guide covering credential creation, local and Docker Compose workflows, URL seeding, and verification.
 
 6. Or run the containers:
 

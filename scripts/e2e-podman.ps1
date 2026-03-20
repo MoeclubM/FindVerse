@@ -46,7 +46,7 @@ Invoke-ExternalChecked { podman compose up --build -d api web } "Failed to build
 
 try {
   Wait-Http "$($env:PLAYWRIGHT_API_BASE_URL)/healthz"
-  Wait-Http "$($env:PLAYWRIGHT_BASE_URL)/admin"
+  Wait-Http "$($env:PLAYWRIGHT_BASE_URL)/console"
   Invoke-ExternalChecked { npx playwright test } "Playwright end-to-end suite failed"
 } finally {
   podman compose down -v | Out-Null

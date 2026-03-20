@@ -15,17 +15,19 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
   const seedUrl = `https://example.com/?findverse-e2e=${Date.now()}`;
   const apiBaseUrl = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:8080";
 
-  await page.goto("/admin");
+  await page.goto("/console");
   await page.getByPlaceholder("Username").fill(username);
   await page.getByPlaceholder("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 
+  await page.getByRole("button", { name: "Settings" }).click();
   await page.getByPlaceholder("Key name").fill("E2E key");
   await page.getByRole("button", { name: "Create" }).first().click();
   await expect(page.locator("pre").filter({ hasText: "fvk_" }).first()).toBeVisible();
 
+  await page.getByRole("button", { name: "Workers" }).click();
   await page.getByPlaceholder("Crawler name").fill("e2e-worker");
   await page
     .locator("section")
@@ -41,6 +43,7 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
   expect(crawlerId).toBeTruthy();
   expect(crawlerKey).toBeTruthy();
 
+  await page.getByRole("button", { name: "Crawl Tasks" }).click();
   await page.getByPlaceholder("One URL per line").fill(seedUrl);
   await page.getByRole("button", { name: "Queue" }).click();
   await expect(page.getByText(/Queued 1 URLs/i)).toBeVisible();
@@ -70,6 +73,7 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
   );
 
   await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByRole("button", { name: "Workers" }).click();
   await expect(page.getByText(/claimed 1, reported 1/i)).toBeVisible();
 
   await page.goto("/?q=Example%20Domain");

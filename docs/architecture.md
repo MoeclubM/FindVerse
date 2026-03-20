@@ -1,6 +1,6 @@
 # FindVerse Architecture Notes
 
-This repository now implements a flatter V1 slice focused on three concerns: a minimal search UI, an admin control plane, and a crawler service.
+This repository now implements a flatter V1 slice focused on three concerns: a minimal search UI, a console control plane, and a crawler service.
 
 ## Current shape
 
@@ -8,7 +8,7 @@ This repository now implements a flatter V1 slice focused on three concerns: a m
   - Rust `axum` API exposes public search endpoints plus admin endpoints for crawler and document control.
   - Search data is file-backed today, but isolated behind a `SearchIndex` module so the storage backend can change later.
 - Experience plane:
-  - A static Vite SPA serves two routes: `/` for search and `/admin` for crawler/data administration.
+  - A static Vite SPA serves two routes: `/` for search and `/console` for crawler/data administration.
   - The frontend does not own auth anymore; it calls API login directly and stores a local admin token in browser storage.
 - Crawl plane:
   - Rust crawler service covers seed expansion, distributed worker mode, and static bootstrap index generation.

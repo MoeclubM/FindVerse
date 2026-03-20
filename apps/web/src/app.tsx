@@ -22,7 +22,7 @@ import {
   updateRule,
 } from "./api";
 
-const ADMIN_TOKEN_KEY = "findverse_admin_token";
+const CONSOLE_TOKEN_KEY = "findverse_console_token";
 
 export function App() {
   const [path, setPath] = useState(() => window.location.pathname);
@@ -33,14 +33,14 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
-  if (path.startsWith("/admin")) {
-    return <AdminPage onNavigateHome={() => navigate("/", setPath)} />;
+  if (path.startsWith("/console")) {
+    return <ConsolePage onNavigateHome={() => navigate("/", setPath)} />;
   }
 
-  return <SearchPage onNavigateAdmin={() => navigate("/admin", setPath)} />;
+  return <SearchPage onNavigateConsole={() => navigate("/console", setPath)} />;
 }
 
-function SearchPage(props: { onNavigateAdmin: () => void }) {
+function SearchPage(props: { onNavigateConsole: () => void }) {
   const [query, setQuery] = useState(currentSearchQuery);
   const [submittedQuery, setSubmittedQuery] = useState(currentSearchQuery);
   const [results, setResults] = useState<Awaited<ReturnType<typeof search>> | null>(null);
@@ -93,8 +93,8 @@ function SearchPage(props: { onNavigateAdmin: () => void }) {
 
   return (
     <div className="search-shell">
-      <button className="admin-link" type="button" onClick={props.onNavigateAdmin}>
-        Admin
+      <button className="console-link" type="button" onClick={props.onNavigateConsole}>
+        Console
       </button>
       <main className={hasResults ? "search-page search-page-top" : "search-page"}>
         {!hasResults && <h1 className="search-brand">FindVerse</h1>}
@@ -131,8 +131,8 @@ function SearchPage(props: { onNavigateAdmin: () => void }) {
   );
 }
 
-function AdminPage(props: { onNavigateHome: () => void }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(ADMIN_TOKEN_KEY));
+function ConsolePage(props: { onNavigateHome: () => void }) {
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(CONSOLE_TOKEN_KEY));
   const [session, setSession] = useState<AdminSession | null>(null);
   const [usage, setUsage] = useState<DeveloperUsage | null>(null);
   const [overview, setOverview] = useState<CrawlOverview | null>(null);
@@ -142,20 +142,21 @@ function AdminPage(props: { onNavigateHome: () => void }) {
   const [flash, setFlash] = useState<string | null>(null);
   const [latestApiKey, setLatestApiKey] = useState<string | null>(null);
   const [latestCrawlerSecret, setLatestCrawlerSecret] = useState<string | null>(null);
-  const [loginUsername, setLoginUsername] = useState("admin");
-  const [loginPassword, setLoginPassword] = useState("change-me");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [apiKeyName, setApiKeyName] = useState("CLI key");
   const [crawlerName, setCrawlerName] = useState("worker-local");
-  const [seedUrls, setSeedUrls] = useState("https://example.com/");
+  const [seedUrls, setSeedUrls] = useState("");
   const [seedDepth, setSeedDepth] = useState("2");
   const [seedAllowRevisit, setSeedAllowRevisit] = useState(false);
-  const [ruleName, setRuleName] = useState("example-hourly");
-  const [ruleUrl, setRuleUrl] = useState("https://example.com/");
+  const [ruleName, setRuleName] = useState("");
+  const [ruleUrl, setRuleUrl] = useState("");
   const [ruleInterval, setRuleInterval] = useState("60");
   const [ruleDepth, setRuleDepth] = useState("2");
   const [documentQuery, setDocumentQuery] = useState("");
   const [documentSite, setDocumentSite] = useState("");
-  const [purgeSiteInput, setPurgeSiteInput] = useState("example.com");
+  const [purgeSiteInput, setPurgeSiteInput] = useState("");
+  const [activeTab, setActiveTab] = useState<"overview" | "tasks" | "workers" | "documents" | "settings">("overview");
 
   useEffect(() => {
     if (!token) {
@@ -174,7 +175,7 @@ function AdminPage(props: { onNavigateHome: () => void }) {
       })
       .catch(() => {
         if (!cancelled) {
-          localStorage.removeItem(ADMIN_TOKEN_KEY);
+          localStorage.removeItem(CONSOLE_TOKEN_KEY);
           setToken(null);
           setSession(null);
         }
@@ -208,7 +209,7 @@ function AdminPage(props: { onNavigateHome: () => void }) {
     setFlash(null);
     try {
       const nextSession = await login(loginUsername, loginPassword);
-      localStorage.setItem(ADMIN_TOKEN_KEY, nextSession.token);
+      localStorage.setItem(CONSOLE_TOKEN_KEY, nextSession.token);
       setToken(nextSession.token);
       setSession(nextSession);
     } catch (error) {
@@ -229,7 +230,7 @@ function AdminPage(props: { onNavigateHome: () => void }) {
     } catch {
       // Ignore logout failures and clear local state anyway.
     } finally {
-      localStorage.removeItem(ADMIN_TOKEN_KEY);
+      localStorage.removeItem(CONSOLE_TOKEN_KEY);
       setToken(null);
       setSession(null);
       setUsage(null);
@@ -356,7 +357,7 @@ function AdminPage(props: { onNavigateHome: () => void }) {
         max_depth: Number(ruleDepth) || 2,
         enabled: true,
       });
-      setRuleName("example-hourly");
+      setRuleName("");
       await refreshAll(token, documentQuery, documentSite, {
         setUsage,
         setOverview,
@@ -457,19 +458,19 @@ function AdminPage(props: { onNavigateHome: () => void }) {
   }
 
   if (authLoading) {
-    return <div className="admin-loading">Checking admin session…</div>;
+    return <div className="console-loading">Checking session…</div>;
   }
 
   if (!session || !token) {
     return (
-      <div className="admin-page">
-        <header className="admin-topbar">
+      <div className="console-page">
+        <header className="console-topbar">
           <button type="button" className="plain-link" onClick={props.onNavigateHome}>
             Search
           </button>
         </header>
-        <main className="admin-login">
-          <h1>Admin login</h1>
+        <main className="console-login">
+          <h1>Sign in</h1>
           <form onSubmit={handleLogin}>
             <input
               value={loginUsername}
@@ -493,10 +494,10 @@ function AdminPage(props: { onNavigateHome: () => void }) {
   }
 
   return (
-    <div className="admin-page">
-      <header className="admin-topbar">
+    <div className="console-page">
+      <header className="console-topbar">
         <div>
-          <strong>FindVerse admin</strong>
+          <strong>FindVerse Console</strong>
           <span>{session.developer_id}</span>
         </div>
         <div className="topbar-actions">
@@ -525,255 +526,273 @@ function AdminPage(props: { onNavigateHome: () => void }) {
 
       {flash ? <div className="flash">{flash}</div> : null}
 
-      <main className="admin-grid">
-        <section className="panel">
-          <h2>Overview</h2>
-          <div className="stats-grid">
-            <div>
-              <span>Queued</span>
-              <strong>{overview?.frontier_depth ?? 0}</strong>
-            </div>
-            <div>
-              <span>Known URLs</span>
-              <strong>{overview?.known_urls ?? 0}</strong>
-            </div>
-            <div>
-              <span>In flight</span>
-              <strong>{overview?.in_flight_jobs ?? 0}</strong>
-            </div>
-            <div>
-              <span>Indexed docs</span>
-              <strong>{overview?.indexed_documents ?? 0}</strong>
-            </div>
-          </div>
-          <div className="stats-grid">
-            <div>
-              <span>QPS</span>
-              <strong>{usage?.qps_limit ?? 0}</strong>
-            </div>
-            <div>
-              <span>Daily quota</span>
-              <strong>{usage?.daily_limit ?? 0}</strong>
-            </div>
-            <div>
-              <span>Used today</span>
-              <strong>{usage?.used_today ?? 0}</strong>
-            </div>
-            <div>
-              <span>Rules</span>
-              <strong>{overview?.rules.length ?? 0}</strong>
-            </div>
-          </div>
-        </section>
+      <nav className="console-tabs">
+        <button className={activeTab === "overview" ? "active" : ""} onClick={() => setActiveTab("overview")}>Overview</button>
+        <button className={activeTab === "tasks" ? "active" : ""} onClick={() => setActiveTab("tasks")}>Crawl Tasks</button>
+        <button className={activeTab === "workers" ? "active" : ""} onClick={() => setActiveTab("workers")}>Workers</button>
+        <button className={activeTab === "documents" ? "active" : ""} onClick={() => setActiveTab("documents")}>Documents</button>
+        <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>
+      </nav>
 
-        <section className="panel">
-          <h2>API keys</h2>
-          <form className="inline-form" onSubmit={handleCreateApiKey}>
-            <input
-              value={apiKeyName}
-              onChange={(event) => setApiKeyName(event.target.value)}
-              placeholder="Key name"
-            />
-            <button type="submit" disabled={busy}>
-              Create
-            </button>
-          </form>
-          {latestApiKey ? <pre>{latestApiKey}</pre> : null}
-          <div className="list">
-            {usage?.keys.map((key) => (
-              <div className="list-row" key={key.id}>
-                <div>
-                  <strong>{key.name}</strong>
-                  <div>{key.preview}</div>
+      <main className="console-grid">
+        {activeTab === "overview" && (<>
+          <section className="panel">
+            <h2>Overview</h2>
+            <div className="stats-grid">
+              <div>
+                <span>Queued</span>
+                <strong>{overview?.frontier_depth ?? 0}</strong>
+              </div>
+              <div>
+                <span>Known URLs</span>
+                <strong>{overview?.known_urls ?? 0}</strong>
+              </div>
+              <div>
+                <span>In flight</span>
+                <strong>{overview?.in_flight_jobs ?? 0}</strong>
+              </div>
+              <div>
+                <span>Indexed docs</span>
+                <strong>{overview?.indexed_documents ?? 0}</strong>
+              </div>
+            </div>
+            <div className="stats-grid">
+              <div>
+                <span>QPS</span>
+                <strong>{usage?.qps_limit ?? 0}</strong>
+              </div>
+              <div>
+                <span>Daily quota</span>
+                <strong>{usage?.daily_limit ?? 0}</strong>
+              </div>
+              <div>
+                <span>Used today</span>
+                <strong>{usage?.used_today ?? 0}</strong>
+              </div>
+              <div>
+                <span>Rules</span>
+                <strong>{overview?.rules.length ?? 0}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel panel-wide">
+            <h2>Crawl records</h2>
+            <div className="list">
+              {overview?.recent_events.map((event) => (
+                <div className="list-row stacked" key={event.id}>
+                  <strong>{event.kind}</strong>
+                  <div>{event.message}</div>
+                  <div>
+                    {event.status} · {event.created_at}
+                  </div>
+                  {event.url ? <div>{event.url}</div> : null}
                 </div>
-                <button
-                  type="button"
-                  className="plain-link"
-                  disabled={busy || Boolean(key.revoked_at)}
-                  onClick={() => void handleRevokeApiKey(key.id)}
-                >
-                  {key.revoked_at ? "Revoked" : "Revoke"}
+              ))}
+            </div>
+          </section>
+        </>)}
+
+        {activeTab === "tasks" && (<>
+          <section className="panel">
+            <h2>Manual crawl</h2>
+            <form onSubmit={handleSeedFrontier}>
+              <textarea
+                value={seedUrls}
+                onChange={(event) => setSeedUrls(event.target.value)}
+                placeholder="One URL per line"
+              />
+              <div className="inline-form">
+                <input
+                  value={seedDepth}
+                  onChange={(event) => setSeedDepth(event.target.value)}
+                  placeholder="Max depth"
+                />
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={seedAllowRevisit}
+                    onChange={(event) => setSeedAllowRevisit(event.target.checked)}
+                  />
+                  Allow revisit
+                </label>
+                <button type="submit" disabled={busy}>
+                  Queue
                 </button>
               </div>
-            ))}
-          </div>
-        </section>
+            </form>
+          </section>
 
-        <section className="panel">
-          <h2>Crawler workers</h2>
-          <form className="inline-form" onSubmit={handleCreateCrawler}>
-            <input
-              value={crawlerName}
-              onChange={(event) => setCrawlerName(event.target.value)}
-              placeholder="Crawler name"
-            />
-            <button type="submit" disabled={busy}>
-              Create
-            </button>
-          </form>
-          {latestCrawlerSecret ? <pre>{latestCrawlerSecret}</pre> : null}
-          <div className="list">
-            {overview?.crawlers.map((crawler) => (
-              <div className="list-row stacked" key={crawler.id}>
-                <strong>{crawler.name}</strong>
-                <div>{crawler.id}</div>
-                <div>
-                  claimed {crawler.jobs_claimed}, reported {crawler.jobs_reported}
-                </div>
-                <div>last seen {crawler.last_seen_at ?? "-"}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel">
-          <h2>Manual crawl</h2>
-          <form onSubmit={handleSeedFrontier}>
-            <textarea
-              value={seedUrls}
-              onChange={(event) => setSeedUrls(event.target.value)}
-              placeholder="One URL per line"
-            />
-            <div className="inline-form">
+          <section className="panel">
+            <h2>Auto crawl rules</h2>
+            <form onSubmit={handleCreateRule}>
               <input
-                value={seedDepth}
-                onChange={(event) => setSeedDepth(event.target.value)}
-                placeholder="Max depth"
+                value={ruleName}
+                onChange={(event) => setRuleName(event.target.value)}
+                placeholder="Rule name"
               />
-              <label className="checkbox">
+              <input
+                value={ruleUrl}
+                onChange={(event) => setRuleUrl(event.target.value)}
+                placeholder="Seed URL"
+              />
+              <div className="inline-form">
                 <input
-                  type="checkbox"
-                  checked={seedAllowRevisit}
-                  onChange={(event) => setSeedAllowRevisit(event.target.checked)}
+                  value={ruleInterval}
+                  onChange={(event) => setRuleInterval(event.target.value)}
+                  placeholder="Interval minutes"
                 />
-                Allow revisit
-              </label>
-              <button type="submit" disabled={busy}>
-                Queue
-              </button>
+                <input
+                  value={ruleDepth}
+                  onChange={(event) => setRuleDepth(event.target.value)}
+                  placeholder="Max depth"
+                />
+                <button type="submit" disabled={busy}>
+                  Save
+                </button>
+              </div>
+            </form>
+            <div className="list">
+              {overview?.rules.map((rule) => (
+                <div className="list-row stacked" key={rule.id}>
+                  <strong>{rule.name}</strong>
+                  <div>{rule.seed_url}</div>
+                  <div>
+                    every {rule.interval_minutes} min, depth {rule.max_depth}
+                  </div>
+                  <div className="topbar-actions">
+                    <button
+                      type="button"
+                      className="plain-link"
+                      disabled={busy}
+                      onClick={() => void handleToggleRule(rule.id, rule.enabled)}
+                    >
+                      {rule.enabled ? "Disable" : "Enable"}
+                    </button>
+                    <button
+                      type="button"
+                      className="plain-link"
+                      disabled={busy}
+                      onClick={() => void handleDeleteRule(rule.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </form>
-        </section>
+          </section>
+        </>)}
 
-        <section className="panel">
-          <h2>Auto crawl rules</h2>
-          <form onSubmit={handleCreateRule}>
-            <input
-              value={ruleName}
-              onChange={(event) => setRuleName(event.target.value)}
-              placeholder="Rule name"
-            />
-            <input
-              value={ruleUrl}
-              onChange={(event) => setRuleUrl(event.target.value)}
-              placeholder="Seed URL"
-            />
+        {activeTab === "workers" && (
+          <section className="panel panel-wide">
+            <h2>Crawler workers</h2>
+            <form className="inline-form" onSubmit={handleCreateCrawler}>
+              <input
+                value={crawlerName}
+                onChange={(event) => setCrawlerName(event.target.value)}
+                placeholder="Crawler name"
+              />
+              <button type="submit" disabled={busy}>
+                Create
+              </button>
+            </form>
+            {latestCrawlerSecret ? <pre>{latestCrawlerSecret}</pre> : null}
+            <div className="list">
+              {overview?.crawlers.map((crawler) => (
+                <div className="list-row stacked" key={crawler.id}>
+                  <strong>{crawler.name}</strong>
+                  <div>{crawler.id}</div>
+                  <div>
+                    claimed {crawler.jobs_claimed}, reported {crawler.jobs_reported}
+                  </div>
+                  <div>last seen {crawler.last_seen_at ?? "-"}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {activeTab === "documents" && (
+          <section className="panel panel-wide">
+            <h2>Indexed documents</h2>
             <div className="inline-form">
               <input
-                value={ruleInterval}
-                onChange={(event) => setRuleInterval(event.target.value)}
-                placeholder="Interval minutes"
+                value={documentQuery}
+                onChange={(event) => setDocumentQuery(event.target.value)}
+                placeholder="Filter by title or URL"
               />
               <input
-                value={ruleDepth}
-                onChange={(event) => setRuleDepth(event.target.value)}
-                placeholder="Max depth"
+                value={documentSite}
+                onChange={(event) => setDocumentSite(event.target.value)}
+                placeholder="Filter by site"
+              />
+            </div>
+            <form className="inline-form" onSubmit={handlePurgeSite}>
+              <input
+                value={purgeSiteInput}
+                onChange={(event) => setPurgeSiteInput(event.target.value)}
+                placeholder="Site to purge"
               />
               <button type="submit" disabled={busy}>
-                Save
+                Purge site
               </button>
-            </div>
-          </form>
-          <div className="list">
-            {overview?.rules.map((rule) => (
-              <div className="list-row stacked" key={rule.id}>
-                <strong>{rule.name}</strong>
-                <div>{rule.seed_url}</div>
-                <div>
-                  every {rule.interval_minutes} min, depth {rule.max_depth}
-                </div>
-                <div className="topbar-actions">
+            </form>
+            <div className="list">
+              {documents?.documents.map((document) => (
+                <div className="list-row stacked" key={document.id}>
+                  <strong>{document.title}</strong>
+                  <div>{document.display_url}</div>
+                  <div>{document.last_crawled_at}</div>
+                  <div>{document.snippet}</div>
                   <button
                     type="button"
                     className="plain-link"
                     disabled={busy}
-                    onClick={() => void handleToggleRule(rule.id, rule.enabled)}
-                  >
-                    {rule.enabled ? "Disable" : "Enable"}
-                  </button>
-                  <button
-                    type="button"
-                    className="plain-link"
-                    disabled={busy}
-                    onClick={() => void handleDeleteRule(rule.id)}
+                    onClick={() => void handleDeleteDocument(document.id)}
                   >
                     Delete
                   </button>
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        )}
 
-        <section className="panel panel-wide">
-          <h2>Crawl records</h2>
-          <div className="list">
-            {overview?.recent_events.map((event) => (
-              <div className="list-row stacked" key={event.id}>
-                <strong>{event.kind}</strong>
-                <div>{event.message}</div>
-                <div>
-                  {event.status} · {event.created_at}
+        {activeTab === "settings" && (
+          <section className="panel panel-wide">
+            <h2>API keys</h2>
+            <form className="inline-form" onSubmit={handleCreateApiKey}>
+              <input
+                value={apiKeyName}
+                onChange={(event) => setApiKeyName(event.target.value)}
+                placeholder="Key name"
+              />
+              <button type="submit" disabled={busy}>
+                Create
+              </button>
+            </form>
+            {latestApiKey ? <pre>{latestApiKey}</pre> : null}
+            <div className="list">
+              {usage?.keys.map((key) => (
+                <div className="list-row" key={key.id}>
+                  <div>
+                    <strong>{key.name}</strong>
+                    <div>{key.preview}</div>
+                  </div>
+                  <button
+                    type="button"
+                    className="plain-link"
+                    disabled={busy || Boolean(key.revoked_at)}
+                    onClick={() => void handleRevokeApiKey(key.id)}
+                  >
+                    {key.revoked_at ? "Revoked" : "Revoke"}
+                  </button>
                 </div>
-                {event.url ? <div>{event.url}</div> : null}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel panel-wide">
-          <h2>Indexed documents</h2>
-          <div className="inline-form">
-            <input
-              value={documentQuery}
-              onChange={(event) => setDocumentQuery(event.target.value)}
-              placeholder="Filter by title or URL"
-            />
-            <input
-              value={documentSite}
-              onChange={(event) => setDocumentSite(event.target.value)}
-              placeholder="Filter by site"
-            />
-          </div>
-          <form className="inline-form" onSubmit={handlePurgeSite}>
-            <input
-              value={purgeSiteInput}
-              onChange={(event) => setPurgeSiteInput(event.target.value)}
-              placeholder="Site to purge"
-            />
-            <button type="submit" disabled={busy}>
-              Purge site
-            </button>
-          </form>
-          <div className="list">
-            {documents?.documents.map((document) => (
-              <div className="list-row stacked" key={document.id}>
-                <strong>{document.title}</strong>
-                <div>{document.display_url}</div>
-                <div>{document.last_crawled_at}</div>
-                <div>{document.snippet}</div>
-                <button
-                  type="button"
-                  className="plain-link"
-                  disabled={busy}
-                  onClick={() => void handleDeleteDocument(document.id)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );
