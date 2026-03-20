@@ -1,28 +1,30 @@
 # FindVerse Architecture Notes
 
-This repository implements a practical V1 slice of the full FindVerse plan with a deliberately simple split between web, API, crawler, and docs.
+This repository now implements a flatter V1 slice focused on three concerns: a minimal search UI, an admin control plane, and a crawler service.
 
 ## Current shape
 
 - Query plane:
-  - Rust `axum` API exposes search, suggest, and developer key endpoints.
-  - Search data is loaded through a repository abstraction so the in-memory JSON bootstrap store can be replaced by OpenSearch later.
+  - Rust `axum` API exposes public search endpoints plus admin endpoints for crawler and document control.
+  - Search data is file-backed today, but isolated behind a `SearchIndex` module so the storage backend can change later.
 - Experience plane:
-  - Next.js app consumes the same REST API as external developers.
-  - Anonymous search is public; the developer portal uses local username/password auth.
+  - A static Vite SPA serves two routes: `/` for search and `/admin` for crawler/data administration.
+  - The frontend does not own auth anymore; it calls API login directly and stores a local admin token in browser storage.
 - Crawl plane:
   - Rust crawler service covers seed expansion, distributed worker mode, and static bootstrap index generation.
-  - Output artifacts are file-based today, matching the eventual `frontier -> fetch -> parse -> index` flow from the plan.
+  - The API owns frontier state, crawl rules, crawl history, crawler credentials, and document ingestion.
 
 ## Planned replacement points
 
-- `JsonSearchStore` -> OpenSearch-backed repository
-- `FileDeveloperStore` -> PostgreSQL + Valkey-backed developer control plane
-- file frontier and raw documents -> Redpanda + MinIO crawler flow
+- file-backed `SearchIndex` -> OpenSearch-backed repository
+- file-backed `DeveloperStore` -> PostgreSQL + Valkey-backed API key control plane
+- file-backed `CrawlerStore` -> Redpanda + PostgreSQL + object storage crawler flow
 - static ranking -> blended lexical relevance plus link quality/freshness signals
 
 ## Beta defaults
 
-- Query API accepts anonymous traffic for the web app and optional bearer keys for developer usage tracking.
+- Query API accepts anonymous traffic and optional bearer keys for usage tracking.
+- Admin API uses local username/password login and opaque admin session tokens.
+- Automatic crawl rules are scheduler-lite: the API enqueues due seeds during admin overview reads and crawler claim cycles.
 - Search ranking is lexical and deterministic.
 - JavaScript rendering is not part of the default crawl path.

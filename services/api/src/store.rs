@@ -17,7 +17,8 @@ use crate::{
     error::ApiError,
     models::{
         ApiKeyMetadata, CreateKeyRequest, CreatedKeyResponse, DeveloperUsageResponse,
-        Freshness, IndexedDocument, SearchParams, SearchResponse, SearchResult, SuggestResponse,
+        DocumentListParams, DocumentListResponse, DocumentSummary, Freshness, IndexedDocument,
+        PurgeSiteResponse, SearchParams, SearchResponse, SearchResult, SuggestResponse,
     },
 };
 
@@ -198,6 +199,121 @@ impl SearchIndex {
         fs::write(&self.path, serialized.1).await?;
         Ok(serialized.0)
     }
+
+    pub fn list_documents(&self, params: DocumentListParams) -> DocumentListResponse {
+        let limit = params.limit.clamp(1, 50);
+        let offset = params.offset;
+        let query_tokens = params
+            .query
+            .as_deref()
+            .map(tokenize)
+            .unwrap_or_default();
+        let site_filter = params.site.as_deref().map(str::to_lowercase);
+        let state = self.inner.read().expect("search index poisoned");
+
+        let mut documents = state
+            .documents
+            .iter()
+            .filter(|document| {
+                if let Some(site) = &site_filter
+                    && !document.url.to_lowercase().contains(site)
+                {
+                    return false;
+                }
+
+                if query_tokens.is_empty() {
+                    return true;
+                }
+
+                let haystack = format!(
+                    "{} {} {}",
+                    document.title.to_lowercase(),
+                    document.snippet.to_lowercase(),
+                    document.url.to_lowercase()
+                );
+                query_tokens.iter().all(|token| haystack.contains(token))
+            })
+            .map(|document| DocumentSummary {
+                id: document.id.clone(),
+                title: document.title.clone(),
+                url: document.url.clone(),
+                display_url: document.display_url.clone(),
+                snippet: document.snippet.clone(),
+                language: document.language.clone(),
+                last_crawled_at: document.last_crawled_at,
+            })
+            .collect::<Vec<_>>();
+
+        documents.sort_by(|left, right| right.last_crawled_at.cmp(&left.last_crawled_at));
+        let total_estimate = documents.len();
+        let page = documents
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        let next_offset = if offset + page.len() < total_estimate {
+            Some(offset + page.len())
+        } else {
+            None
+        };
+
+        DocumentListResponse {
+            total_estimate,
+            next_offset,
+            documents: page,
+        }
+    }
+
+    pub async fn delete_document(&self, document_id: &str) -> Result<bool, ApiError> {
+        let serialized = {
+            let mut state = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal(anyhow!("search index poisoned")))?;
+            let original_len = state.documents.len();
+            state.documents.retain(|document| document.id != document_id);
+            if state.documents.len() == original_len {
+                return Ok(false);
+            }
+
+            state.suggestions = rebuild_suggestions(&state.documents);
+            serde_json::to_string_pretty(&state.documents)
+                .map_err(|error| ApiError::Internal(error.into()))?
+        };
+
+        fs::write(&self.path, serialized).await?;
+        Ok(true)
+    }
+
+    pub async fn purge_site(&self, site: &str) -> Result<PurgeSiteResponse, ApiError> {
+        let normalized = site.trim().to_lowercase();
+        if normalized.is_empty() {
+            return Err(ApiError::BadRequest("site must not be empty".to_string()));
+        }
+
+        let serialized = {
+            let mut state = self
+                .inner
+                .write()
+                .map_err(|_| ApiError::Internal(anyhow!("search index poisoned")))?;
+            let original_len = state.documents.len();
+            state
+                .documents
+                .retain(|document| !document.url.to_lowercase().contains(&normalized));
+            let deleted_documents = original_len - state.documents.len();
+            state.suggestions = rebuild_suggestions(&state.documents);
+            (
+                deleted_documents,
+                serde_json::to_string_pretty(&state.documents)
+                    .map_err(|error| ApiError::Internal(error.into()))?,
+            )
+        };
+
+        fs::write(&self.path, serialized.1).await?;
+        Ok(PurgeSiteResponse {
+            deleted_documents: serialized.0,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -208,16 +324,22 @@ pub struct DeveloperStore {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct DeveloperStoreState {
+    #[serde(default)]
     records: HashMap<String, DeveloperRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DeveloperRecord {
     developer_id: String,
+    #[serde(default = "default_qps_limit")]
     qps_limit: u32,
+    #[serde(default = "default_daily_limit")]
     daily_limit: u32,
+    #[serde(default)]
     used_today: u32,
+    #[serde(default = "default_usage_day")]
     usage_day: NaiveDate,
+    #[serde(default)]
     keys: Vec<StoredKey>,
 }
 
@@ -228,6 +350,7 @@ struct StoredKey {
     preview: String,
     token_hash: String,
     created_at: DateTime<Utc>,
+    #[serde(default)]
     revoked_at: Option<DateTime<Utc>>,
 }
 
@@ -598,6 +721,18 @@ async fn ensure_file_with_fallbacks(
 
     fs::write(path, default_contents).await?;
     Ok(())
+}
+
+fn default_qps_limit() -> u32 {
+    5
+}
+
+fn default_daily_limit() -> u32 {
+    10_000
+}
+
+fn default_usage_day() -> NaiveDate {
+    Utc::now().date_naive()
 }
 
 #[cfg(test)]

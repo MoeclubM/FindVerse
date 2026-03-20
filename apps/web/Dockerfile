@@ -1,28 +1,20 @@
-FROM node:24-alpine AS deps
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/web/package.json apps/web/package.json
-COPY packages/contracts/package.json packages/contracts/package.json
 
 RUN npm ci
 
-FROM node:24-alpine AS builder
-WORKDIR /app
-
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY apps/web apps/web
 
 RUN npm run build:web
 
-FROM node:24-alpine AS runner
-WORKDIR /app
+FROM nginx:1.27-alpine AS runner
+WORKDIR /usr/share/nginx/html
 
-ENV NODE_ENV=production
-ENV PORT=3000
-
-COPY --from=builder /app/apps/web/.next/standalone ./
-COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/apps/web/dist ./
 
 EXPOSE 3000
-CMD ["node", "apps/web/server.js"]
+CMD ["nginx", "-g", "daemon off;"]

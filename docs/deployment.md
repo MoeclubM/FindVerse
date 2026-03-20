@@ -11,23 +11,30 @@ FindVerse is intentionally split into small deployable units:
 
 - `services/api/Dockerfile`: distroless runtime image
 - `services/crawler/Dockerfile`: distroless runtime image
-- `apps/web/Dockerfile`: standalone Next.js build on Alpine
+- `apps/web/Dockerfile`: static Vite build served by Nginx on Alpine
 
 ## Local auth
 
-The developer portal uses local username/password auth in this repository revision.
+The admin panel uses local username/password auth handled by the Rust API.
 
-- `AUTH_SECRET`
 - `FINDVERSE_LOCAL_ADMIN_USERNAME`
 - `FINDVERSE_LOCAL_ADMIN_PASSWORD`
 
 ## Distributed crawler flow
 
 1. Start `api`.
-2. Create a crawler credential from the developer portal.
+2. Create a crawler credential from the admin panel.
 3. Seed URLs into the frontier.
 4. Start one or more `crawler` workers with the issued `crawler id + key`.
 5. Workers claim jobs from `/internal/crawlers/claim` and submit parsed pages to `/internal/crawlers/report`.
+
+## Storage model today
+
+- `bootstrap_documents.json`: indexed documents
+- `developer_store.json`: search API keys and usage
+- `crawler_store.json`: crawler credentials, crawl rules, frontier, in-flight jobs, and crawl events
+
+These are all file-backed now and can be replaced independently.
 
 ## Compose
 

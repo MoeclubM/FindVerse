@@ -34,6 +34,16 @@ pub struct SearchParams {
     pub freshness: Freshness,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DocumentListParams {
+    pub query: Option<String>,
+    pub site: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
+}
+
 fn default_limit() -> usize {
     10
 }
@@ -87,6 +97,19 @@ pub struct SearchResponse {
 pub struct SuggestResponse {
     pub query: String,
     pub suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdminLoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminSessionResponse {
+    pub developer_id: String,
+    pub username: String,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -148,6 +171,63 @@ pub struct CrawlerMetadata {
     pub jobs_reported: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlRule {
+    pub id: String,
+    pub name: String,
+    pub seed_url: String,
+    pub interval_minutes: u64,
+    pub max_depth: u32,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_enqueued_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateCrawlRuleRequest {
+    pub name: String,
+    pub seed_url: String,
+    #[serde(default = "default_interval_minutes")]
+    pub interval_minutes: u64,
+    #[serde(default = "default_rule_depth")]
+    pub max_depth: u32,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateCrawlRuleRequest {
+    pub name: Option<String>,
+    pub seed_url: Option<String>,
+    pub interval_minutes: Option<u64>,
+    pub max_depth: Option<u32>,
+    pub enabled: Option<bool>,
+}
+
+fn default_interval_minutes() -> u64 {
+    60
+}
+
+fn default_rule_depth() -> u32 {
+    2
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlEvent {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub message: String,
+    pub url: Option<String>,
+    pub crawler_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CrawlOverviewResponse {
     pub developer_id: String,
@@ -156,12 +236,18 @@ pub struct CrawlOverviewResponse {
     pub in_flight_jobs: usize,
     pub indexed_documents: usize,
     pub crawlers: Vec<CrawlerMetadata>,
+    pub rules: Vec<CrawlRule>,
+    pub recent_events: Vec<CrawlEvent>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SeedFrontierRequest {
     pub urls: Vec<String>,
     pub source: Option<String>,
+    #[serde(default = "default_rule_depth")]
+    pub max_depth: u32,
+    #[serde(default)]
+    pub allow_revisit: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,6 +273,7 @@ pub struct CrawlJob {
     pub url: String,
     pub source: String,
     pub depth: u32,
+    pub max_depth: u32,
     pub discovered_at: DateTime<Utc>,
 }
 
@@ -223,6 +310,34 @@ pub struct SubmitCrawlReportResponse {
     pub discovered_urls: usize,
     pub frontier_depth: usize,
     pub indexed_documents: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentSummary {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub display_url: String,
+    pub snippet: String,
+    pub language: String,
+    pub last_crawled_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentListResponse {
+    pub total_estimate: usize,
+    pub next_offset: Option<usize>,
+    pub documents: Vec<DocumentSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PurgeSiteRequest {
+    pub site: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PurgeSiteResponse {
+    pub deleted_documents: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

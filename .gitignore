@@ -1,6 +1,4 @@
 node_modules/
-.next/
-.turbo/
 dist/
 coverage/
 target/
@@ -12,8 +10,7 @@ playwright-report/
 test-results/
 blob-report/
 *.log
-apps/web/.auth/
-apps/web/.next/
+apps/web/dist/
 services/api/.data/
 services/crawler/.cache/
 data/frontier/*

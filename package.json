@@ -3,13 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present && cargo build --workspace",
     "build:web": "npm --workspace @findverse/web run build",
-    "build:contracts": "npm --workspace @findverse/contracts run build",
     "dev:web": "npm --workspace @findverse/web run dev",
     "lint:web": "npm --workspace @findverse/web run typecheck",
     "typecheck:web": "npm --workspace @findverse/web run typecheck",

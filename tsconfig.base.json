@@ -11,9 +11,6 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "jsx": "preserve",
-    "baseUrl": ".",
-    "paths": {
-      "@findverse/contracts": ["packages/contracts/src/index.ts"]
-    }
+    "baseUrl": "."
   }
 }

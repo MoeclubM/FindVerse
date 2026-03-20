@@ -1,15 +1,11 @@
 .git
-.next
-.turbo
 node_modules
 target
 dist
 coverage
 .env
 .env.local
-apps/web/.next
-apps/web/.auth
-packages/contracts/dist
+apps/web/dist
 playwright-report
 test-results
 blob-report

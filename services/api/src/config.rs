@@ -9,6 +9,8 @@ pub struct Config {
     pub developer_store_path: PathBuf,
     pub crawler_store_path: PathBuf,
     pub frontend_origin: String,
+    pub local_admin_username: String,
+    pub local_admin_password: String,
 }
 
 impl Config {
@@ -33,12 +35,20 @@ impl Config {
         let frontend_origin = env::var("FINDVERSE_FRONTEND_ORIGIN")
             .unwrap_or_else(|_| "http://localhost:3000".to_string());
 
+        let local_admin_username = env::var("FINDVERSE_LOCAL_ADMIN_USERNAME")
+            .unwrap_or_else(|_| "admin".to_string());
+
+        let local_admin_password = env::var("FINDVERSE_LOCAL_ADMIN_PASSWORD")
+            .unwrap_or_else(|_| "change-me".to_string());
+
         Ok(Self {
             bind_addr,
             index_path,
             developer_store_path,
             crawler_store_path,
             frontend_origin,
+            local_admin_username,
+            local_admin_password,
         })
     }
 }

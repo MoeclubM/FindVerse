@@ -1,6 +1,5 @@
 $ErrorActionPreference = "Stop"
 
-$env:AUTH_SECRET = if ($env:AUTH_SECRET) { $env:AUTH_SECRET } else { "findverse-local-secret" }
 $env:FINDVERSE_LOCAL_ADMIN_USERNAME = if ($env:FINDVERSE_LOCAL_ADMIN_USERNAME) { $env:FINDVERSE_LOCAL_ADMIN_USERNAME } else { "admin" }
 $env:FINDVERSE_LOCAL_ADMIN_PASSWORD = if ($env:FINDVERSE_LOCAL_ADMIN_PASSWORD) { $env:FINDVERSE_LOCAL_ADMIN_PASSWORD } else { "change-me" }
 $env:FINDVERSE_API_PORT = if ($env:FINDVERSE_API_PORT) { $env:FINDVERSE_API_PORT } else { "8081" }
@@ -47,7 +46,7 @@ Invoke-ExternalChecked { podman compose up --build -d api web } "Failed to build
 
 try {
   Wait-Http "$($env:PLAYWRIGHT_API_BASE_URL)/healthz"
-  Wait-Http "$($env:PLAYWRIGHT_BASE_URL)/developers"
+  Wait-Http "$($env:PLAYWRIGHT_BASE_URL)/admin"
   Invoke-ExternalChecked { npx playwright test } "Playwright end-to-end suite failed"
 } finally {
   podman compose down -v | Out-Null

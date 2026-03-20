@@ -15,27 +15,25 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
   const seedUrl = `https://example.com/?findverse-e2e=${Date.now()}`;
   const apiBaseUrl = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:8080";
 
-  await page.goto("/developers");
+  await page.goto("/admin");
   await page.getByPlaceholder("Username").fill(username);
   await page.getByPlaceholder("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
 
-  await expect(
-    page.getByRole("heading", {
-      name: "Developer access for search tools and crawler workers",
-    }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Create API key" }).click();
+  await page.getByPlaceholder("Key name").fill("E2E key");
+  await page.getByRole("button", { name: "Create" }).first().click();
   await expect(page.locator("pre").filter({ hasText: "fvk_" }).first()).toBeVisible();
 
   await page.getByPlaceholder("Crawler name").fill("e2e-worker");
-  await page.getByRole("button", { name: "Create crawler" }).click();
+  await page
+    .locator("section")
+    .filter({ has: page.getByRole("heading", { name: "Crawler workers" }) })
+    .getByRole("button", { name: "Create" })
+    .click();
 
-  const crawlerBlock = page
-    .locator(".developer-card pre")
-    .filter({ hasText: "CRAWLER_ID=" })
-    .first();
+  const crawlerBlock = page.locator("pre").filter({ hasText: "CRAWLER_ID=" }).first();
   await expect(crawlerBlock).toBeVisible();
   const crawlerText = await crawlerBlock.textContent();
   const crawlerId = crawlerText?.match(/CRAWLER_ID=(.+)/)?.[1]?.trim();
@@ -44,8 +42,8 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
   expect(crawlerKey).toBeTruthy();
 
   await page.getByPlaceholder("One URL per line").fill(seedUrl);
-  await page.getByRole("button", { name: "Queue seed URLs" }).click();
-  await expect(page.getByText("Queued 1 seed URLs")).toBeVisible();
+  await page.getByRole("button", { name: "Queue" }).click();
+  await expect(page.getByText(/Queued 1 URLs/i)).toBeVisible();
 
   await execFileAsync(
     "cargo",
@@ -71,9 +69,9 @@ test("developer login, crawler seed, worker ingestion, and search result flow", 
     },
   );
 
-  await page.reload();
-  await expect(page.getByText(/claimed 1 jobs, reported 1/i)).toBeVisible();
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByText(/claimed 1, reported 1/i)).toBeVisible();
 
-  await page.goto("/search?q=Example%20Domain");
-  await expect(page.getByRole("heading", { name: "Example Domain" }).first()).toBeVisible();
+  await page.goto("/?q=Example%20Domain");
+  await expect(page.getByRole("link", { name: "Example Domain" }).first()).toBeVisible();
 });
