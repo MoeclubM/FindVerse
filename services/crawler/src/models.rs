@@ -1,0 +1,203 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+#[derive(Debug, clap::Parser)]
+#[command(name = "findverse-crawler")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum Command {
+    Discover {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = 50)]
+        limit_per_seed: usize,
+    },
+    Fetch {
+        #[arg(long)]
+        frontier: PathBuf,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    BuildIndex {
+        #[arg(long)]
+        input_dir: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    Worker {
+        #[arg(long)]
+        server: String,
+        /// Explicit crawler ID (use with --crawler-key for manual setup)
+        #[arg(long)]
+        crawler_id: Option<String>,
+        /// Explicit crawler key (use with --crawler-id for manual setup)
+        #[arg(long)]
+        crawler_key: Option<String>,
+        /// Developer API key — auto-registers a crawler via /internal/crawlers/hello
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Join key — auto-registers via /internal/crawlers/join
+        #[arg(long)]
+        join_key: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        max_jobs: usize,
+        #[arg(long, default_value_t = 5)]
+        poll_interval_secs: u64,
+        #[arg(long, default_value_t = false)]
+        once: bool,
+        /// Number of concurrent page fetches
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+        /// Comma-separated list of allowed domains (subdomains included)
+        #[arg(long)]
+        allowed_domains: Option<String>,
+        /// HTTP proxy URL
+        #[arg(long)]
+        proxy: Option<String>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Data structs — offline commands
+// ---------------------------------------------------------------------------
+#[derive(Debug, Deserialize)]
+pub struct SeedConfig {
+    pub seeds: Vec<Seed>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Seed {
+    pub name: String,
+    pub url: String,
+    pub sitemap: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FrontierEntry {
+    pub url: String,
+    pub source: String,
+    pub discovered_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FetchManifestEntry {
+    pub url: String,
+    pub storage_path: String,
+    pub fetched_at: DateTime<Utc>,
+    pub content_type: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IndexedDocument {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub display_url: String,
+    pub snippet: String,
+    pub body: String,
+    pub language: String,
+    pub last_crawled_at: DateTime<Utc>,
+    pub suggest_terms: Vec<String>,
+    pub site_authority: f32,
+}
+
+// ---------------------------------------------------------------------------
+// Data structs — worker API
+// ---------------------------------------------------------------------------
+#[derive(Debug, Serialize)]
+pub struct ClaimJobsRequest {
+    pub max_jobs: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClaimJobsResponse {
+    pub crawler_id: String,
+    pub frontier_depth: usize,
+    pub jobs: Vec<CrawlJob>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CrawlJob {
+    pub job_id: String,
+    pub url: String,
+    pub source: String,
+    pub depth: u32,
+    pub discovered_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SubmitCrawlReportRequest {
+    pub results: Vec<CrawlResultReport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CrawlResultReport {
+    pub job_id: String,
+    pub url: String,
+    pub status_code: u16,
+    pub fetched_at: DateTime<Utc>,
+    pub title: Option<String>,
+    pub snippet: Option<String>,
+    pub body: Option<String>,
+    pub language: Option<String>,
+    pub discovered_urls: Vec<String>,
+    pub site_authority: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubmitCrawlReportResponse {
+    pub accepted_documents: usize,
+    pub discovered_urls: usize,
+    pub frontier_depth: usize,
+    pub indexed_documents: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Worker config & registration structs
+// ---------------------------------------------------------------------------
+#[derive(Debug, Clone)]
+pub struct WorkerConfig {
+    pub server: String,
+    pub crawler_id: String,
+    pub auth_token: String,
+    pub max_jobs: usize,
+    pub poll_interval_secs: u64,
+    pub once: bool,
+    pub concurrency: usize,
+    pub allowed_domains: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HelloCrawlerResponse {
+    pub crawler_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JoinCrawlerResponse {
+    pub crawler_id: String,
+    pub crawler_key: String,
+    pub name: String,
+}
+
+// ---------------------------------------------------------------------------
+// Parsed HTML result (used between extract and worker)
+// ---------------------------------------------------------------------------
+pub struct ParsedHtml {
+    pub title: Option<String>,
+    pub snippet: Option<String>,
+    pub body: Option<String>,
+    pub discovered_urls: Vec<String>,
+}

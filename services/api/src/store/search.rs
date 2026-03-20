@@ -1,26 +1,21 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     path::PathBuf,
     sync::{Arc, RwLock},
 };
 
-use anyhow::{Context, anyhow};
-use chrono::{DateTime, NaiveDate, Utc};
-use rand::{Rng, distr::Alphanumeric};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use tokio::{fs, sync::RwLock as AsyncRwLock};
-use url::Url;
-use uuid::Uuid;
+use anyhow::anyhow;
+use chrono::{DateTime, Utc};
 
 use crate::{
     error::ApiError,
     models::{
-        ApiKeyMetadata, CreateKeyRequest, CreatedKeyResponse, DeveloperUsageResponse,
         DocumentListParams, DocumentListResponse, DocumentSummary, Freshness, IndexedDocument,
         PurgeSiteResponse, SearchParams, SearchResponse, SearchResult, SuggestResponse,
     },
 };
+
+use super::{atomic_write, ensure_file_with_fallbacks, tokenize};
 
 #[derive(Debug, Clone)]
 pub struct SearchIndex {
@@ -46,11 +41,11 @@ impl SearchIndex {
         )
         .await?;
 
-        let raw = fs::read_to_string(&path)
+        let raw = tokio::fs::read_to_string(&path)
             .await
-            .context("failed to read bootstrap document file")?;
-        let documents: Vec<IndexedDocument> =
-            serde_json::from_str(&raw).context("failed to parse bootstrap document file")?;
+            .map_err(|e| anyhow::anyhow!(e).context("failed to read bootstrap document file"))?;
+        let documents: Vec<IndexedDocument> = serde_json::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!(e).context("failed to parse bootstrap document file"))?;
 
         Ok(Self {
             path,
@@ -62,7 +57,11 @@ impl SearchIndex {
     }
 
     pub fn total_documents(&self) -> usize {
-        self.inner.read().expect("search index poisoned").documents.len()
+        self.inner
+            .read()
+            .expect("search index poisoned")
+            .documents
+            .len()
     }
 
     pub fn search(&self, params: SearchParams) -> SearchResponse {
@@ -196,7 +195,7 @@ impl SearchIndex {
             )
         };
 
-        fs::write(&self.path, serialized.1).await?;
+        atomic_write(&self.path, &serialized.1).await?;
         Ok(serialized.0)
     }
 
@@ -271,7 +270,9 @@ impl SearchIndex {
                 .write()
                 .map_err(|_| ApiError::Internal(anyhow!("search index poisoned")))?;
             let original_len = state.documents.len();
-            state.documents.retain(|document| document.id != document_id);
+            state
+                .documents
+                .retain(|document| document.id != document_id);
             if state.documents.len() == original_len {
                 return Ok(false);
             }
@@ -281,7 +282,7 @@ impl SearchIndex {
                 .map_err(|error| ApiError::Internal(error.into()))?
         };
 
-        fs::write(&self.path, serialized).await?;
+        atomic_write(&self.path, &serialized).await?;
         Ok(true)
     }
 
@@ -309,223 +310,10 @@ impl SearchIndex {
             )
         };
 
-        fs::write(&self.path, serialized.1).await?;
+        atomic_write(&self.path, &serialized.1).await?;
         Ok(PurgeSiteResponse {
             deleted_documents: serialized.0,
         })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DeveloperStore {
-    path: PathBuf,
-    inner: Arc<AsyncRwLock<DeveloperStoreState>>,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct DeveloperStoreState {
-    #[serde(default)]
-    records: HashMap<String, DeveloperRecord>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DeveloperRecord {
-    developer_id: String,
-    #[serde(default = "default_qps_limit")]
-    qps_limit: u32,
-    #[serde(default = "default_daily_limit")]
-    daily_limit: u32,
-    #[serde(default)]
-    used_today: u32,
-    #[serde(default = "default_usage_day")]
-    usage_day: NaiveDate,
-    #[serde(default)]
-    keys: Vec<StoredKey>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredKey {
-    id: String,
-    name: String,
-    preview: String,
-    token_hash: String,
-    created_at: DateTime<Utc>,
-    #[serde(default)]
-    revoked_at: Option<DateTime<Utc>>,
-}
-
-impl DeveloperStore {
-    pub async fn load(path: PathBuf) -> anyhow::Result<Self> {
-        let empty = serde_json::to_string_pretty(&DeveloperStoreState::default())?;
-        ensure_file_with_fallbacks(
-            &path,
-            &empty,
-            &[
-                PathBuf::from("/opt/findverse/developer_store.json"),
-                PathBuf::from("services/api/fixtures/developer_store.json"),
-            ],
-        )
-        .await?;
-
-        let raw = fs::read_to_string(&path)
-            .await
-            .context("failed to read developer store file")?;
-        let state: DeveloperStoreState =
-            serde_json::from_str(&raw).context("failed to parse developer store file")?;
-
-        Ok(Self {
-            path,
-            inner: Arc::new(AsyncRwLock::new(state)),
-        })
-    }
-
-    pub async fn create_key(
-        &self,
-        developer_id: &str,
-        request: CreateKeyRequest,
-    ) -> Result<CreatedKeyResponse, ApiError> {
-        let clean_name = request.name.trim();
-        if clean_name.len() < 2 {
-            return Err(ApiError::BadRequest(
-                "key name must contain at least 2 characters".to_string(),
-            ));
-        }
-
-        let token = generate_token("fvk");
-        let token_hash = hash_token(&token);
-        let preview = format!("{}...{}", &token[..8], &token[token.len() - 4..]);
-        let created_at = Utc::now();
-        let key = StoredKey {
-            id: Uuid::now_v7().to_string(),
-            name: clean_name.to_string(),
-            preview: preview.clone(),
-            token_hash,
-            created_at,
-            revoked_at: None,
-        };
-
-        {
-            let mut state = self.inner.write().await;
-            let record = state
-                .records
-                .entry(developer_id.to_string())
-                .or_insert_with(|| DeveloperRecord {
-                    developer_id: developer_id.to_string(),
-                    qps_limit: 5,
-                    daily_limit: 10_000,
-                    used_today: 0,
-                    usage_day: Utc::now().date_naive(),
-                    keys: Vec::new(),
-                });
-
-            record.keys.push(key.clone());
-            self.persist_locked(&state).await?;
-        }
-
-        Ok(CreatedKeyResponse {
-            id: key.id,
-            name: key.name,
-            preview,
-            token,
-            created_at,
-        })
-    }
-
-    pub async fn revoke_key(&self, developer_id: &str, key_id: &str) -> Result<(), ApiError> {
-        let mut state = self.inner.write().await;
-        let record = state
-            .records
-            .get_mut(developer_id)
-            .ok_or_else(|| ApiError::NotFound("developer record not found".to_string()))?;
-
-        let key = record
-            .keys
-            .iter_mut()
-            .find(|key| key.id == key_id)
-            .ok_or_else(|| ApiError::NotFound("api key not found".to_string()))?;
-
-        if key.revoked_at.is_some() {
-            return Err(ApiError::Conflict("api key already revoked".to_string()));
-        }
-
-        key.revoked_at = Some(Utc::now());
-        self.persist_locked(&state).await?;
-        Ok(())
-    }
-
-    pub async fn usage(&self, developer_id: &str) -> Result<DeveloperUsageResponse, ApiError> {
-        let mut state = self.inner.write().await;
-        let record = state
-            .records
-            .entry(developer_id.to_string())
-            .or_insert_with(|| DeveloperRecord {
-                developer_id: developer_id.to_string(),
-                qps_limit: 5,
-                daily_limit: 10_000,
-                used_today: 0,
-                usage_day: Utc::now().date_naive(),
-                keys: Vec::new(),
-            });
-
-        roll_usage_day(record);
-        let response = DeveloperUsageResponse {
-            developer_id: record.developer_id.clone(),
-            qps_limit: record.qps_limit,
-            daily_limit: record.daily_limit,
-            used_today: record.used_today,
-            keys: record
-                .keys
-                .iter()
-                .map(|key| ApiKeyMetadata {
-                    id: key.id.clone(),
-                    name: key.name.clone(),
-                    preview: key.preview.clone(),
-                    created_at: key.created_at,
-                    revoked_at: key.revoked_at,
-                })
-                .collect(),
-        };
-
-        self.persist_locked(&state).await?;
-        Ok(response)
-    }
-
-    pub async fn validate_and_track(&self, auth_header: Option<&str>) -> Result<(), ApiError> {
-        let Some(header) = auth_header else {
-            return Err(ApiError::Unauthorized("api key required".to_string()));
-        };
-
-        let token_hash = bearer_hash(header)?;
-        let today = Utc::now().date_naive();
-        let mut state = self.inner.write().await;
-
-        for record in state.records.values_mut() {
-            roll_usage_day(record);
-
-            if record
-                .keys
-                .iter()
-                .any(|key| key.token_hash == token_hash && key.revoked_at.is_none())
-            {
-                if record.used_today >= record.daily_limit {
-                    return Err(ApiError::Unauthorized("daily request quota exceeded".to_string()));
-                }
-
-                record.used_today += 1;
-                record.usage_day = today;
-                self.persist_locked(&state).await?;
-                return Ok(());
-            }
-        }
-
-        Err(ApiError::Unauthorized("invalid api key".to_string()))
-    }
-
-    async fn persist_locked(&self, state: &DeveloperStoreState) -> Result<(), ApiError> {
-        let raw =
-            serde_json::to_string_pretty(state).map_err(|error| ApiError::Internal(error.into()))?;
-        fs::write(&self.path, raw).await?;
-        Ok(())
     }
 }
 
@@ -606,135 +394,6 @@ fn rebuild_suggestions(documents: &[IndexedDocument]) -> Vec<String> {
     suggestions.into_iter().collect()
 }
 
-fn tokenize(input: &str) -> Vec<String> {
-    let mut token = String::new();
-    let mut tokens = Vec::new();
-
-    for ch in input.chars() {
-        if ch.is_alphanumeric() {
-            token.extend(ch.to_lowercase());
-        } else if !token.is_empty() {
-            tokens.push(std::mem::take(&mut token));
-        }
-    }
-
-    if !token.is_empty() {
-        tokens.push(token);
-    }
-
-    tokens
-}
-
-pub fn derive_terms(title: &str, body: &str) -> Vec<String> {
-    let mut terms = BTreeSet::new();
-    for source in [title, body] {
-        for token in source
-            .split(|ch: char| !ch.is_alphanumeric())
-            .map(str::trim)
-            .filter(|token| token.len() >= 4)
-        {
-            terms.insert(token.to_lowercase());
-            if terms.len() >= 12 {
-                return terms.into_iter().collect();
-            }
-        }
-    }
-    terms.into_iter().collect()
-}
-
-pub fn display_url(input: &str) -> String {
-    Url::parse(input)
-        .ok()
-        .and_then(|url| {
-            let host = url.host_str()?.to_string();
-            let path = url.path().trim_end_matches('/').to_string();
-            Some(if path.is_empty() {
-                host
-            } else {
-                format!("{host}{path}")
-            })
-        })
-        .unwrap_or_else(|| input.to_string())
-}
-
-pub fn stable_document_id(url: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(url.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn bearer_hash(header: &str) -> Result<String, ApiError> {
-    let token = header
-        .strip_prefix("Bearer ")
-        .ok_or_else(|| ApiError::Unauthorized("invalid authorization scheme".to_string()))?
-        .trim();
-
-    if token.is_empty() {
-        return Err(ApiError::Unauthorized("empty bearer token".to_string()));
-    }
-
-    Ok(hash_token(token))
-}
-
-fn hash_token(token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn generate_token(prefix: &str) -> String {
-    let secret = rand::rng()
-        .sample_iter(&Alphanumeric)
-        .take(40)
-        .map(char::from)
-        .collect::<String>();
-    format!("{prefix}_{secret}")
-}
-
-fn roll_usage_day(record: &mut DeveloperRecord) {
-    let today = Utc::now().date_naive();
-    if record.usage_day != today {
-        record.usage_day = today;
-        record.used_today = 0;
-    }
-}
-
-async fn ensure_file_with_fallbacks(
-    path: &PathBuf,
-    default_contents: &str,
-    fallbacks: &[PathBuf],
-) -> anyhow::Result<()> {
-    if fs::metadata(path).await.is_ok() {
-        return Ok(());
-    }
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-
-    for fallback in fallbacks {
-        if fallback != path && fs::metadata(fallback).await.is_ok() {
-            fs::copy(fallback, path).await?;
-            return Ok(());
-        }
-    }
-
-    fs::write(path, default_contents).await?;
-    Ok(())
-}
-
-fn default_qps_limit() -> u32 {
-    5
-}
-
-fn default_daily_limit() -> u32 {
-    10_000
-}
-
-fn default_usage_day() -> NaiveDate {
-    Utc::now().date_naive()
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -744,13 +403,19 @@ mod tests {
 
     use chrono::{Duration, Utc};
 
-    use super::{Freshness, IndexedDocument, SearchIndex, derive_terms, score_document};
+    use crate::models::{Freshness, IndexedDocument};
+
+    use super::{SearchIndex, SearchState, score_document};
+    use crate::store::derive_terms;
 
     fn sample_document(title: &str, body: &str, age_hours: i64) -> IndexedDocument {
         IndexedDocument {
             id: title.to_string(),
             title: title.to_string(),
-            url: format!("https://example.com/{}", title.replace(' ', "-").to_lowercase()),
+            url: format!(
+                "https://example.com/{}",
+                title.replace(' ', "-").to_lowercase()
+            ),
             display_url: "example.com".to_string(),
             snippet: body.to_string(),
             body: body.to_string(),
@@ -777,7 +442,7 @@ mod tests {
     fn suggestions_include_titles_and_terms() {
         let index = SearchIndex {
             path: PathBuf::from("ignored.json"),
-            inner: Arc::new(RwLock::new(super::SearchState {
+            inner: Arc::new(RwLock::new(SearchState {
                 documents: vec![sample_document("Search Ranking", "Ranking strategies", 1)],
                 suggestions: vec!["search".to_string(), "ranking".to_string()],
             })),

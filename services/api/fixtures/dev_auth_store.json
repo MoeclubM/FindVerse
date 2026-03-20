@@ -1,0 +1,48 @@
+{
+  "accounts": {
+    "dev:019d0a8a-cfc5-79c2-88c0-591d4c05e8eb": {
+      "user_id": "dev:019d0a8a-cfc5-79c2-88c0-591d4c05e8eb",
+      "username": "dev-1773998362088",
+      "password_hash": "8c181e755b2522b8fc77fe9159731bf94fd8db6ef3edd82f8ee0b7e9bcf90b14",
+      "salt": "0lnemmcqtbbzxy2s",
+      "created_at": "2026-03-20T09:19:22.565105900Z",
+      "enabled": true
+    },
+    "dev:019d09eb-e75e-7851-a79f-83625c3aff98": {
+      "user_id": "dev:019d09eb-e75e-7851-a79f-83625c3aff98",
+      "username": "dev-1773987947743",
+      "password_hash": "c0d1a9577b30efab46c8f136c70799b08d4a899fdbf334fa1b369600292b6a37",
+      "salt": "m4o40h1a2jontfrk",
+      "created_at": "2026-03-20T06:25:48.382737200Z",
+      "enabled": true
+    },
+    "dev:019d09ea-cd58-7fd2-8ebb-0bb62e54f89d": {
+      "user_id": "dev:019d09ea-cd58-7fd2-8ebb-0bb62e54f89d",
+      "username": "dev-1773987875018",
+      "password_hash": "ec96bb4c7ac59a40ef746d17e774ff349c09ffa8115c98ee831edc1de9c8c7f3",
+      "salt": "rpk20wtakbc7shog",
+      "created_at": "2026-03-20T06:24:36.184672Z",
+      "enabled": true
+    }
+  },
+  "sessions": {
+    "fvs_hLkbANYznmsEtoavRgpO5NOBqjw2OH1diXLx6D4knNHancC1": {
+      "user_id": "dev:019d0a8a-cfc5-79c2-88c0-591d4c05e8eb",
+      "username": "dev-1773998362088",
+      "created_at": "2026-03-20T09:19:22.565125100Z",
+      "last_seen_at": "2026-03-20T09:19:22.565125300Z"
+    },
+    "fvs_HcSBZXSObwi8ckIEJS4ozCjarqWkRHuuMMH9bfyKPZnM5xPu": {
+      "user_id": "dev:019d09ea-cd58-7fd2-8ebb-0bb62e54f89d",
+      "username": "dev-1773987875018",
+      "created_at": "2026-03-20T06:24:36.184704300Z",
+      "last_seen_at": "2026-03-20T06:24:36.413254800Z"
+    },
+    "fvs_YcpzYblNytKx34aq6OqKNHcbWuCq8TDv0GAmjKWxDZamOvJF": {
+      "user_id": "dev:019d09eb-e75e-7851-a79f-83625c3aff98",
+      "username": "dev-1773987947743",
+      "created_at": "2026-03-20T06:25:48.382763100Z",
+      "last_seen_at": "2026-03-20T06:25:48.382763300Z"
+    }
+  }
+}

@@ -1,47 +1,41 @@
 mod admin;
 mod crawler;
 mod config;
+mod dev_auth;
 mod error;
+mod handlers;
 mod models;
 mod store;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{sync::Arc, time::Duration};
 
 use admin::AdminAuth;
 use axum::{
-    Json, Router,
-    extract::{Path, Query, State},
-    http::HeaderMap,
-    response::IntoResponse,
+    Router,
     routing::{delete, get, patch, post},
 };
-use models::{
-    AdminLoginRequest, ClaimJobsRequest, ClaimJobsResponse, CrawlOverviewResponse,
-    CreatedCrawlerResponse, DeveloperUsageResponse, DocumentListParams, DocumentListResponse,
-    HealthResponse, PurgeSiteRequest, PurgeSiteResponse, SearchParams, SearchResponse,
-    SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
-    SubmitCrawlReportResponse, SuggestResponse,
-};
+use dev_auth::DevAuthStore;
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     config::Config,
     crawler::CrawlerStore,
-    error::ApiError,
-    models::{CreateCrawlRuleRequest, CreateCrawlerRequest, CreateKeyRequest, UpdateCrawlRuleRequest},
     store::{DeveloperStore, SearchIndex},
 };
 
 #[derive(Clone)]
-struct AppState {
-    search_index: SearchIndex,
-    developer_store: DeveloperStore,
-    crawler_store: CrawlerStore,
-    admin_auth: AdminAuth,
+pub(crate) struct AppState {
+    pub(crate) search_index: SearchIndex,
+    pub(crate) developer_store: DeveloperStore,
+    pub(crate) crawler_store: CrawlerStore,
+    pub(crate) admin_auth: AdminAuth,
+    pub(crate) dev_auth: DevAuthStore,
+    pub(crate) crawler_claim_timeout_secs: u64,
+    pub(crate) crawler_join_key: Option<String>,
 }
 
 #[tokio::main]
@@ -57,41 +51,113 @@ async fn main() -> anyhow::Result<()> {
     let search_index = SearchIndex::load(config.index_path.clone()).await?;
     let developer_store = DeveloperStore::load(config.developer_store_path.clone()).await?;
     let crawler_store = CrawlerStore::load(config.crawler_store_path.clone()).await?;
+    let dev_auth = DevAuthStore::load(config.dev_auth_store_path.clone()).await?;
     let admin_auth = AdminAuth::new(
         config.local_admin_username.clone(),
         config.local_admin_password.clone(),
     );
 
-    let state = AppState {
+    let state = Arc::new(AppState {
         search_index,
         developer_store,
         crawler_store,
         admin_auth,
-    };
+        dev_auth,
+        crawler_claim_timeout_secs: config.crawler_claim_timeout_secs.max(1),
+        crawler_join_key: config.crawler_join_key.clone(),
+    });
+
+    let maintenance_state = Arc::clone(&state);
+    let maintenance_interval = Duration::from_secs(config.crawler_maintenance_interval_secs.max(1));
+    let claim_timeout = Duration::from_secs(config.crawler_claim_timeout_secs.max(1));
+    tokio::spawn(async move {
+        if let Err(error) = maintenance_state
+            .crawler_store
+            .run_maintenance(claim_timeout)
+            .await
+        {
+            error!(?error, "initial crawler maintenance pass failed");
+        }
+
+        let mut ticker = tokio::time::interval(maintenance_interval);
+        loop {
+            ticker.tick().await;
+            if let Err(error) = maintenance_state
+                .crawler_store
+                .run_maintenance(claim_timeout)
+                .await
+            {
+                error!(?error, "crawler maintenance pass failed");
+            }
+        }
+    });
 
     let app = Router::new()
-        .route("/healthz", get(healthz))
-        .route("/v1/search", get(search))
-        .route("/v1/suggest", get(suggest))
-        .route("/v1/admin/session/login", post(admin_login))
-        .route("/v1/admin/session/me", get(admin_session_me))
-        .route("/v1/admin/session/logout", post(admin_logout))
-        .route("/v1/admin/usage", get(admin_usage))
-        .route("/v1/admin/api-keys", post(admin_create_key))
-        .route("/v1/admin/api-keys/{id}", delete(admin_revoke_key))
-        .route("/v1/admin/crawlers", post(admin_create_crawler))
-        .route("/v1/admin/frontier/seed", post(admin_seed_frontier))
-        .route("/v1/admin/crawl/overview", get(admin_crawl_overview))
-        .route("/v1/admin/crawl/rules", post(admin_create_rule))
+        .route("/healthz", get(handlers::search::healthz))
+        .route("/v1/search", get(handlers::search::browser_search))
+        .route("/v1/developer/search", get(handlers::search::search))
+        .route("/v1/suggest", get(handlers::search::suggest))
+        .route("/v1/admin/session/login", post(handlers::admin::admin_login))
+        .route("/v1/admin/session/me", get(handlers::admin::admin_session_me))
+        .route("/v1/admin/session/logout", post(handlers::admin::admin_logout))
+        .route("/v1/admin/usage", get(handlers::admin::admin_usage))
+        .route("/v1/admin/api-keys", post(handlers::admin::admin_create_key))
+        .route(
+            "/v1/admin/api-keys/{id}",
+            delete(handlers::admin::admin_revoke_key),
+        )
+        .route("/v1/admin/crawlers", post(handlers::admin::admin_create_crawler))
+        .route("/v1/admin/frontier/seed", post(handlers::admin::admin_seed_frontier))
+        .route(
+            "/v1/admin/crawl/overview",
+            get(handlers::admin::admin_crawl_overview),
+        )
+        .route("/v1/admin/crawl/rules", post(handlers::admin::admin_create_rule))
         .route(
             "/v1/admin/crawl/rules/{id}",
-            patch(admin_update_rule).delete(admin_delete_rule),
+            patch(handlers::admin::admin_update_rule)
+                .delete(handlers::admin::admin_delete_rule),
         )
-        .route("/v1/admin/documents", get(admin_list_documents))
-        .route("/v1/admin/documents/{id}", delete(admin_delete_document))
-        .route("/v1/admin/documents/purge-site", post(admin_purge_site))
-        .route("/internal/crawlers/claim", post(claim_jobs))
-        .route("/internal/crawlers/report", post(submit_crawl_report))
+        .route("/v1/admin/documents", get(handlers::admin::admin_list_documents))
+        .route(
+            "/v1/admin/documents/{id}",
+            delete(handlers::admin::admin_delete_document),
+        )
+        .route(
+            "/v1/admin/documents/purge-site",
+            post(handlers::admin::admin_purge_site),
+        )
+        .route(
+            "/v1/admin/crawler-join-key",
+            get(handlers::admin::admin_get_join_key).put(handlers::admin::admin_set_join_key),
+        )
+        .route("/v1/dev/register", post(handlers::developer::dev_register))
+        .route("/v1/dev/login", post(handlers::developer::dev_login))
+        .route("/v1/dev/me", get(handlers::developer::dev_me))
+        .route("/v1/dev/logout", post(handlers::developer::dev_logout))
+        .route(
+            "/v1/dev/keys",
+            get(handlers::developer::dev_list_keys).post(handlers::developer::dev_create_key),
+        )
+        .route(
+            "/v1/dev/keys/{id}",
+            delete(handlers::developer::dev_revoke_key),
+        )
+        .route(
+            "/v1/admin/developers",
+            get(handlers::admin::admin_list_developers),
+        )
+        .route(
+            "/v1/admin/developers/{user_id}",
+            patch(handlers::admin::admin_update_developer),
+        )
+        .route("/internal/crawlers/claim", post(handlers::crawler::claim_jobs))
+        .route(
+            "/internal/crawlers/report",
+            post(handlers::crawler::submit_crawl_report),
+        )
+        .route("/internal/crawlers/hello", post(handlers::crawler::crawler_hello))
+        .route("/internal/crawlers/join", post(handlers::crawler::crawler_join))
         .layer(
             CorsLayer::new()
                 .allow_origin(config.frontend_origin.parse::<axum::http::HeaderValue>()?)
@@ -99,333 +165,11 @@ async fn main() -> anyhow::Result<()> {
                 .allow_headers(Any),
         )
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(state));
+        .with_state(state);
 
     info!("findverse api listening on {}", config.bind_addr);
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-async fn healthz(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        documents: state.search_index.total_documents(),
-    })
-}
-
-async fn search(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<SearchResponse>, ApiError> {
-    if params.q.trim().is_empty() {
-        return Err(ApiError::BadRequest("query must not be empty".to_string()));
-    }
-
-    state
-        .developer_store
-        .validate_and_track(headers.get("authorization").and_then(|value| value.to_str().ok()))
-        .await?;
-
-    Ok(Json(state.search_index.search(params)))
-}
-
-async fn suggest(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<SuggestResponse>, ApiError> {
-    let query = params
-        .get("q")
-        .cloned()
-        .ok_or_else(|| ApiError::BadRequest("query parameter q is required".to_string()))?;
-
-    if query.trim().is_empty() {
-        return Err(ApiError::BadRequest("query must not be empty".to_string()));
-    }
-
-    Ok(Json(state.search_index.suggest(&query)))
-}
-
-async fn admin_login(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<AdminLoginRequest>,
-) -> Result<Json<crate::models::AdminSessionResponse>, ApiError> {
-    Ok(Json(state.admin_auth.login(request).await?))
-}
-
-async fn admin_session_me(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<crate::models::AdminSessionResponse>, ApiError> {
-    Ok(Json(
-        state
-            .admin_auth
-            .current_session(headers.get("authorization").and_then(|value| value.to_str().ok()))
-            .await?,
-    ))
-}
-
-async fn admin_logout(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<axum::http::StatusCode, ApiError> {
-    state
-        .admin_auth
-        .logout(headers.get("authorization").and_then(|value| value.to_str().ok()))
-        .await?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-async fn admin_usage(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<DeveloperUsageResponse>, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    Ok(Json(state.developer_store.usage(&admin.developer_id).await?))
-}
-
-async fn admin_create_key(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<CreateKeyRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    let created = state
-        .developer_store
-        .create_key(&admin.developer_id, request)
-        .await?;
-    state
-        .crawler_store
-        .record_admin_event(
-            &admin.developer_id,
-            "api-key-created",
-            "ok",
-            format!("created api key {}", created.name),
-            None,
-            None,
-        )
-        .await?;
-    Ok((axum::http::StatusCode::CREATED, Json(created)))
-}
-
-async fn admin_revoke_key(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    state
-        .developer_store
-        .revoke_key(&admin.developer_id, &id)
-        .await?;
-    state
-        .crawler_store
-        .record_admin_event(
-            &admin.developer_id,
-            "api-key-revoked",
-            "ok",
-            format!("revoked api key {id}"),
-            None,
-            None,
-        )
-        .await?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-async fn admin_create_crawler(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<CreateCrawlerRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    let created: CreatedCrawlerResponse = state
-        .crawler_store
-        .create_crawler(&admin.developer_id, request)
-        .await?;
-    Ok((axum::http::StatusCode::CREATED, Json(created)))
-}
-
-async fn admin_seed_frontier(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<SeedFrontierRequest>,
-) -> Result<Json<SeedFrontierResponse>, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    Ok(Json(
-        state
-            .crawler_store
-            .seed_frontier(&admin.developer_id, request)
-            .await?,
-    ))
-}
-
-async fn admin_crawl_overview(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<CrawlOverviewResponse>, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    Ok(Json(
-        state
-            .crawler_store
-            .overview(&admin.developer_id, state.search_index.total_documents())
-            .await?,
-    ))
-}
-
-async fn admin_create_rule(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<CreateCrawlRuleRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    let created = state
-        .crawler_store
-        .create_rule(&admin.developer_id, request)
-        .await?;
-    Ok((axum::http::StatusCode::CREATED, Json(created)))
-}
-
-async fn admin_update_rule(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(request): Json<UpdateCrawlRuleRequest>,
-) -> Result<Json<crate::models::CrawlRule>, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    Ok(Json(
-        state
-            .crawler_store
-            .update_rule(&admin.developer_id, &id, request)
-            .await?,
-    ))
-}
-
-async fn admin_delete_rule(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    state
-        .crawler_store
-        .delete_rule(&admin.developer_id, &id)
-        .await?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-async fn admin_list_documents(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(params): Query<DocumentListParams>,
-) -> Result<Json<DocumentListResponse>, ApiError> {
-    let _admin = authorize_admin(&state, &headers).await?;
-    Ok(Json(state.search_index.list_documents(params)))
-}
-
-async fn admin_delete_document(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    let deleted = state.search_index.delete_document(&id).await?;
-    if !deleted {
-        return Err(ApiError::NotFound("document not found".to_string()));
-    }
-
-    state
-        .crawler_store
-        .record_admin_event(
-            &admin.developer_id,
-            "document-deleted",
-            "ok",
-            format!("deleted indexed document {id}"),
-            None,
-            None,
-        )
-        .await?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-async fn admin_purge_site(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<PurgeSiteRequest>,
-) -> Result<Json<PurgeSiteResponse>, ApiError> {
-    let admin = authorize_admin(&state, &headers).await?;
-    let response = state.search_index.purge_site(&request.site).await?;
-    state
-        .crawler_store
-        .record_admin_event(
-            &admin.developer_id,
-            "site-purged",
-            "ok",
-            format!(
-                "purged {} documents for site {}",
-                response.deleted_documents, request.site
-            ),
-            Some(request.site),
-            None,
-        )
-        .await?;
-    Ok(Json(response))
-}
-
-async fn claim_jobs(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<ClaimJobsRequest>,
-) -> Result<Json<ClaimJobsResponse>, ApiError> {
-    let crawler_id = crawler_id_from_headers(&headers)?;
-    Ok(Json(
-        state
-            .crawler_store
-            .claim_jobs(
-                &crawler_id,
-                headers.get("authorization").and_then(|value| value.to_str().ok()),
-                request,
-            )
-            .await?,
-    ))
-}
-
-async fn submit_crawl_report(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<SubmitCrawlReportRequest>,
-) -> Result<Json<SubmitCrawlReportResponse>, ApiError> {
-    let crawler_id = crawler_id_from_headers(&headers)?;
-    Ok(Json(
-        state
-            .crawler_store
-            .submit_report(
-                &crawler_id,
-                headers.get("authorization").and_then(|value| value.to_str().ok()),
-                request,
-                &state.search_index,
-            )
-            .await?,
-    ))
-}
-
-async fn authorize_admin(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<admin::AdminIdentity, ApiError> {
-    state
-        .admin_auth
-        .authorize(headers.get("authorization").and_then(|value| value.to_str().ok()))
-        .await
-}
-
-fn crawler_id_from_headers(headers: &HeaderMap) -> Result<String, ApiError> {
-    headers
-        .get("x-crawler-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .ok_or_else(|| ApiError::Unauthorized("missing x-crawler-id header".to_string()))
 }

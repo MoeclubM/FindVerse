@@ -1,0 +1,89 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    FindVerse Crawler Setup
+.DESCRIPTION
+    Registers a crawler via join key and optionally starts the worker.
+.EXAMPLE
+    .\crawler-setup.ps1 -Server https://api.example.com -JoinKey my-secret-key -Start
+#>
+param(
+    [Parameter(Mandatory)][string]$Server,
+    [Parameter(Mandatory)][string]$JoinKey,
+    [string]$Name = "worker-$env:COMPUTERNAME",
+    [switch]$Start,
+    [int]$Concurrency = 4,
+    [string]$EnvFile = ".env.crawler"
+)
+
+$ErrorActionPreference = 'Stop'
+
+# Check cached credentials
+if (Test-Path $EnvFile) {
+    Write-Host "Found existing credentials in $EnvFile"
+    $envContent = Get-Content $EnvFile | ForEach-Object {
+        if ($_ -match '^(\w+)=(.*)$') {
+            [PSCustomObject]@{ Key = $Matches[1]; Value = $Matches[2] }
+        }
+    }
+    $crawlerId = ($envContent | Where-Object Key -eq 'CRAWLER_ID').Value
+    $crawlerKey = ($envContent | Where-Object Key -eq 'CRAWLER_KEY').Value
+
+    if ($crawlerId -and $crawlerKey) {
+        Write-Host "  Crawler ID: $crawlerId"
+        Write-Host "  Using cached credentials. Delete $EnvFile to re-register."
+        if ($Start) {
+            Write-Host "Starting crawler worker..."
+            $cargoPath = Get-Command cargo -ErrorAction SilentlyContinue
+            if ($cargoPath) {
+                & cargo run -p findverse-crawler -- worker --server $Server --crawler-id $crawlerId --crawler-key $crawlerKey --concurrency $Concurrency
+            } else {
+                Write-Error "cargo not found in PATH"
+            }
+        }
+        return
+    }
+}
+
+# Register
+Write-Host "Registering crawler '$Name' with server $Server..."
+$body = @{ join_key = $JoinKey; name = $Name } | ConvertTo-Json
+$uri = "$($Server.TrimEnd('/'))/internal/crawlers/join"
+
+try {
+    $response = Invoke-RestMethod -Uri $uri -Method Post -ContentType 'application/json' -Body $body
+} catch {
+    Write-Error "Failed to register: $_"
+    return
+}
+
+$crawlerId = $response.crawler_id
+$crawlerKey = $response.crawler_key
+$returnedName = $response.name
+
+Write-Host "Registered successfully!"
+Write-Host "  Crawler ID:   $crawlerId"
+Write-Host "  Crawler name: $returnedName"
+
+# Save credentials
+@"
+CRAWLER_ID=$crawlerId
+CRAWLER_KEY=$crawlerKey
+SERVER=$Server
+"@ | Set-Content $EnvFile -Encoding UTF8
+
+Write-Host "Credentials saved to $EnvFile"
+
+if ($Start) {
+    Write-Host "Starting crawler worker..."
+    $cargoPath = Get-Command cargo -ErrorAction SilentlyContinue
+    if ($cargoPath) {
+        & cargo run -p findverse-crawler -- worker --server $Server --crawler-id $crawlerId --crawler-key $crawlerKey --concurrency $Concurrency
+    } else {
+        Write-Error "cargo not found in PATH"
+    }
+} else {
+    Write-Host ""
+    Write-Host "To start the crawler manually:"
+    Write-Host "  cargo run -p findverse-crawler -- worker --server $Server --crawler-id $crawlerId --crawler-key `$crawlerKey"
+}

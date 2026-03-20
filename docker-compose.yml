@@ -9,6 +9,7 @@ services:
       FINDVERSE_INDEX_PATH: /data/bootstrap_documents.json
       FINDVERSE_DEVELOPER_STORE: /data/developer_store.json
       FINDVERSE_CRAWLER_STORE: /data/crawler_store.json
+      FINDVERSE_DEV_AUTH_STORE: /data/dev_auth_store.json
       FINDVERSE_FRONTEND_ORIGIN: http://localhost:${FINDVERSE_WEB_PORT:-3000}
       FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
       FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
@@ -39,10 +40,8 @@ services:
       - worker
       - --server
       - http://api:8080
-      - --crawler-id
-      - ${FINDVERSE_CRAWLER_ID:-missing-crawler-id}
-      - --crawler-key
-      - ${FINDVERSE_CRAWLER_KEY:-missing-crawler-key}
+      - --api-key
+      - ${FINDVERSE_CRAWLER_API_KEY:-missing-api-key}
       - --max-jobs
       - "10"
       - --poll-interval-secs

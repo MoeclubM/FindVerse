@@ -21,18 +21,45 @@ export type AdminSession = {
   token: string;
 };
 
+export type DevSession = {
+  user_id: string;
+  username: string;
+  token: string;
+};
+
+export type ApiKey = {
+  id: string;
+  name: string;
+  preview: string;
+  created_at: string;
+  revoked_at: string | null;
+};
+
 export type DeveloperUsage = {
   developer_id: string;
   qps_limit: number;
   daily_limit: number;
   used_today: number;
-  keys: Array<{
-    id: string;
-    name: string;
-    preview: string;
-    created_at: string;
-    revoked_at: string | null;
-  }>;
+  keys: ApiKey[];
+};
+
+export type AdminDeveloperRecord = {
+  user_id: string;
+  username: string;
+  enabled: boolean;
+  created_at: string;
+  qps_limit: number;
+  daily_limit: number;
+  used_today: number;
+  key_count: number;
+};
+
+export type CreatedApiKey = {
+  id: string;
+  name: string;
+  preview: string;
+  token: string;
+  created_at: string;
 };
 
 export type CrawlRule = {
@@ -122,8 +149,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return (await response.json()) as T;
 }
 
-export function search(query: string, apiKey: string) {
+export function search(query: string, apiKey?: string | null) {
   return request<SearchResponse>(`/v1/search?q=${encodeURIComponent(query)}`, { token: apiKey });
+}
+
+export function developerSearch(query: string, apiKey: string) {
+  return request<SearchResponse>(`/v1/developer/search?q=${encodeURIComponent(query)}`, {
+    token: apiKey,
+  });
 }
 
 export function login(username: string, password: string) {
@@ -155,13 +188,7 @@ export function getUsage(token: string) {
 }
 
 export function createApiKey(token: string, name: string) {
-  return request<{
-    id: string;
-    name: string;
-    preview: string;
-    token: string;
-    created_at: string;
-  }>("/v1/admin/api-keys", {
+  return request<CreatedApiKey>("/v1/admin/api-keys", {
     method: "POST",
     token,
     body: JSON.stringify({ name }),
@@ -294,5 +321,93 @@ export function purgeSite(token: string, site: string) {
     method: "POST",
     token,
     body: JSON.stringify({ site }),
+  });
+}
+
+export function registerDeveloper(username: string, password: string) {
+  return request<DevSession>("/v1/dev/register", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function loginDeveloper(username: string, password: string) {
+  return request<DevSession>("/v1/dev/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function getDeveloperSession(token: string) {
+  return request<DevSession>("/v1/dev/me", {
+    method: "GET",
+    token,
+  });
+}
+
+export function logoutDeveloper(token: string) {
+  return request<void>("/v1/dev/logout", {
+    method: "POST",
+    token,
+  });
+}
+
+export function getDeveloperKeys(token: string) {
+  return request<DeveloperUsage>("/v1/dev/keys", {
+    method: "GET",
+    token,
+  });
+}
+
+export function createDeveloperKey(token: string, name: string) {
+  return request<CreatedApiKey>("/v1/dev/keys", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function revokeDeveloperKey(token: string, id: string) {
+  return request<void>(`/v1/dev/keys/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export function listDevelopers(token: string) {
+  return request<AdminDeveloperRecord[]>("/v1/admin/developers", {
+    method: "GET",
+    token,
+  });
+}
+
+export function updateDeveloper(
+  token: string,
+  userId: string,
+  payload: {
+    qps_limit?: number;
+    daily_limit?: number;
+    enabled?: boolean;
+  },
+) {
+  return request<void>(`/v1/admin/developers/${userId}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getCrawlerJoinKey(token: string) {
+  return request<{ join_key: string | null }>("/v1/admin/crawler-join-key", {
+    method: "GET",
+    token,
+  });
+}
+
+export function setCrawlerJoinKey(token: string, joinKey: string | null) {
+  return request<void>("/v1/admin/crawler-join-key", {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ join_key: joinKey }),
   });
 }

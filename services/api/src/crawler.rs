@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -18,11 +19,12 @@ use crate::{
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJob, CrawlOverviewResponse,
         CrawlResultInput, CrawlRule, CrawlerMetadata, CreateCrawlRuleRequest,
-        CreateCrawlerRequest, CreatedCrawlerResponse, IndexedDocument, SeedFrontierRequest,
+        CreateCrawlerRequest, CreatedCrawlerResponse, HelloCrawlerRequest, HelloCrawlerResponse,
+        IndexedDocument, JoinCrawlerRequest, JoinCrawlerResponse, SeedFrontierRequest,
         SeedFrontierResponse, SubmitCrawlReportRequest, SubmitCrawlReportResponse,
         UpdateCrawlRuleRequest,
     },
-    store::{SearchIndex, derive_terms, display_url, stable_document_id},
+    store::{SearchIndex, atomic_write, derive_terms, display_url, stable_document_id},
 };
 
 #[derive(Debug, Clone)]
@@ -45,6 +47,8 @@ struct CrawlerStoreState {
     in_flight: HashMap<String, InFlightRecord>,
     #[serde(default)]
     events: VecDeque<StoredCrawlEvent>,
+    #[serde(default)]
+    join_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +59,9 @@ struct StoredCrawler {
     name: String,
     preview: String,
     key_hash: String,
+    /// Set when the crawler was auto-registered via an API key (hello endpoint).
+    #[serde(default)]
+    api_key_hash: Option<String>,
     created_at: DateTime<Utc>,
     #[serde(default)]
     revoked_at: Option<DateTime<Utc>>,
@@ -170,6 +177,7 @@ impl CrawlerStore {
             name: clean_name.to_string(),
             preview: preview.clone(),
             key_hash: hash_token(&key),
+            api_key_hash: None,
             created_at: Utc::now(),
             revoked_at: None,
             last_seen_at: None,
@@ -200,6 +208,165 @@ impl CrawlerStore {
             key,
             created_at: crawler.created_at,
         })
+    }
+
+    /// Auto-register a crawler using a developer API key.
+    /// Idempotent: returns the same crawler_id for the same api_key_hash + developer.
+    pub async fn hello(
+        &self,
+        developer_id: &str,
+        api_key_hash: &str,
+        request: HelloCrawlerRequest,
+    ) -> Result<HelloCrawlerResponse, ApiError> {
+        let mut state = self.inner.write().await;
+
+        // Return existing registration if one already exists for this api key
+        if let Some(existing) = state
+            .crawlers
+            .values()
+            .find(|c| {
+                c.owner_developer_id == developer_id
+                    && c.api_key_hash.as_deref() == Some(api_key_hash)
+                    && c.revoked_at.is_none()
+            })
+            .cloned()
+        {
+            return Ok(HelloCrawlerResponse {
+                crawler_id: existing.id,
+                name: existing.name,
+            });
+        }
+
+        let clean_name = request
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| n.len() >= 2)
+            .unwrap_or("auto-crawler");
+
+        let crawler = StoredCrawler {
+            id: Uuid::now_v7().to_string(),
+            owner_developer_id: developer_id.to_string(),
+            name: clean_name.to_string(),
+            preview: format!("api:{}", &developer_id[..8.min(developer_id.len())]),
+            key_hash: String::new(),
+            api_key_hash: Some(api_key_hash.to_string()),
+            created_at: Utc::now(),
+            revoked_at: None,
+            last_seen_at: None,
+            last_claimed_at: None,
+            jobs_claimed: 0,
+            jobs_reported: 0,
+        };
+
+        let response = HelloCrawlerResponse {
+            crawler_id: crawler.id.clone(),
+            name: crawler.name.clone(),
+        };
+        push_event(
+            &mut state,
+            developer_id,
+            "crawler-registered",
+            "ok",
+            format!("auto-registered crawler {}", crawler.name),
+            None,
+            Some(crawler.id.clone()),
+        );
+        state.crawlers.insert(crawler.id.clone(), crawler);
+        self.persist_locked(&state).await?;
+
+        Ok(response)
+    }
+
+    /// Register a crawler using a join key (no admin/developer credentials needed).
+    pub async fn join(
+        &self,
+        config_join_key: Option<&str>,
+        request: JoinCrawlerRequest,
+    ) -> Result<JoinCrawlerResponse, ApiError> {
+        let expected = config_join_key
+            .or_else(|| {
+                // Fallback: try the persisted join key (set via admin API)
+                None // checked inside the lock below
+            });
+
+        let mut state = self.inner.write().await;
+
+        // Resolve expected key: config takes precedence, then persisted state
+        let expected_key = match expected {
+            Some(k) => k.to_string(),
+            None => state
+                .join_key
+                .clone()
+                .ok_or_else(|| {
+                    ApiError::BadRequest("crawler join key is not configured".to_string())
+                })?,
+        };
+
+        if request.join_key != expected_key {
+            return Err(ApiError::Unauthorized("invalid join key".to_string()));
+        }
+
+        let clean_name = request
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| n.len() >= 2)
+            .unwrap_or("join-crawler");
+
+        let key = generate_token("fvc");
+        let preview = format!("{}...{}", &key[..8], &key[key.len() - 4..]);
+        let crawler = StoredCrawler {
+            id: Uuid::now_v7().to_string(),
+            owner_developer_id: "system:crawlers".to_string(),
+            name: clean_name.to_string(),
+            preview: preview.clone(),
+            key_hash: hash_token(&key),
+            api_key_hash: None,
+            created_at: Utc::now(),
+            revoked_at: None,
+            last_seen_at: None,
+            last_claimed_at: None,
+            jobs_claimed: 0,
+            jobs_reported: 0,
+        };
+
+        let response = JoinCrawlerResponse {
+            crawler_id: crawler.id.clone(),
+            crawler_key: key,
+            name: crawler.name.clone(),
+        };
+
+        push_event(
+            &mut state,
+            "system:crawlers",
+            "crawler-joined",
+            "ok",
+            format!("crawler {} joined via join key", crawler.name),
+            None,
+            Some(crawler.id.clone()),
+        );
+        state.crawlers.insert(crawler.id.clone(), crawler);
+        self.persist_locked(&state).await?;
+
+        Ok(response)
+    }
+
+    /// Get the current crawler join key (persisted or from config).
+    pub async fn get_join_key(&self, config_join_key: Option<&str>) -> Option<String> {
+        if let Some(k) = config_join_key {
+            return Some(k.to_string());
+        }
+        let state = self.inner.read().await;
+        state.join_key.clone()
+    }
+
+    /// Set or rotate the persisted crawler join key.
+    pub async fn set_join_key(&self, new_key: Option<String>) -> Result<(), ApiError> {
+        let mut state = self.inner.write().await;
+        state.join_key = new_key;
+        self.persist_locked(&state).await?;
+        Ok(())
     }
 
     pub async fn create_rule(
@@ -329,11 +496,7 @@ impl CrawlerStore {
         developer_id: &str,
         indexed_documents: usize,
     ) -> Result<CrawlOverviewResponse, ApiError> {
-        let mut state = self.inner.write().await;
-        let changed = apply_due_rules(&mut state, Some(developer_id));
-        if changed {
-            self.persist_locked(&state).await?;
-        }
+        let state = self.inner.read().await;
 
         let mut crawlers = state
             .crawlers
@@ -461,11 +624,6 @@ impl CrawlerStore {
                 crawler.name.clone(),
             )
         };
-
-        let changed = apply_due_rules(&mut state, Some(&owner_developer_id));
-        if changed {
-            self.persist_locked(&state).await?;
-        }
 
         let mut jobs = Vec::new();
         for _ in 0..max_jobs {
@@ -610,6 +768,17 @@ impl CrawlerStore {
         })
     }
 
+    pub async fn run_maintenance(&self, claim_timeout: Duration) -> Result<(), ApiError> {
+        let mut state = self.inner.write().await;
+        let now = Utc::now();
+        let mut changed = apply_due_rules(&mut state, now, None);
+        changed |= requeue_stale_in_flight(&mut state, now, claim_timeout);
+        if changed {
+            self.persist_locked(&state).await?;
+        }
+        Ok(())
+    }
+
     pub async fn record_admin_event(
         &self,
         developer_id: &str,
@@ -636,13 +805,16 @@ impl CrawlerStore {
     async fn persist_locked(&self, state: &CrawlerStoreState) -> Result<(), ApiError> {
         let raw =
             serde_json::to_string_pretty(state).map_err(|error| ApiError::Internal(error.into()))?;
-        fs::write(&self.path, raw).await?;
+        atomic_write(&self.path, &raw).await?;
         Ok(())
     }
 }
 
-fn apply_due_rules(state: &mut CrawlerStoreState, developer_id: Option<&str>) -> bool {
-    let now = Utc::now();
+fn apply_due_rules(
+    state: &mut CrawlerStoreState,
+    now: DateTime<Utc>,
+    developer_id: Option<&str>,
+) -> bool {
     let mut changed = false;
     let due_rules = state
         .rules
@@ -692,6 +864,44 @@ fn apply_due_rules(state: &mut CrawlerStoreState, developer_id: Option<&str>) ->
                 None,
             );
         }
+    }
+
+    changed
+}
+
+fn requeue_stale_in_flight(
+    state: &mut CrawlerStoreState,
+    now: DateTime<Utc>,
+    claim_timeout: Duration,
+) -> bool {
+    let timeout = chrono::Duration::from_std(claim_timeout).unwrap_or_else(|_| chrono::Duration::seconds(0));
+    let stale_job_ids = state
+        .in_flight
+        .iter()
+        .filter_map(|(job_id, record)| {
+            (now.signed_duration_since(record.claimed_at) >= timeout).then_some(job_id.clone())
+        })
+        .collect::<Vec<_>>();
+
+    let mut changed = false;
+    for job_id in stale_job_ids {
+        let Some(record) = state.in_flight.remove(&job_id) else {
+            continue;
+        };
+        let owner_developer_id = record.job.owner_developer_id.clone();
+        let url = record.job.url.clone();
+        let crawler_id = record.crawler_id.clone();
+        state.frontier.push_front(record.job);
+        push_event(
+            state,
+            &owner_developer_id,
+            "stale-job-requeued",
+            "ok",
+            format!("requeued stale in-flight job {job_id}"),
+            Some(url),
+            Some(crawler_id),
+        );
+        changed = true;
     }
 
     changed
@@ -858,7 +1068,13 @@ fn validate_crawler(crawler: &StoredCrawler, token_hash: &str) -> Result<(), Api
     if crawler.revoked_at.is_some() {
         return Err(ApiError::Unauthorized("crawler key is revoked".to_string()));
     }
-    if crawler.key_hash != token_hash {
+    let matches_key = !crawler.key_hash.is_empty() && crawler.key_hash == token_hash;
+    let matches_api_key = crawler
+        .api_key_hash
+        .as_deref()
+        .map(|h| !h.is_empty() && h == token_hash)
+        .unwrap_or(false);
+    if !matches_key && !matches_api_key {
         return Err(ApiError::Unauthorized("invalid crawler key".to_string()));
     }
     Ok(())
@@ -951,16 +1167,82 @@ async fn ensure_file_with_fallbacks(
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{env, time::Duration};
+
+    use chrono::{Duration as ChronoDuration, Utc};
 
     use super::{
-        CrawlerStore, CrawlerStoreState, enqueue_urls, normalize_url, push_event, take_frontier_job,
+        CrawlerStore, CrawlerStoreState, FrontierRecord, InFlightRecord, apply_due_rules,
+        enqueue_urls, normalize_url, push_event, requeue_stale_in_flight, take_frontier_job,
     };
     use tokio::fs;
     use uuid::Uuid;
 
     #[test]
-    fn normalize_url_rejects_non_http() {
+    fn apply_due_rules_enqueues_enabled_rules() {
+        let mut state = CrawlerStoreState::default();
+        state.rules.insert(
+            "rule-1".to_string(),
+            super::StoredCrawlRule {
+                id: "rule-1".to_string(),
+                owner_developer_id: "local:admin".to_string(),
+                name: "Hourly".to_string(),
+                seed_url: "https://example.com/seed".to_string(),
+                interval_minutes: 60,
+                max_depth: 2,
+                enabled: true,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                last_enqueued_at: None,
+            },
+        );
+
+        let changed = apply_due_rules(&mut state, Utc::now(), None);
+
+        assert!(changed);
+        assert_eq!(state.frontier.len(), 1);
+        assert!(state
+            .events
+            .iter()
+            .any(|event| event.kind == "rule-enqueued"));
+    }
+
+    #[test]
+    fn requeue_stale_jobs_returns_jobs_to_frontier() {
+        let mut state = CrawlerStoreState::default();
+        let job = FrontierRecord {
+            job_id: "job-1".to_string(),
+            owner_developer_id: "local:admin".to_string(),
+            url: "https://example.com/stale".to_string(),
+            source: "rule:test".to_string(),
+            depth: 0,
+            max_depth: 2,
+            discovered_at: Utc::now(),
+            submitted_by: None,
+            rule_id: Some("rule-1".to_string()),
+        };
+        state.in_flight.insert(
+            job.job_id.clone(),
+            InFlightRecord {
+                crawler_id: "crawler-1".to_string(),
+                job: job.clone(),
+                claimed_at: Utc::now() - ChronoDuration::minutes(10),
+            },
+        );
+
+        let changed = requeue_stale_in_flight(&mut state, Utc::now(), Duration::from_secs(300));
+
+        assert!(changed);
+        assert!(state.in_flight.is_empty());
+        assert_eq!(state.frontier.front().map(|record| record.job_id.as_str()), Some("job-1"));
+        assert!(state
+            .events
+            .iter()
+            .any(|event| event.kind == "stale-job-requeued"));
+    }
+
+    #[test]
+    fn normalize_url_rejects_invalid_schemes_and_fragments() {
         assert!(normalize_url("ftp://example.com/file").is_none());
         assert_eq!(
             normalize_url("https://example.com/a#fragment"),

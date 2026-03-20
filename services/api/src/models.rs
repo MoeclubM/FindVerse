@@ -345,3 +345,74 @@ pub struct HealthResponse {
     pub status: &'static str,
     pub documents: usize,
 }
+
+// Developer self-service auth
+#[derive(Debug, Clone, Deserialize)]
+pub struct DevRegisterRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DevLoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DevSessionResponse {
+    pub user_id: String,
+    pub username: String,
+    pub token: String,
+}
+
+// Admin developer management
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminDeveloperRecord {
+    pub user_id: String,
+    pub username: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub qps_limit: u32,
+    pub daily_limit: u32,
+    pub used_today: u32,
+    pub key_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateDeveloperRequest {
+    pub qps_limit: Option<u32>,
+    pub daily_limit: Option<u32>,
+    pub enabled: Option<bool>,
+}
+
+// Crawler auto-registration
+#[derive(Debug, Clone, Deserialize)]
+pub struct HelloCrawlerRequest {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HelloCrawlerResponse {
+    pub crawler_id: String,
+    pub name: String,
+}
+
+// Crawler join key
+#[derive(Debug, Clone, Deserialize)]
+pub struct JoinCrawlerRequest {
+    pub join_key: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JoinCrawlerResponse {
+    pub crawler_id: String,
+    pub crawler_key: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlerJoinKeyResponse {
+    pub join_key: Option<String>,
+}

@@ -1,3 +1,80 @@
 {
-  "records": {}
+  "records": {
+    "local:admin": {
+      "developer_id": "local:admin",
+      "qps_limit": 5,
+      "daily_limit": 10000,
+      "used_today": 0,
+      "usage_day": "2026-03-20",
+      "keys": [
+        {
+          "id": "019d09eb-e9d8-77e0-b0ae-2eef84567f3f",
+          "name": "Admin worker key",
+          "preview": "fvk_H7yV...TdEf",
+          "token_hash": "b7ac16d4f5d9787001ad5d9f1798c9fec1e58ead020230f6d1b21c388408a5ed",
+          "created_at": "2026-03-20T06:25:49.016026100Z",
+          "revoked_at": null
+        },
+        {
+          "id": "019d0a8a-d228-7ad1-812c-0abb84c1be7e",
+          "name": "Admin worker key",
+          "preview": "fvk_ydEJ...8yov",
+          "token_hash": "f4049e930569767a5972061177e82302862ec1c61f7f33cacb31ee133c6b419e",
+          "created_at": "2026-03-20T09:19:23.176754500Z",
+          "revoked_at": null
+        }
+      ]
+    },
+    "dev:019d0a8a-cfc5-79c2-88c0-591d4c05e8eb": {
+      "developer_id": "dev:019d0a8a-cfc5-79c2-88c0-591d4c05e8eb",
+      "qps_limit": 7,
+      "daily_limit": 1234,
+      "used_today": 4,
+      "usage_day": "2026-03-20",
+      "keys": [
+        {
+          "id": "019d0a8a-d012-7b62-8e9e-7d1f5bf88ff8",
+          "name": "E2E key",
+          "preview": "fvk_XLFA...Nly9",
+          "token_hash": "1f277f7291f59ec49d6c3ddb93f9b6a132ce5814108b562b8d0942782361a976",
+          "created_at": "2026-03-20T09:19:22.642648Z",
+          "revoked_at": null
+        }
+      ]
+    },
+    "dev:019d09eb-e75e-7851-a79f-83625c3aff98": {
+      "developer_id": "dev:019d09eb-e75e-7851-a79f-83625c3aff98",
+      "qps_limit": 7,
+      "daily_limit": 1234,
+      "used_today": 4,
+      "usage_day": "2026-03-20",
+      "keys": [
+        {
+          "id": "019d09eb-e7d3-7b70-867a-6f19d2951e51",
+          "name": "E2E key",
+          "preview": "fvk_MyvY...te88",
+          "token_hash": "324207a7967716953e7e6dcb5952d3d0d88fcfb6ab79dbd17a780063abe5724e",
+          "created_at": "2026-03-20T06:25:48.499022Z",
+          "revoked_at": null
+        }
+      ]
+    },
+    "dev:019d09ea-cd58-7fd2-8ebb-0bb62e54f89d": {
+      "developer_id": "dev:019d09ea-cd58-7fd2-8ebb-0bb62e54f89d",
+      "qps_limit": 5,
+      "daily_limit": 10000,
+      "used_today": 0,
+      "usage_day": "2026-03-20",
+      "keys": [
+        {
+          "id": "019d09ea-ce34-76e3-91e4-1b5757b28aed",
+          "name": "E2E key",
+          "preview": "fvk_F4Ex...7gle",
+          "token_hash": "26868bcee18743100bf5bcabc3783268f6fbb5f1966fb5e03176418633cd6453",
+          "created_at": "2026-03-20T06:24:36.404198200Z",
+          "revoked_at": null
+        }
+      ]
+    }
+  }
 }
