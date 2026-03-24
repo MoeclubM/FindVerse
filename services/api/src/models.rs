@@ -1,4 +1,5 @@
 use chrono::{DateTime, Duration, Utc};
+use findverse_common::{CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,13 +13,49 @@ pub struct IndexedDocument {
     pub language: String,
     pub last_crawled_at: DateTime<Utc>,
     #[serde(default)]
+    pub canonical_url: Option<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub content_hash: Option<String>,
+    #[serde(default)]
     pub suggest_terms: Vec<String>,
     #[serde(default = "default_site_authority")]
     pub site_authority: f32,
+    #[serde(default = "default_content_type")]
+    pub content_type: String,
+    #[serde(default)]
+    pub word_count: u32,
+    #[serde(default)]
+    pub source_job_id: Option<String>,
+    #[serde(default = "default_parser_version")]
+    pub parser_version: i32,
+    #[serde(default = "default_schema_version")]
+    pub schema_version: i32,
+    #[serde(default = "default_index_version")]
+    pub index_version: i32,
+    #[serde(default)]
+    pub duplicate_of: Option<String>,
 }
 
 fn default_site_authority() -> f32 {
     0.5
+}
+
+fn default_content_type() -> String {
+    "text/html".to_string()
+}
+
+fn default_parser_version() -> i32 {
+    CURRENT_PARSER_VERSION
+}
+
+fn default_schema_version() -> i32 {
+    CURRENT_SCHEMA_VERSION
+}
+
+fn default_index_version() -> i32 {
+    CURRENT_INDEX_VERSION
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,7 +109,7 @@ impl Freshness {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub id: String,
     pub title: String,
@@ -84,13 +121,15 @@ pub struct SearchResult {
     pub score: f32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub query: String,
     pub took_ms: u128,
     pub total_estimate: usize,
     pub next_offset: Option<usize>,
     pub results: Vec<SearchResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub did_you_mean: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,7 +146,7 @@ pub struct AdminLoginRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AdminSessionResponse {
-    pub developer_id: String,
+    pub user_id: String,
     pub username: String,
     pub token: String,
 }
@@ -138,24 +177,14 @@ pub struct ApiKeyMetadata {
 #[derive(Debug, Clone, Serialize)]
 pub struct DeveloperUsageResponse {
     pub developer_id: String,
-    pub qps_limit: u32,
     pub daily_limit: u32,
     pub used_today: u32,
     pub keys: Vec<ApiKeyMetadata>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct CreateCrawlerRequest {
+pub struct RenameCrawlerRequest {
     pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CreatedCrawlerResponse {
-    pub id: String,
-    pub name: String,
-    pub preview: String,
-    pub key: String,
-    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,11 +259,13 @@ pub struct CrawlEvent {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CrawlOverviewResponse {
-    pub developer_id: String,
+    pub owner_id: String,
     pub frontier_depth: usize,
     pub known_urls: usize,
     pub in_flight_jobs: usize,
     pub indexed_documents: usize,
+    pub duplicate_documents: usize,
+    pub terminal_failures: usize,
     pub crawlers: Vec<CrawlerMetadata>,
     pub rules: Vec<CrawlRule>,
     pub recent_events: Vec<CrawlEvent>,
@@ -274,6 +305,7 @@ pub struct CrawlJob {
     pub source: String,
     pub depth: u32,
     pub max_depth: u32,
+    pub attempt_count: u32,
     pub discovered_at: DateTime<Utc>,
 }
 
@@ -295,6 +327,8 @@ pub struct CrawlResultInput {
     pub url: String,
     pub status_code: u16,
     pub fetched_at: DateTime<Utc>,
+    pub final_url: Option<String>,
+    pub content_type: Option<String>,
     pub title: Option<String>,
     pub snippet: Option<String>,
     pub body: Option<String>,
@@ -302,11 +336,16 @@ pub struct CrawlResultInput {
     #[serde(default)]
     pub discovered_urls: Vec<String>,
     pub site_authority: Option<f32>,
+    pub retryable: Option<bool>,
+    pub error_kind: Option<String>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubmitCrawlReportResponse {
     pub accepted_documents: usize,
+    pub duplicate_documents: usize,
+    pub skipped_documents: usize,
     pub discovered_urls: usize,
     pub frontier_depth: usize,
     pub indexed_documents: usize,
@@ -317,10 +356,20 @@ pub struct DocumentSummary {
     pub id: String,
     pub title: String,
     pub url: String,
+    pub canonical_url: String,
+    pub host: String,
     pub display_url: String,
     pub snippet: String,
     pub language: String,
     pub last_crawled_at: DateTime<Utc>,
+    pub content_type: String,
+    pub word_count: u32,
+    pub site_authority: f32,
+    pub parser_version: i32,
+    pub schema_version: i32,
+    pub index_version: i32,
+    pub source_job_id: Option<String>,
+    pub duplicate_of: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -344,6 +393,15 @@ pub struct PurgeSiteResponse {
 pub struct HealthResponse {
     pub status: &'static str,
     pub documents: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReadyResponse {
+    pub status: &'static str,
+    pub postgres: bool,
+    pub redis: bool,
+    pub opensearch: bool,
+    pub frontier_depth: i32,
 }
 
 // Developer self-service auth
@@ -373,7 +431,6 @@ pub struct AdminDeveloperRecord {
     pub username: String,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
-    pub qps_limit: u32,
     pub daily_limit: u32,
     pub used_today: u32,
     pub key_count: usize,
@@ -381,21 +438,8 @@ pub struct AdminDeveloperRecord {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateDeveloperRequest {
-    pub qps_limit: Option<u32>,
     pub daily_limit: Option<u32>,
     pub enabled: Option<bool>,
-}
-
-// Crawler auto-registration
-#[derive(Debug, Clone, Deserialize)]
-pub struct HelloCrawlerRequest {
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct HelloCrawlerResponse {
-    pub crawler_id: String,
-    pub name: String,
 }
 
 // Crawler join key
@@ -415,4 +459,56 @@ pub struct JoinCrawlerResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlerJoinKeyResponse {
     pub join_key: Option<String>,
+}
+
+// Crawl job management
+#[derive(Debug, Clone, Serialize)]
+pub struct CrawlJobDetail {
+    pub id: String,
+    pub url: String,
+    pub final_url: Option<String>,
+    pub status: String,
+    pub depth: u32,
+    pub max_depth: u32,
+    pub attempt_count: u32,
+    pub max_attempts: u32,
+    pub source: String,
+    pub rule_id: Option<String>,
+    pub claimed_by: Option<String>,
+    pub discovered_at: DateTime<Utc>,
+    pub claimed_at: Option<DateTime<Utc>>,
+    pub next_retry_at: Option<DateTime<Utc>>,
+    pub content_type: Option<String>,
+    pub http_status: Option<u16>,
+    pub discovered_urls_count: usize,
+    pub accepted_document_id: Option<String>,
+    pub failure_kind: Option<String>,
+    pub failure_message: Option<String>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CrawlJobListResponse {
+    pub total: usize,
+    pub next_offset: Option<usize>,
+    pub jobs: Vec<CrawlJobDetail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CrawlJobStats {
+    pub queued: usize,
+    pub claimed: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub blocked: usize,
+    pub dead_letter: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CrawlJobListParams {
+    pub status: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
 }

@@ -1,36 +1,65 @@
-use std::{
-    collections::BTreeSet,
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
+use std::{path::PathBuf, time::Duration};
 
-use anyhow::anyhow;
-use chrono::{DateTime, Utc};
+use anyhow::Context;
+use chrono::Utc;
+use redis::AsyncCommands;
+use reqwest::{Client, StatusCode};
+use serde_json::json;
+use sqlx::PgPool;
+use tracing::warn;
 
 use crate::{
     error::ApiError,
+    indexing::{
+        IndexedDocumentPayload, IngestBatchOutcome, NormalizedDocument, normalize_document,
+    },
     models::{
-        DocumentListParams, DocumentListResponse, DocumentSummary, Freshness, IndexedDocument,
-        PurgeSiteResponse, SearchParams, SearchResponse, SearchResult, SuggestResponse,
+        DocumentListParams, DocumentListResponse, DocumentSummary, IndexedDocument,
+        PurgeSiteResponse, ReadyResponse, SearchParams, SearchResponse, SuggestResponse,
+    },
+    query::pipeline::{
+        OpenSearchSearchResponse, OpenSearchSuggestResponse, PreparedSearch, build_suggest_body,
+        map_suggest_response,
     },
 };
 
-use super::{atomic_write, ensure_file_with_fallbacks, tokenize};
+use super::ensure_file_with_fallbacks;
 
 #[derive(Debug, Clone)]
 pub struct SearchIndex {
-    path: PathBuf,
-    inner: Arc<RwLock<SearchState>>,
-}
-
-#[derive(Debug, Clone)]
-struct SearchState {
-    documents: Vec<IndexedDocument>,
-    suggestions: Vec<String>,
+    pg_pool: PgPool,
+    http_client: Client,
+    opensearch_url: String,
+    opensearch_index: String,
+    redis_client: redis::Client,
 }
 
 impl SearchIndex {
-    pub async fn load(path: PathBuf) -> anyhow::Result<Self> {
+    pub async fn connect(
+        pg_pool: PgPool,
+        opensearch_url: String,
+        opensearch_index: String,
+        redis_client: redis::Client,
+    ) -> anyhow::Result<Self> {
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .context("failed to build opensearch client")?;
+
+        let index = Self {
+            pg_pool,
+            http_client,
+            opensearch_url: opensearch_url.trim_end_matches('/').to_string(),
+            opensearch_index,
+            redis_client,
+        };
+
+        index.ensure_index().await?;
+
+        Ok(index)
+    }
+
+    pub async fn bootstrap_from_path(&self, path: PathBuf) -> anyhow::Result<()> {
         ensure_file_with_fallbacks(
             &path,
             "[]",
@@ -47,111 +76,164 @@ impl SearchIndex {
         let documents: Vec<IndexedDocument> = serde_json::from_str(&raw)
             .map_err(|e| anyhow::anyhow!(e).context("failed to parse bootstrap document file"))?;
 
-        Ok(Self {
-            path,
-            inner: Arc::new(RwLock::new(SearchState {
-                suggestions: rebuild_suggestions(&documents),
-                documents,
-            })),
-        })
+        if documents.is_empty() {
+            return Ok(());
+        }
+
+        let existing = sqlx::query_scalar::<_, i64>("select count(*) from documents")
+            .fetch_one(&self.pg_pool)
+            .await
+            .unwrap_or(0);
+        if existing == 0 {
+            if let Err(error) = self.upsert_documents(documents).await {
+                warn!(?error, "failed to import bootstrap documents");
+            }
+        }
+
+        Ok(())
     }
 
-    pub fn total_documents(&self) -> usize {
-        self.inner
-            .read()
-            .expect("search index poisoned")
-            .documents
-            .len()
-    }
+    pub async fn readiness(&self, postgres_ready: bool, redis_ready: bool) -> ReadyResponse {
+        let opensearch_ready = self.ping().await;
+        let frontier_depth =
+            sqlx::query_scalar::<_, i32>("select count(*) from crawl_jobs where status = 'queued'")
+                .fetch_one(&self.pg_pool)
+                .await
+                .unwrap_or(0);
 
-    pub fn search(&self, params: SearchParams) -> SearchResponse {
-        let started = std::time::Instant::now();
-        let tokens = tokenize(&params.q);
-        let freshness_limit = params.freshness.max_age();
-        let now = Utc::now();
-        let lang_filter = params.lang.as_deref().map(str::to_lowercase);
-        let site_filter = params.site.as_deref().map(str::to_lowercase);
-        let state = self.inner.read().expect("search index poisoned");
-
-        let mut matches = state
-            .documents
-            .iter()
-            .filter_map(|document| {
-                if let Some(limit) = freshness_limit
-                    && now.signed_duration_since(document.last_crawled_at) > limit
-                {
-                    return None;
-                }
-
-                if let Some(lang) = &lang_filter
-                    && document.language.to_lowercase() != *lang
-                {
-                    return None;
-                }
-
-                if let Some(site) = &site_filter
-                    && !document.url.to_lowercase().contains(site)
-                {
-                    return None;
-                }
-
-                let score = score_document(document, &tokens, params.freshness);
-                if score <= 0.0 {
-                    return None;
-                }
-
-                Some(SearchResult {
-                    id: document.id.clone(),
-                    title: document.title.clone(),
-                    url: document.url.clone(),
-                    display_url: document.display_url.clone(),
-                    snippet: choose_snippet(document, &tokens),
-                    language: document.language.clone(),
-                    last_crawled_at: document.last_crawled_at,
-                    score,
-                })
-            })
-            .collect::<Vec<_>>();
-
-        matches.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| right.last_crawled_at.cmp(&left.last_crawled_at))
-        });
-
-        let total = matches.len();
-        let page = matches
-            .into_iter()
-            .skip(params.offset)
-            .take(params.limit.min(20))
-            .collect::<Vec<_>>();
-
-        let next_offset = if params.offset + page.len() < total {
-            Some(params.offset + page.len())
-        } else {
-            None
-        };
-
-        SearchResponse {
-            query: params.q,
-            took_ms: started.elapsed().as_millis(),
-            total_estimate: total,
-            next_offset,
-            results: page,
+        ReadyResponse {
+            status: if postgres_ready && redis_ready && opensearch_ready {
+                "ready"
+            } else {
+                "degraded"
+            },
+            postgres: postgres_ready,
+            redis: redis_ready,
+            opensearch: opensearch_ready,
+            frontier_depth,
         }
     }
 
-    pub fn suggest(&self, query: &str) -> SuggestResponse {
-        let query_normalized = query.trim().to_lowercase();
-        let state = self.inner.read().expect("search index poisoned");
-        let suggestions = state
-            .suggestions
-            .iter()
-            .filter(|value| value.starts_with(&query_normalized))
-            .take(8)
-            .cloned()
-            .collect::<Vec<_>>();
+    pub async fn ping(&self) -> bool {
+        self.http_client
+            .get(self.index_endpoint(""))
+            .send()
+            .await
+            .map(|response| {
+                response.status().is_success() || response.status() == StatusCode::NOT_FOUND
+            })
+            .unwrap_or(false)
+    }
+
+    pub async fn total_documents(&self) -> usize {
+        sqlx::query_scalar::<_, i64>("select count(*) from documents where duplicate_of is null")
+            .fetch_one(&self.pg_pool)
+            .await
+            .unwrap_or(0) as usize
+    }
+
+    pub async fn duplicate_documents(&self) -> usize {
+        sqlx::query_scalar::<_, i64>(
+            "select count(*) from documents where duplicate_of is not null",
+        )
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0) as usize
+    }
+
+    pub async fn search(&self, params: SearchParams) -> SearchResponse {
+        let plan = PreparedSearch::from_params(&params);
+
+        if let Some(cache_key) = plan.cache_key.as_deref() {
+            if let Ok(cached) = self.get_cached_search(cache_key).await {
+                return cached;
+            }
+        }
+
+        let response = match self
+            .http_client
+            .post(self.index_endpoint("/_search"))
+            .json(&plan.request_body())
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                warn!(?error, query = %plan.query, "opensearch query failed");
+                return plan.empty_response();
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            warn!(status = %status, body = %body, query = %plan.query, "opensearch returned error");
+            return plan.empty_response();
+        }
+
+        let payload: OpenSearchSearchResponse = match response.json().await {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(?error, query = %plan.query, "failed to decode opensearch search response");
+                return plan.empty_response();
+            }
+        };
+
+        let mapped = plan.map_response(payload);
+
+        if let Some(cache_key) = plan.cache_key.as_deref() {
+            self.set_cached_search(cache_key, &mapped).await;
+        }
+
+        mapped
+    }
+
+    async fn get_cached_search(&self, key: &str) -> Result<SearchResponse, ()> {
+        let mut conn = self
+            .redis_client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|_| ())?;
+        let cached: String = conn.get(key).await.map_err(|_| ())?;
+        serde_json::from_str(&cached).map_err(|_| ())
+    }
+
+    async fn set_cached_search(&self, key: &str, response: &SearchResponse) {
+        if let Ok(mut conn) = self.redis_client.get_multiplexed_async_connection().await {
+            if let Ok(json) = serde_json::to_string(response) {
+                let _: Result<(), _> = conn.set_ex(key, json, 60).await;
+            }
+        }
+    }
+
+    pub async fn suggest(&self, query: &str) -> SuggestResponse {
+        let suggestions = match self
+            .http_client
+            .post(self.index_endpoint("/_search"))
+            .json(&build_suggest_body(query))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<OpenSearchSuggestResponse>().await {
+                    Ok(body) => return map_suggest_response(query, body),
+                    Err(error) => {
+                        warn!(?error, query = %query, "failed to decode suggest response");
+                        Vec::new()
+                    }
+                }
+            }
+            Ok(response) => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                warn!(status = %status, body = %body, query = %query, "suggest request failed");
+                Vec::new()
+            }
+            Err(error) => {
+                warn!(?error, query = %query, "suggest request failed");
+                Vec::new()
+            }
+        };
 
         SuggestResponse {
             query: query.to_string(),
@@ -162,128 +244,160 @@ impl SearchIndex {
     pub async fn upsert_documents(
         &self,
         documents: Vec<IndexedDocument>,
-    ) -> Result<usize, ApiError> {
+    ) -> Result<IngestBatchOutcome, ApiError> {
+        let mut outcome = IngestBatchOutcome::default();
         if documents.is_empty() {
-            return Ok(0);
+            return Ok(outcome);
         }
 
-        let serialized = {
-            let mut state = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal(anyhow!("search index poisoned")))?;
-
-            let mut accepted = 0;
-            for document in documents {
-                accepted += 1;
-                if let Some(existing) = state
-                    .documents
-                    .iter_mut()
-                    .find(|existing| existing.url == document.url || existing.id == document.id)
-                {
-                    *existing = document;
-                } else {
-                    state.documents.push(document);
-                }
+        for document in documents {
+            let mut normalized = normalize_document(document);
+            if normalized.title.trim().is_empty() || normalized.body.trim().is_empty() {
+                outcome.skipped_documents += 1;
+                continue;
             }
 
-            state.suggestions = rebuild_suggestions(&state.documents);
-            (
-                accepted,
-                serde_json::to_string_pretty(&state.documents)
-                    .map_err(|error| ApiError::Internal(error.into()))?,
+            normalized.duplicate_of = sqlx::query_scalar(
+                "select id from documents where content_hash = $1 and id != $2 and duplicate_of is null limit 1",
             )
-        };
+            .bind(&normalized.content_hash)
+            .bind(&normalized.id)
+            .fetch_optional(&self.pg_pool)
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?;
 
-        atomic_write(&self.path, &serialized.1).await?;
-        Ok(serialized.0)
+            self.persist_document(&normalized).await?;
+
+            if normalized.duplicate_of.is_some() {
+                self.delete_index_document(&normalized.id).await;
+                outcome.duplicate_documents += 1;
+            } else {
+                self.index_document(&normalized).await?;
+            }
+
+            outcome.accepted_documents += 1;
+        }
+
+        Ok(outcome)
     }
 
-    pub fn list_documents(&self, params: DocumentListParams) -> DocumentListResponse {
-        let limit = params.limit.clamp(1, 50);
-        let offset = params.offset;
-        let query_tokens = params
+    pub async fn list_documents(&self, params: DocumentListParams) -> DocumentListResponse {
+        let limit = params.limit.clamp(1, 50) as i64;
+        let offset = params.offset as i64;
+        let query_pattern = params
             .query
             .as_deref()
-            .map(tokenize)
-            .unwrap_or_default();
-        let site_filter = params.site.as_deref().map(str::to_lowercase);
-        let state = self.inner.read().expect("search index poisoned");
+            .map(|value| format!("%{}%", value.trim().to_lowercase()));
+        let site_pattern = params
+            .site
+            .as_deref()
+            .map(|value| format!("%{}%", value.trim().to_lowercase()));
 
-        let mut documents = state
-            .documents
-            .iter()
-            .filter(|document| {
-                if let Some(site) = &site_filter
-                    && !document.url.to_lowercase().contains(site)
-                {
-                    return false;
-                }
+        let total_estimate: i64 = sqlx::query_scalar(
+            r#"
+            select count(*) from documents
+            where ($1::text is null or (
+                lower(title) like $1
+                or lower(snippet) like $1
+                or lower(canonical_url) like $1
+            ))
+            and ($2::text is null or lower(host) like $2 or lower(canonical_url) like $2)
+            "#,
+        )
+        .bind(query_pattern.as_deref())
+        .bind(site_pattern.as_deref())
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
 
-                if query_tokens.is_empty() {
-                    return true;
-                }
+        let rows = sqlx::query_as::<_, DocumentSummaryRow>(
+            r#"
+            select
+                id,
+                title,
+                url,
+                canonical_url,
+                host,
+                display_url,
+                snippet,
+                language,
+                last_crawled_at,
+                content_type,
+                word_count,
+                site_authority,
+                parser_version,
+                schema_version,
+                index_version,
+                source_job_id,
+                duplicate_of
+            from documents
+            where ($1::text is null or (
+                lower(title) like $1
+                or lower(snippet) like $1
+                or lower(canonical_url) like $1
+            ))
+            and ($2::text is null or lower(host) like $2 or lower(canonical_url) like $2)
+            order by (duplicate_of is not null), last_crawled_at desc
+            limit $3 offset $4
+            "#,
+        )
+        .bind(query_pattern.as_deref())
+        .bind(site_pattern.as_deref())
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pg_pool)
+        .await
+        .unwrap_or_default();
 
-                let haystack = format!(
-                    "{} {} {}",
-                    document.title.to_lowercase(),
-                    document.snippet.to_lowercase(),
-                    document.url.to_lowercase()
-                );
-                query_tokens.iter().all(|token| haystack.contains(token))
-            })
-            .map(|document| DocumentSummary {
-                id: document.id.clone(),
-                title: document.title.clone(),
-                url: document.url.clone(),
-                display_url: document.display_url.clone(),
-                snippet: document.snippet.clone(),
-                language: document.language.clone(),
-                last_crawled_at: document.last_crawled_at,
-            })
-            .collect::<Vec<_>>();
-
-        documents.sort_by(|left, right| right.last_crawled_at.cmp(&left.last_crawled_at));
-        let total_estimate = documents.len();
-        let page = documents
+        let documents = rows
             .into_iter()
-            .skip(offset)
-            .take(limit)
+            .map(|row| DocumentSummary {
+                id: row.id,
+                title: row.title,
+                url: row.url,
+                canonical_url: row.canonical_url,
+                host: row.host,
+                display_url: row.display_url,
+                snippet: row.snippet,
+                language: row.language,
+                last_crawled_at: row.last_crawled_at,
+                content_type: row.content_type,
+                word_count: row.word_count as u32,
+                site_authority: row.site_authority,
+                parser_version: row.parser_version,
+                schema_version: row.schema_version,
+                index_version: row.index_version,
+                source_job_id: row.source_job_id,
+                duplicate_of: row.duplicate_of,
+            })
             .collect::<Vec<_>>();
-        let next_offset = if offset + page.len() < total_estimate {
-            Some(offset + page.len())
+
+        let next_offset = if (offset as usize) + documents.len() < total_estimate as usize {
+            Some((offset as usize) + documents.len())
         } else {
             None
         };
 
         DocumentListResponse {
-            total_estimate,
+            total_estimate: total_estimate as usize,
             next_offset,
-            documents: page,
+            documents,
         }
     }
 
     pub async fn delete_document(&self, document_id: &str) -> Result<bool, ApiError> {
-        let serialized = {
-            let mut state = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal(anyhow!("search index poisoned")))?;
-            let original_len = state.documents.len();
-            state
-                .documents
-                .retain(|document| document.id != document_id);
-            if state.documents.len() == original_len {
-                return Ok(false);
-            }
+        let deleted = sqlx::query("delete from documents where id = $1")
+            .bind(document_id)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?
+            .rows_affected();
 
-            state.suggestions = rebuild_suggestions(&state.documents);
-            serde_json::to_string_pretty(&state.documents)
-                .map_err(|error| ApiError::Internal(error.into()))?
-        };
+        if deleted > 0 {
+            self.delete_index_document(document_id).await;
+        }
 
-        atomic_write(&self.path, &serialized).await?;
-        Ok(true)
+        Ok(deleted > 0)
     }
 
     pub async fn purge_site(&self, site: &str) -> Result<PurgeSiteResponse, ApiError> {
@@ -292,173 +406,288 @@ impl SearchIndex {
             return Err(ApiError::BadRequest("site must not be empty".to_string()));
         }
 
-        let serialized = {
-            let mut state = self
-                .inner
-                .write()
-                .map_err(|_| ApiError::Internal(anyhow!("search index poisoned")))?;
-            let original_len = state.documents.len();
-            state
-                .documents
-                .retain(|document| !document.url.to_lowercase().contains(&normalized));
-            let deleted_documents = original_len - state.documents.len();
-            state.suggestions = rebuild_suggestions(&state.documents);
-            (
-                deleted_documents,
-                serde_json::to_string_pretty(&state.documents)
-                    .map_err(|error| ApiError::Internal(error.into()))?,
-            )
-        };
+        let pattern = format!("%{normalized}%");
+        let document_ids: Vec<String> = sqlx::query_scalar(
+            "select id from documents where lower(host) like $1 or lower(canonical_url) like $1",
+        )
+        .bind(&pattern)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?;
 
-        atomic_write(&self.path, &serialized.1).await?;
+        let deleted = sqlx::query(
+            "delete from documents where lower(host) like $1 or lower(canonical_url) like $1",
+        )
+        .bind(&pattern)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?
+        .rows_affected();
+
+        for id in document_ids {
+            self.delete_index_document(&id).await;
+        }
+
         Ok(PurgeSiteResponse {
-            deleted_documents: serialized.0,
+            deleted_documents: deleted as usize,
         })
     }
-}
 
-fn choose_snippet(document: &IndexedDocument, tokens: &[String]) -> String {
-    if tokens.is_empty() {
-        return document.snippet.clone();
+    async fn persist_document(&self, document: &NormalizedDocument) -> Result<(), ApiError> {
+        let suggest_terms = serde_json::to_value(&document.suggest_terms)
+            .map_err(|error| ApiError::Internal(error.into()))?;
+
+        sqlx::query(
+            r#"
+            insert into documents (
+                id,
+                url,
+                canonical_url,
+                host,
+                content_hash,
+                title,
+                display_url,
+                snippet,
+                body,
+                language,
+                site_authority,
+                suggest_terms,
+                last_crawled_at,
+                content_type,
+                word_count,
+                source_job_id,
+                parser_version,
+                schema_version,
+                index_version,
+                duplicate_of,
+                search_vector
+            )
+            values (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                $11,
+                $12,
+                $13,
+                $14,
+                $15,
+                $16,
+                $17,
+                $18,
+                $19,
+                $20,
+                setweight(to_tsvector('simple', $6), 'A') ||
+                setweight(to_tsvector('simple', $8), 'B') ||
+                setweight(to_tsvector('simple', $9), 'C') ||
+                setweight(to_tsvector('simple', $3), 'D')
+            )
+            on conflict (id) do update set
+                url = excluded.url,
+                canonical_url = excluded.canonical_url,
+                host = excluded.host,
+                content_hash = excluded.content_hash,
+                title = excluded.title,
+                display_url = excluded.display_url,
+                snippet = excluded.snippet,
+                body = excluded.body,
+                language = excluded.language,
+                site_authority = excluded.site_authority,
+                suggest_terms = excluded.suggest_terms,
+                last_crawled_at = excluded.last_crawled_at,
+                content_type = excluded.content_type,
+                word_count = excluded.word_count,
+                source_job_id = excluded.source_job_id,
+                parser_version = excluded.parser_version,
+                schema_version = excluded.schema_version,
+                index_version = excluded.index_version,
+                duplicate_of = excluded.duplicate_of,
+                search_vector = excluded.search_vector
+            "#,
+        )
+        .bind(&document.id)
+        .bind(&document.url)
+        .bind(&document.canonical_url)
+        .bind(&document.host)
+        .bind(&document.content_hash)
+        .bind(&document.title)
+        .bind(&document.display_url)
+        .bind(&document.snippet)
+        .bind(&document.body)
+        .bind(&document.language)
+        .bind(document.site_authority)
+        .bind(&suggest_terms)
+        .bind(document.last_crawled_at)
+        .bind(&document.content_type)
+        .bind(document.word_count as i32)
+        .bind(document.source_job_id.as_deref())
+        .bind(document.parser_version)
+        .bind(document.schema_version)
+        .bind(document.index_version)
+        .bind(document.duplicate_of.as_deref())
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?;
+
+        if document.duplicate_of.is_none() {
+            sqlx::query("delete from documents where canonical_url = $1 and id != $2 and duplicate_of is null")
+                .bind(&document.canonical_url)
+                .bind(&document.id)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|error| ApiError::Internal(error.into()))?;
+        }
+
+        Ok(())
     }
 
-    let lower_body = document.body.to_lowercase();
-    for token in tokens {
-        if let Some(position) = lower_body.find(token) {
-            let start = position.saturating_sub(70);
-            let end = (position + 140).min(document.body.len());
-            return document.body[start..end].trim().to_string();
-        }
-    }
-
-    document.snippet.clone()
-}
-
-fn score_document(document: &IndexedDocument, tokens: &[String], freshness: Freshness) -> f32 {
-    if tokens.is_empty() {
-        return 0.0;
-    }
-
-    let title = document.title.to_lowercase();
-    let snippet = document.snippet.to_lowercase();
-    let body = document.body.to_lowercase();
-    let url = document.url.to_lowercase();
-    let authority_boost = 0.5 + document.site_authority;
-    let freshness_bonus = freshness_score(document.last_crawled_at, freshness);
-
-    let mut score = 0.0;
-    for token in tokens {
-        if title.contains(token) {
-            score += 6.0;
-        }
-        if snippet.contains(token) {
-            score += 2.5;
-        }
-        if body.contains(token) {
-            score += 1.6;
-        }
-        if url.contains(token) {
-            score += 1.0;
-        }
-    }
-
-    score * authority_boost + freshness_bonus
-}
-
-fn freshness_score(last_crawled_at: DateTime<Utc>, freshness: Freshness) -> f32 {
-    let age_hours = Utc::now()
-        .signed_duration_since(last_crawled_at)
-        .num_hours()
-        .max(0) as f32;
-
-    match freshness {
-        Freshness::Day => (24.0 - age_hours).max(0.0) / 4.0,
-        Freshness::Week => (168.0 - age_hours).max(0.0) / 24.0,
-        Freshness::Month => (720.0 - age_hours).max(0.0) / 48.0,
-        Freshness::All => 0.0,
-    }
-}
-
-fn rebuild_suggestions(documents: &[IndexedDocument]) -> Vec<String> {
-    let mut suggestions = BTreeSet::new();
-    for document in documents {
-        suggestions.extend(document.suggest_terms.iter().cloned());
-        for phrase in [document.title.as_str(), document.display_url.as_str()] {
-            for token in tokenize(phrase) {
-                if token.len() >= 3 {
-                    suggestions.insert(token);
+    async fn ensure_index(&self) -> anyhow::Result<()> {
+        let response = self
+            .http_client
+            .put(self.index_endpoint(""))
+            .json(&json!({
+                "settings": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 0
+                },
+                "mappings": {
+                    "properties": self.mapping_properties()
                 }
+            }))
+            .send()
+            .await
+            .context("failed to create opensearch index")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            if !(status == StatusCode::BAD_REQUEST
+                && body.contains("resource_already_exists_exception"))
+            {
+                anyhow::bail!("opensearch index initialization failed: {status} {body}");
             }
         }
+
+        self.ensure_mapping().await
     }
-    suggestions.into_iter().collect()
-}
 
-#[cfg(test)]
-mod tests {
-    use std::{
-        path::PathBuf,
-        sync::{Arc, RwLock},
-    };
+    async fn ensure_mapping(&self) -> anyhow::Result<()> {
+        let response = self
+            .http_client
+            .put(self.index_endpoint("/_mapping"))
+            .json(&json!({
+                "properties": self.mapping_properties()
+            }))
+            .send()
+            .await
+            .context("failed to update opensearch mapping")?;
 
-    use chrono::{Duration, Utc};
+        if response.status().is_success() {
+            return Ok(());
+        }
 
-    use crate::models::{Freshness, IndexedDocument};
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("opensearch mapping update failed: {status} {body}");
+    }
 
-    use super::{SearchIndex, SearchState, score_document};
-    use crate::store::derive_terms;
+    fn mapping_properties(&self) -> serde_json::Value {
+        json!({
+            "doc_id": { "type": "keyword" },
+            "canonical_url": { "type": "keyword" },
+            "display_url": {
+                "type": "text",
+                "fields": {
+                    "keyword": { "type": "keyword" }
+                }
+            },
+            "host": { "type": "keyword" },
+            "title": { "type": "text" },
+            "snippet": { "type": "text" },
+            "body": { "type": "text" },
+            "language": { "type": "keyword" },
+            "fetched_at": { "type": "date" },
+            "content_hash": { "type": "keyword" },
+            "site_authority": { "type": "float" },
+            "content_type": { "type": "keyword" },
+            "word_count": { "type": "integer" },
+            "suggest_input": { "type": "completion" }
+        })
+    }
 
-    fn sample_document(title: &str, body: &str, age_hours: i64) -> IndexedDocument {
-        IndexedDocument {
-            id: title.to_string(),
-            title: title.to_string(),
-            url: format!(
-                "https://example.com/{}",
-                title.replace(' ', "-").to_lowercase()
-            ),
-            display_url: "example.com".to_string(),
-            snippet: body.to_string(),
-            body: body.to_string(),
-            language: "en".to_string(),
-            last_crawled_at: Utc::now() - Duration::hours(age_hours),
-            suggest_terms: vec!["search".to_string()],
-            site_authority: 0.5,
+    async fn index_document(&self, document: &NormalizedDocument) -> Result<(), ApiError> {
+        let payload = IndexedDocumentPayload::from_document(document);
+        let response = self
+            .http_client
+            .put(self.index_endpoint(&format!("/_doc/{}?refresh=wait_for", document.id)))
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(ApiError::Internal(anyhow::anyhow!(
+            "opensearch index write failed: {status} {body}"
+        )))
+    }
+
+    async fn delete_index_document(&self, document_id: &str) {
+        match self
+            .http_client
+            .delete(self.index_endpoint(&format!("/_doc/{document_id}?refresh=wait_for")))
+            .send()
+            .await
+        {
+            Ok(response)
+                if response.status().is_success() || response.status() == StatusCode::NOT_FOUND => {
+            }
+            Ok(response) => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                warn!(%status, %body, document_id, "failed to delete opensearch document");
+            }
+            Err(error) => warn!(?error, document_id, "failed to delete opensearch document"),
         }
     }
 
-    #[test]
-    fn freshness_helps_recent_docs() {
-        let fresh = sample_document("Rust search", "latest rust search index", 1);
-        let stale = sample_document("Rust search", "latest rust search index", 72);
-        let tokens = vec!["rust".to_string(), "search".to_string()];
-
-        assert!(
-            score_document(&fresh, &tokens, Freshness::Week)
-                > score_document(&stale, &tokens, Freshness::Week)
-        );
+    fn index_endpoint(&self, suffix: &str) -> String {
+        format!(
+            "{}/{}{}",
+            self.opensearch_url.trim_end_matches('/'),
+            self.opensearch_index,
+            suffix
+        )
     }
+}
 
-    #[test]
-    fn suggestions_include_titles_and_terms() {
-        let index = SearchIndex {
-            path: PathBuf::from("ignored.json"),
-            inner: Arc::new(RwLock::new(SearchState {
-                documents: vec![sample_document("Search Ranking", "Ranking strategies", 1)],
-                suggestions: vec!["search".to_string(), "ranking".to_string()],
-            })),
-        };
-
-        let response = index.suggest("sea");
-        assert_eq!(response.suggestions, vec!["search"]);
-    }
-
-    #[test]
-    fn derive_terms_limits_output() {
-        let terms = derive_terms(
-            "FindVerse crawler integration",
-            "Crawler integration should expose stable modular search interfaces",
-        );
-        assert!(!terms.is_empty());
-        assert!(terms.len() <= 12);
-    }
+#[derive(sqlx::FromRow)]
+struct DocumentSummaryRow {
+    id: String,
+    title: String,
+    url: String,
+    canonical_url: String,
+    host: String,
+    display_url: String,
+    snippet: String,
+    language: String,
+    last_crawled_at: chrono::DateTime<Utc>,
+    content_type: String,
+    word_count: i32,
+    site_authority: f32,
+    parser_version: i32,
+    schema_version: i32,
+    index_version: i32,
+    source_job_id: Option<String>,
+    duplicate_of: Option<String>,
 }

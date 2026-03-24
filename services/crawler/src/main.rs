@@ -1,7 +1,10 @@
 mod discover;
 mod extract;
 mod fetch;
+mod js_render;
 mod models;
+mod sitemap;
+mod url_normalize;
 mod worker;
 
 use clap::Parser;
@@ -37,7 +40,6 @@ async fn main() -> anyhow::Result<()> {
             server,
             crawler_id,
             crawler_key,
-            api_key,
             join_key,
             max_jobs,
             poll_interval_secs,
@@ -56,24 +58,15 @@ async fn main() -> anyhow::Result<()> {
 
             let client = client_builder.build()?;
 
-            let (resolved_id, auth_token) = match (crawler_id, crawler_key, api_key, join_key) {
-                (Some(id), Some(key), None, None) => (id, key),
-                (None, None, Some(key), None) => {
-                    let hello = worker::crawler_hello(&client, &server, &key).await?;
-                    info!(
-                        "registered as crawler {} ({})",
-                        hello.name, hello.crawler_id
-                    );
-                    (hello.crawler_id, key)
-                }
-                (None, None, None, Some(jk)) => {
+            let (resolved_id, auth_token) = match (crawler_id, crawler_key, join_key) {
+                (Some(id), Some(key), None) => (id, key),
+                (None, None, Some(jk)) => {
                     let join = worker::crawler_join(&client, &server, &jk).await?;
                     info!("joined as crawler {} ({})", join.name, join.crawler_id);
                     (join.crawler_id, join.crawler_key)
                 }
                 _ => anyhow::bail!(
-                    "provide --api-key for auto-registration, \
-                     --join-key for join-based registration, \
+                    "provide --join-key for join-based registration, \
                      or both --crawler-id and --crawler-key for manual setup"
                 ),
             };

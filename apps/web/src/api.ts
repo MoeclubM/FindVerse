@@ -3,6 +3,7 @@ export type SearchResponse = {
   took_ms: number;
   total_estimate: number;
   next_offset: number | null;
+  did_you_mean?: string | null;
   results: Array<{
     id: string;
     title: string;
@@ -16,7 +17,7 @@ export type SearchResponse = {
 };
 
 export type AdminSession = {
-  developer_id: string;
+  user_id: string;
   username: string;
   token: string;
 };
@@ -37,7 +38,6 @@ export type ApiKey = {
 
 export type DeveloperUsage = {
   developer_id: string;
-  qps_limit: number;
   daily_limit: number;
   used_today: number;
   keys: ApiKey[];
@@ -48,7 +48,6 @@ export type AdminDeveloperRecord = {
   username: string;
   enabled: boolean;
   created_at: string;
-  qps_limit: number;
   daily_limit: number;
   used_today: number;
   key_count: number;
@@ -85,11 +84,13 @@ export type CrawlEvent = {
 };
 
 export type CrawlOverview = {
-  developer_id: string;
+  owner_id: string;
   frontier_depth: number;
   known_urls: number;
   in_flight_jobs: number;
   indexed_documents: number;
+  duplicate_documents: number;
+  terminal_failures: number;
   crawlers: Array<{
     id: string;
     name: string;
@@ -112,10 +113,20 @@ export type DocumentList = {
     id: string;
     title: string;
     url: string;
+    canonical_url: string;
+    host: string;
     display_url: string;
     snippet: string;
     language: string;
     last_crawled_at: string;
+    content_type: string;
+    word_count: number;
+    site_authority: number;
+    parser_version: number;
+    schema_version: number;
+    index_version: number;
+    source_job_id: string | null;
+    duplicate_of: string | null;
   }>;
 };
 
@@ -166,7 +177,7 @@ export function login(username: string, password: string) {
   });
 }
 
-export function getSession(token: string) {
+export function getAdminSession(token: string) {
   return request<AdminSession>("/v1/admin/session/me", {
     method: "GET",
     token,
@@ -180,28 +191,6 @@ export function logout(token: string) {
   });
 }
 
-export function getUsage(token: string) {
-  return request<DeveloperUsage>("/v1/admin/usage", {
-    method: "GET",
-    token,
-  });
-}
-
-export function createApiKey(token: string, name: string) {
-  return request<CreatedApiKey>("/v1/admin/api-keys", {
-    method: "POST",
-    token,
-    body: JSON.stringify({ name }),
-  });
-}
-
-export function revokeApiKey(token: string, id: string) {
-  return request<void>(`/v1/admin/api-keys/${id}`, {
-    method: "DELETE",
-    token,
-  });
-}
-
 export function getCrawlOverview(token: string) {
   return request<CrawlOverview>("/v1/admin/crawl/overview", {
     method: "GET",
@@ -209,15 +198,9 @@ export function getCrawlOverview(token: string) {
   });
 }
 
-export function createCrawler(token: string, name: string) {
-  return request<{
-    id: string;
-    name: string;
-    preview: string;
-    key: string;
-    created_at: string;
-  }>("/v1/admin/crawlers", {
-    method: "POST",
+export function renameCrawler(token: string, id: string, name: string) {
+  return request<void>(`/v1/admin/crawlers/${id}`, {
+    method: "PATCH",
     token,
     body: JSON.stringify({ name }),
   });
@@ -359,8 +342,23 @@ export function getDeveloperKeys(token: string) {
   });
 }
 
+export function getAdminDeveloperKeys(token: string, userId: string) {
+  return request<DeveloperUsage>(`/v1/admin/developers/${userId}/keys`, {
+    method: "GET",
+    token,
+  });
+}
+
 export function createDeveloperKey(token: string, name: string) {
   return request<CreatedApiKey>("/v1/dev/keys", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function createAdminDeveloperKey(token: string, userId: string, name: string) {
+  return request<CreatedApiKey>(`/v1/admin/developers/${userId}/keys`, {
     method: "POST",
     token,
     body: JSON.stringify({ name }),
@@ -374,7 +372,14 @@ export function revokeDeveloperKey(token: string, id: string) {
   });
 }
 
-export function listDevelopers(token: string) {
+export function revokeAdminDeveloperKey(token: string, userId: string, id: string) {
+  return request<void>(`/v1/admin/developers/${userId}/keys/${id}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export function listAdminDevelopers(token: string) {
   return request<AdminDeveloperRecord[]>("/v1/admin/developers", {
     method: "GET",
     token,
@@ -385,7 +390,6 @@ export function updateDeveloper(
   token: string,
   userId: string,
   payload: {
-    qps_limit?: number;
     daily_limit?: number;
     enabled?: boolean;
   },
@@ -410,4 +414,101 @@ export function setCrawlerJoinKey(token: string, joinKey: string | null) {
     token,
     body: JSON.stringify({ join_key: joinKey }),
   });
+}
+
+// Crawl job management types and API functions
+
+export type CrawlJobDetail = {
+  id: string;
+  url: string;
+  final_url: string | null;
+  status: string;
+  depth: number;
+  max_depth: number;
+  attempt_count: number;
+  max_attempts: number;
+  source: string;
+  rule_id: string | null;
+  claimed_by: string | null;
+  discovered_at: string;
+  claimed_at: string | null;
+  next_retry_at: string | null;
+  content_type: string | null;
+  http_status: number | null;
+  discovered_urls_count: number;
+  accepted_document_id: string | null;
+  failure_kind: string | null;
+  failure_message: string | null;
+  finished_at: string | null;
+};
+
+export type CrawlJobList = {
+  total: number;
+  next_offset: number | null;
+  jobs: CrawlJobDetail[];
+};
+
+export type CrawlJobStats = {
+  queued: number;
+  claimed: number;
+  succeeded: number;
+  failed: number;
+  blocked: number;
+  dead_letter: number;
+};
+
+export function listCrawlJobs(
+  token: string,
+  params: { status?: string; offset?: number; limit?: number } = {},
+) {
+  const search = new URLSearchParams();
+  if (params.status) {
+    search.set("status", params.status);
+  }
+  if (params.offset) {
+    search.set("offset", String(params.offset));
+  }
+  search.set("limit", String(params.limit ?? 20));
+
+  return request<CrawlJobList>(`/v1/admin/crawl/jobs?${search.toString()}`, {
+    method: "GET",
+    token,
+  });
+}
+
+export function getCrawlJobStats(token: string) {
+  return request<CrawlJobStats>("/v1/admin/crawl/jobs/stats", {
+    method: "GET",
+    token,
+  });
+}
+
+export function retryFailedJobs(token: string) {
+  return request<{ retried: number }>("/v1/admin/crawl/jobs/retry", {
+    method: "POST",
+    token,
+  });
+}
+
+export function cleanupCompletedJobs(token: string) {
+  return request<{ cleaned: number }>("/v1/admin/crawl/jobs/completed", {
+    method: "DELETE",
+    token,
+  });
+}
+
+export function searchWithParams(
+  query: string,
+  params: { offset?: number; site?: string; lang?: string; freshness?: string } = {},
+  apiKey?: string | null,
+) {
+  const search = new URLSearchParams();
+  search.set("q", query);
+  if (params.offset) search.set("offset", String(params.offset));
+  if (params.site) search.set("site", params.site);
+  if (params.lang) search.set("lang", params.lang);
+  if (params.freshness) search.set("freshness", params.freshness);
+
+  const path = apiKey ? "/v1/developer/search" : "/v1/search";
+  return request<SearchResponse>(`${path}?${search.toString()}`, { token: apiKey });
 }

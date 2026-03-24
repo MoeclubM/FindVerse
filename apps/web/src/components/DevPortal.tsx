@@ -181,73 +181,73 @@ export function DevPortalPage(props: {
   }
 
   if (loadingSession) {
-    return <div className="console-loading">Checking developer session...</div>;
+    return <div className="portal-loading">Checking developer session...</div>;
   }
 
   if (!session || !sessionToken) {
     return (
-      <div className="console-page">
-        <header className="console-topbar">
-          <strong>FindVerse Developer Portal</strong>
-          {props.devToken ? (
-            <div className="topbar-actions">
-              <span className="status-pill">Search key active</span>
-              <button type="button" className="plain-link" onClick={props.onNavigateSearch}>
-                Search
-              </button>
-            </div>
-          ) : null}
-        </header>
-        <main className="console-login">
-          <div className="auth-mode-switch">
-            <button
-              type="button"
-              className={mode === "login" ? "active" : ""}
-              onClick={() => setMode("login")}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              className={mode === "register" ? "active" : ""}
-              onClick={() => setMode("register")}
-            >
-              Register
+      <div className="portal-page">
+        <header className="portal-topbar">
+          <strong>Developer Portal</strong>
+          <div className="topbar-actions">
+            {props.devToken ? <span className="status-pill">Search key active</span> : null}
+            <button type="button" className="plain-link" onClick={props.onNavigateSearch}>
+              Search
             </button>
           </div>
-          <h1>{mode === "register" ? "Create developer account" : "Developer sign in"}</h1>
-          <form onSubmit={handleAuthSubmit}>
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="Username"
-              autoComplete="username"
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Password"
-              autoComplete={mode === "register" ? "new-password" : "current-password"}
-            />
-            <button type="submit" disabled={busy}>
-              {busy ? "Submitting..." : mode === "register" ? "Create account" : "Sign in"}
-            </button>
-          </form>
-          {flash ? <p className="search-error">{flash}</p> : null}
-          <p className="dev-hint">
-            Create an account, generate an <code>fvk_</code> key, then use that key for search API access.
-          </p>
+        </header>
+        <main className="portal-auth-shell">
+          <section className="portal-auth-card">
+            <div className="auth-mode-switch">
+              <button
+                type="button"
+                className={mode === "login" ? "active" : ""}
+                onClick={() => setMode("login")}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                className={mode === "register" ? "active" : ""}
+                onClick={() => setMode("register")}
+              >
+                Register
+              </button>
+            </div>
+            <h1>{mode === "register" ? "Create developer account" : "Developer sign in"}</h1>
+            <form onSubmit={handleAuthSubmit}>
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="Username"
+                autoComplete="username"
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Password"
+                autoComplete={mode === "register" ? "new-password" : "current-password"}
+              />
+              <button type="submit" disabled={busy}>
+                {busy ? "Submitting..." : mode === "register" ? "Create account" : "Sign in"}
+              </button>
+            </form>
+            {flash ? <p className="search-error">{flash}</p> : null}
+            <p className="dev-hint">
+              Create an account, generate an <code>fvk_</code> key, and use it for protected <code>/v1/developer/search</code> requests or the browser search key mode.
+            </p>
+          </section>
         </main>
       </div>
     );
   }
 
   return (
-    <div className="console-page">
-      <header className="console-topbar">
+    <div className="portal-page">
+      <header className="portal-topbar">
         <div>
-          <strong>FindVerse Developer Portal</strong>
+          <strong>Developer Portal</strong>
           <span>{session.username}</span>
         </div>
         <div className="topbar-actions">
@@ -261,19 +261,15 @@ export function DevPortalPage(props: {
         </div>
       </header>
 
-      {flash ? <div className="flash">{flash}</div> : null}
+      {flash ? <div className="portal-flash">{flash}</div> : null}
 
-      <main className="console-grid">
+      <main className="portal-main">
         <section className="panel">
           <h2>Account</h2>
           <div className="stats-grid single-column-stats">
             <div>
               <span>User</span>
               <strong>{session.username}</strong>
-            </div>
-            <div>
-              <span>QPS</span>
-              <strong>{usage?.qps_limit ?? 0}</strong>
             </div>
             <div>
               <span>Daily quota</span>

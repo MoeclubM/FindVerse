@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: quay.io/sclorg/postgresql-16-c9s
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_DATABASE: findverse
+      POSTGRESQL_USER: findverse
+      POSTGRESQL_PASSWORD: findverse
+    network_mode: host
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  valkey:
+    image: quay.io/sclorg/redis-7-c9s
+    restart: unless-stopped
+    network_mode: host
+
+  opensearch:
+    image: docker.io/opensearchproject/opensearch:2
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    network_mode: host
+
+  control-api:
+    build:
+      context: .
+      dockerfile: services/control-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - valkey
+      - opensearch
+    environment:
+      FINDVERSE_CONTROL_API_BIND: 0.0.0.0:8080
+      FINDVERSE_POSTGRES_URL: postgres://findverse:findverse@127.0.0.1:5432/findverse
+      FINDVERSE_REDIS_URL: redis://127.0.0.1:6379/0
+      FINDVERSE_OPENSEARCH_URL: http://127.0.0.1:9200
+      FINDVERSE_FRONTEND_ORIGIN: http://127.0.0.1:3000
+      FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
+      FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
+      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-}
+    network_mode: host
+
+  query-api:
+    build:
+      context: .
+      dockerfile: services/query-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - valkey
+      - opensearch
+    environment:
+      FINDVERSE_QUERY_API_BIND: 0.0.0.0:8081
+      FINDVERSE_POSTGRES_URL: postgres://findverse:findverse@127.0.0.1:5432/findverse
+      FINDVERSE_REDIS_URL: redis://127.0.0.1:6379/0
+      FINDVERSE_OPENSEARCH_URL: http://127.0.0.1:9200
+      FINDVERSE_FRONTEND_ORIGIN: http://127.0.0.1:3000
+      FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
+      FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
+    network_mode: host
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        FINDVERSE_CONTROL_API_PROXY: http://127.0.0.1:8080
+        FINDVERSE_QUERY_API_PROXY: http://127.0.0.1:8081
+    restart: unless-stopped
+    depends_on:
+      - control-api
+      - query-api
+    network_mode: host
+
+  crawler-worker:
+    build:
+      context: .
+      dockerfile: services/crawler/Dockerfile
+    restart: unless-stopped
+    profiles:
+      - crawler
+    depends_on:
+      - control-api
+    environment:
+      FINDVERSE_CRAWLER_SERVER: ${FINDVERSE_CRAWLER_SERVER:-http://127.0.0.1:8080}
+      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-}
+      FINDVERSE_CRAWLER_MAX_JOBS: ${FINDVERSE_CRAWLER_MAX_JOBS:-10}
+      FINDVERSE_CRAWLER_POLL_INTERVAL_SECS: ${FINDVERSE_CRAWLER_POLL_INTERVAL_SECS:-5}
+      FINDVERSE_CRAWLER_CONCURRENCY: ${FINDVERSE_CRAWLER_CONCURRENCY:-4}
+      FINDVERSE_CRAWLER_ALLOWED_DOMAINS: ${FINDVERSE_CRAWLER_ALLOWED_DOMAINS:-}
+      FINDVERSE_CRAWLER_PROXY: ${FINDVERSE_CRAWLER_PROXY:-}
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - >
+          set -- worker
+          --server "$$FINDVERSE_CRAWLER_SERVER"
+          --join-key "$$FINDVERSE_CRAWLER_JOIN_KEY"
+          --max-jobs "$$FINDVERSE_CRAWLER_MAX_JOBS"
+          --poll-interval-secs "$$FINDVERSE_CRAWLER_POLL_INTERVAL_SECS"
+          --concurrency "$$FINDVERSE_CRAWLER_CONCURRENCY";
+          if [ -n "$$FINDVERSE_CRAWLER_ALLOWED_DOMAINS" ]; then
+          set -- "$$@" --allowed-domains "$$FINDVERSE_CRAWLER_ALLOWED_DOMAINS";
+          fi;
+          if [ -n "$$FINDVERSE_CRAWLER_PROXY" ]; then
+          set -- "$$@" --proxy "$$FINDVERSE_CRAWLER_PROXY";
+          fi;
+          exec findverse-crawler "$$@"
+    network_mode: host
+
+volumes:
+  postgres_data:

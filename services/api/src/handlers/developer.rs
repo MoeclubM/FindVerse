@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::{
     Json,
     extract::{Path, State},
@@ -8,7 +6,7 @@ use axum::{
 };
 
 use crate::{
-    AppState,
+    ControlState,
     dev_auth::DevUserIdentity,
     error::ApiError,
     models::{
@@ -18,7 +16,7 @@ use crate::{
 };
 
 pub async fn dev_register(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ControlState>,
     Json(request): Json<DevRegisterRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let session = state.dev_auth.register(request).await?;
@@ -26,14 +24,14 @@ pub async fn dev_register(
 }
 
 pub async fn dev_login(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ControlState>,
     Json(request): Json<DevLoginRequest>,
 ) -> Result<Json<DevSessionResponse>, ApiError> {
     Ok(Json(state.dev_auth.login(request).await?))
 }
 
 pub async fn dev_me(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ControlState>,
     headers: HeaderMap,
 ) -> Result<Json<DevSessionResponse>, ApiError> {
     Ok(Json(
@@ -45,7 +43,7 @@ pub async fn dev_me(
 }
 
 pub async fn dev_logout(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ControlState>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     state
@@ -56,38 +54,49 @@ pub async fn dev_logout(
 }
 
 pub async fn dev_list_keys(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ControlState>,
     headers: HeaderMap,
 ) -> Result<Json<DeveloperUsageResponse>, ApiError> {
     let dev = authorize_dev(&state, &headers).await?;
-    Ok(Json(state.developer_store.usage(&dev.user_id).await?))
+    Ok(Json(
+        state
+            .query
+            .developer_store
+            .developer_usage(&dev.user_id)
+            .await?,
+    ))
 }
 
 pub async fn dev_create_key(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ControlState>,
     headers: HeaderMap,
     Json(request): Json<CreateKeyRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let dev = authorize_dev(&state, &headers).await?;
     let created = state
+        .query
         .developer_store
-        .create_key(&dev.user_id, request)
+        .create_developer_key(&dev.user_id, request)
         .await?;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
 pub async fn dev_revoke_key(
-    State(state): State<Arc<AppState>>,
+    State(state): State<ControlState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let dev = authorize_dev(&state, &headers).await?;
-    state.developer_store.revoke_key(&dev.user_id, &id).await?;
+    state
+        .query
+        .developer_store
+        .revoke_developer_key(&dev.user_id, &id)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn authorize_dev(
-    state: &AppState,
+    state: &ControlState,
     headers: &HeaderMap,
 ) -> Result<DevUserIdentity, ApiError> {
     state

@@ -4,14 +4,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "findverse_api"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow.workspace = true
+argon2.workspace = true
 axum.workspace = true
 chrono.workspace = true
+findverse-common = { path = "../../crates/findverse-common" }
 rand.workspace = true
+redis.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower-http.workspace = true

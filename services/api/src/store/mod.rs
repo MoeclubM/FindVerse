@@ -6,69 +6,14 @@ pub use search::SearchIndex;
 
 use std::path::PathBuf;
 
+pub use findverse_common::{
+    CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, content_hash,
+    derive_terms, display_url, extract_host, normalize_url, stable_document_id, word_count,
+};
 use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use crate::error::ApiError;
-
-pub fn tokenize(input: &str) -> Vec<String> {
-    let mut token = String::new();
-    let mut tokens = Vec::new();
-
-    for ch in input.chars() {
-        if ch.is_alphanumeric() {
-            token.extend(ch.to_lowercase());
-        } else if !token.is_empty() {
-            tokens.push(std::mem::take(&mut token));
-        }
-    }
-
-    if !token.is_empty() {
-        tokens.push(token);
-    }
-
-    tokens
-}
-
-pub fn derive_terms(title: &str, body: &str) -> Vec<String> {
-    use std::collections::BTreeSet;
-
-    let mut terms = BTreeSet::new();
-    for source in [title, body] {
-        for token in source
-            .split(|ch: char| !ch.is_alphanumeric())
-            .map(str::trim)
-            .filter(|token| token.len() >= 4)
-        {
-            terms.insert(token.to_lowercase());
-            if terms.len() >= 12 {
-                return terms.into_iter().collect();
-            }
-        }
-    }
-    terms.into_iter().collect()
-}
-
-pub fn display_url(input: &str) -> String {
-    url::Url::parse(input)
-        .ok()
-        .and_then(|url| {
-            let host = url.host_str()?.to_string();
-            let path = url.path().trim_end_matches('/').to_string();
-            Some(if path.is_empty() {
-                host
-            } else {
-                format!("{host}{path}")
-            })
-        })
-        .unwrap_or_else(|| input.to_string())
-}
-
-pub fn stable_document_id(url: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(url.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
 
 pub(crate) fn bearer_hash(header: &str) -> Result<String, ApiError> {
     let token = header
@@ -98,13 +43,6 @@ pub(crate) fn generate_token(prefix: &str) -> String {
         .map(char::from)
         .collect::<String>();
     format!("{prefix}_{secret}")
-}
-
-pub(crate) async fn atomic_write(path: &PathBuf, contents: &str) -> Result<(), std::io::Error> {
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, contents).await?;
-    fs::rename(&tmp, path).await?;
-    Ok(())
 }
 
 pub(crate) async fn ensure_file_with_fallbacks(

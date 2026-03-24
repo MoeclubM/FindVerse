@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use findverse_common::normalize_url;
 use scraper::{Html, Selector};
 use url::Url;
 
@@ -12,26 +13,43 @@ pub fn parse_html_document(url: &str, html: &str) -> ParsedHtml {
     let document = Html::parse_document(html);
     let title_selector = Selector::parse("title").ok();
     let meta_selector = Selector::parse("meta[name='description']").ok();
+    let og_title_selector = Selector::parse("meta[property='og:title']").ok();
+    let og_desc_selector = Selector::parse("meta[property='og:description']").ok();
 
-    let title = title_selector
+    let title = og_title_selector
         .as_ref()
-        .and_then(|selector| document.select(selector).next())
-        .map(|node| node.text().collect::<String>())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+        .and_then(|s| document.select(s).next())
+        .and_then(|n| n.value().attr("content"))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            title_selector
+                .as_ref()
+                .and_then(|selector| document.select(selector).next())
+                .map(|node| node.text().collect::<String>())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        });
 
-    let meta_snippet = meta_selector
+    let meta_snippet = og_desc_selector
         .as_ref()
-        .and_then(|selector| document.select(selector).next())
-        .and_then(|node| node.value().attr("content"))
+        .and_then(|s| document.select(s).next())
+        .and_then(|n| n.value().attr("content"))
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            meta_selector
+                .as_ref()
+                .and_then(|selector| document.select(selector).next())
+                .and_then(|node| node.value().attr("content"))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        });
 
-    // Strip <script>, <style>, <nav>, <footer> before extracting body text
     let body = extract_clean_body_text(&document);
 
-    // If no meta description, generate snippet from first 200 chars of body text
     let snippet = meta_snippet.or_else(|| {
         body.as_ref().map(|b| {
             let chars: String = b.chars().take(200).collect();
@@ -101,7 +119,7 @@ pub fn extract_clean_body_text(document: &Html) -> Option<String> {
     if normalized.is_empty() {
         None
     } else {
-        Some(normalized.chars().take(4_000).collect())
+        Some(normalized)
     }
 }
 
@@ -113,27 +131,62 @@ pub fn extract_links(base: &str, html: &str) -> Vec<String> {
         Ok(url) => url,
         Err(_) => return Vec::new(),
     };
-    let selector = match Selector::parse("a[href]") {
-        Ok(selector) => selector,
-        Err(_) => return Vec::new(),
-    };
 
     let mut links = BTreeSet::new();
     let document = Html::parse_document(html);
-    for anchor in document.select(&selector) {
-        let Some(raw_href) = anchor.value().attr("href") else {
-            continue;
-        };
 
-        let Ok(resolved) = base_url.join(raw_href) else {
-            continue;
-        };
+    // 提取 <a href>
+    if let Ok(selector) = Selector::parse("a[href]") {
+        for anchor in document.select(&selector) {
+            if let Some(href) = anchor.value().attr("href") {
+                if let Ok(resolved) = base_url.join(href) {
+                    if let Some(normalized) = normalize_url(resolved.as_ref()) {
+                        links.insert(normalized);
+                    }
+                }
+            }
+        }
+    }
 
-        if matches!(resolved.scheme(), "http" | "https") {
-            resolved.fragment().map(|_| ());
-            let mut normalized = resolved;
-            normalized.set_fragment(None);
-            links.insert(normalized.to_string());
+    // 提取 <link rel="canonical">
+    if let Ok(selector) = Selector::parse("link[rel='canonical']") {
+        for link in document.select(&selector) {
+            if let Some(href) = link.value().attr("href") {
+                if let Ok(resolved) = base_url.join(href) {
+                    if let Some(normalized) = normalize_url(resolved.as_ref()) {
+                        links.insert(normalized);
+                    }
+                }
+            }
+        }
+    }
+
+    // 提取 <link rel="alternate">
+    if let Ok(selector) = Selector::parse("link[rel='alternate']") {
+        for link in document.select(&selector) {
+            if let Some(href) = link.value().attr("href") {
+                if let Ok(resolved) = base_url.join(href) {
+                    if let Some(normalized) = normalize_url(resolved.as_ref()) {
+                        links.insert(normalized);
+                    }
+                }
+            }
+        }
+    }
+
+    // 提取 <meta http-equiv="refresh">
+    if let Ok(selector) = Selector::parse("meta[http-equiv='refresh']") {
+        for meta in document.select(&selector) {
+            if let Some(content) = meta.value().attr("content") {
+                if let Some(url_part) = content.split("url=").nth(1) {
+                    let url = url_part.trim();
+                    if let Ok(resolved) = base_url.join(url) {
+                        if let Some(normalized) = normalize_url(resolved.as_ref()) {
+                            links.insert(normalized);
+                        }
+                    }
+                }
+            }
         }
     }
 

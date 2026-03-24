@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 
-import { developerSearch, search } from "../api";
+import { searchWithParams, type SearchResponse } from "../api";
 
 function currentSearchQuery() {
   return new URLSearchParams(window.location.search).get("q") ?? "";
@@ -17,10 +17,11 @@ export function SearchPage(props: {
 }) {
   const [query, setQuery] = useState(currentSearchQuery);
   const [submittedQuery, setSubmittedQuery] = useState(currentSearchQuery);
-  const [results, setResults] = useState<Awaited<ReturnType<typeof search>> | null>(null);
+  const [results, setResults] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(() => Boolean(currentSearchQuery()));
   const [error, setError] = useState<string | null>(null);
   const [usingProtectedSearch, setUsingProtectedSearch] = useState(false);
+  const [offset, setOffset] = useState(0);
 
   useEffect(() => {
     if (!submittedQuery.trim()) {
@@ -36,9 +37,11 @@ export function SearchPage(props: {
     setError(null);
     const runSearch = async () => {
       try {
-        const response = props.devToken
-          ? await developerSearch(submittedQuery, props.devToken)
-          : await search(submittedQuery);
+        const response = await searchWithParams(
+          submittedQuery,
+          { offset },
+          props.devToken ?? undefined,
+        );
         if (!cancelled) {
           setResults(response);
           setUsingProtectedSearch(Boolean(props.devToken));
@@ -48,7 +51,7 @@ export function SearchPage(props: {
         if (!cancelled && errorWithStatus.status === 401 && props.devToken) {
           props.onTokenExpired();
           try {
-            const fallbackResponse = await search(submittedQuery);
+            const fallbackResponse = await searchWithParams(submittedQuery, { offset });
             if (!cancelled) {
               setResults(fallbackResponse);
               setUsingProtectedSearch(false);
@@ -81,38 +84,47 @@ export function SearchPage(props: {
     return () => {
       cancelled = true;
     };
-  }, [submittedQuery, props.devToken, props.onTokenExpired]);
+  }, [submittedQuery, offset, props.devToken, props.onTokenExpired]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextQuery = query.trim();
     const nextUrl = nextQuery ? `/?q=${encodeURIComponent(nextQuery)}` : "/";
     window.history.pushState({}, "", nextUrl);
+    setOffset(0);
     setSubmittedQuery(nextQuery);
+  }
+
+  function handleNextPage() {
+    if (results?.next_offset != null) {
+      setOffset(results.next_offset);
+    }
+  }
+
+  function handlePrevPage() {
+    setOffset((prev) => Math.max(0, prev - 10));
   }
 
   const hasResults = Boolean(results);
 
   return (
     <div className="search-shell">
+      <div className="search-corner">
+        {props.devToken ? (
+          <span className="search-corner-status">Developer key active</span>
+        ) : null}
+        <button type="button" className="search-corner-link" onClick={props.onNavigateDev}>
+          Developer portal
+        </button>
+      </div>
       <main className={hasResults ? "search-page search-page-top" : "search-page"}>
         {!hasResults && <h1 className="search-brand">FindVerse</h1>}
-        <div className="search-toolbar">
-          <div className="search-access-strip">
-            <span className={usingProtectedSearch ? "status-pill" : "status-pill status-pill-muted"}>
-              {usingProtectedSearch ? "Developer key active" : "Browser search"}
-            </span>
-            <button type="button" className="plain-link" onClick={props.onNavigateDev}>
-              Developer portal
-            </button>
-          </div>
-        </div>
         <form className="search-form" onSubmit={handleSubmit}>
           <input
             aria-label="Search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search"
+            placeholder="Search the web..."
           />
           <button type="submit">Search</button>
         </form>
@@ -122,8 +134,13 @@ export function SearchPage(props: {
         {results ? (
           <section className="results-list">
             <p className="search-meta">
-              {results.total_estimate} results in {results.took_ms}ms
+              {usingProtectedSearch ? "Developer search" : "Browser search"} · {results.total_estimate} results in {results.took_ms}ms
             </p>
+            {results.did_you_mean ? (
+              <p className="search-meta">
+                Did you mean <strong>{results.did_you_mean}</strong>?
+              </p>
+            ) : null}
             {results.results.map((result) => (
               <article key={result.id} className="result-item">
                 <a href={result.url} target="_blank" rel="noreferrer">
@@ -133,6 +150,27 @@ export function SearchPage(props: {
                 <p>{result.snippet}</p>
               </article>
             ))}
+            {(offset > 0 || results.next_offset != null) && (
+              <div className="search-pagination">
+                <button
+                  type="button"
+                  disabled={offset === 0}
+                  onClick={handlePrevPage}
+                >
+                  Previous
+                </button>
+                <span className="search-pagination-info">
+                  Page {Math.floor(offset / 10) + 1}
+                </span>
+                <button
+                  type="button"
+                  disabled={results.next_offset == null}
+                  onClick={handleNextPage}
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </section>
         ) : null}
       </main>

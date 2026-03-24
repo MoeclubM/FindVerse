@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Cargo test
+        run: cargo test --workspace
+
+      - name: Typecheck web
+        run: npm run typecheck:web
+
+  build-binaries:
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            archive: findverse-linux-x86_64.tar.gz
+            artifact_name: binaries-linux-x86_64
+            package_cmd: |
+              mkdir -p dist
+              tar -czf dist/findverse-linux-x86_64.tar.gz -C target/release findverse-control-api findverse-query-api findverse-crawler
+          - os: windows-latest
+            archive: findverse-windows-x86_64.zip
+            artifact_name: binaries-windows-x86_64
+            package_cmd: |
+              New-Item -ItemType Directory -Path dist -Force | Out-Null
+              Compress-Archive -Path `
+                target/release/findverse-control-api.exe, `
+                target/release/findverse-query-api.exe, `
+                target/release/findverse-crawler.exe `
+                -DestinationPath dist/findverse-windows-x86_64.zip -Force
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release -p findverse-control-api -p findverse-query-api -p findverse-crawler
+
+      - name: Package binaries on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ${{ matrix.package_cmd }}
+
+      - name: Package binaries on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ${{ matrix.package_cmd }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.archive }}
+
+  publish-images:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: control-api
+            dockerfile: services/control-api/Dockerfile
+            context: .
+          - image: query-api
+            dockerfile: services/query-api/Dockerfile
+            context: .
+          - image: crawler
+            dockerfile: services/crawler/Dockerfile
+            context: .
+          - image: web
+            dockerfile: apps/web/Dockerfile
+            context: .
+            build_args: |
+              FINDVERSE_CONTROL_API_PROXY=http://control-api:8080
+              FINDVERSE_QUERY_API_PROXY=http://query-api:8081
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/findverse-${{ matrix.image }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build_args || '' }}
+
+  create-release:
+    needs:
+      - build-binaries
+      - publish-images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
@@ -9,38 +9,19 @@ use tracing::{info, warn};
 
 use crate::extract::{detect_language, filter_urls_by_domain, parse_html_document};
 use crate::fetch::{
-    check_robots_allowed, fetch_with_retry, random_user_agent, rate_limit_domain, WorkerState,
+    WorkerState, check_robots_allowed, fetch_with_retry, random_user_agent, rate_limit_domain,
 };
+use crate::js_render::{needs_js_rendering, render_with_js};
 use crate::models::{
     ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, SubmitCrawlReportRequest,
     SubmitCrawlReportResponse, WorkerConfig,
 };
+use crate::sitemap::fetch_and_parse_sitemap;
+use crate::url_normalize::normalize_url_advanced;
 
 // ---------------------------------------------------------------------------
 // Registration helpers
 // ---------------------------------------------------------------------------
-pub async fn crawler_hello(
-    client: &reqwest::Client,
-    server: &str,
-    api_key: &str,
-) -> anyhow::Result<crate::models::HelloCrawlerResponse> {
-    let response = client
-        .post(format!(
-            "{}/internal/crawlers/hello",
-            server.trim_end_matches('/')
-        ))
-        .bearer_auth(api_key)
-        .json(&serde_json::json!({ "name": null }))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("hello failed with status {}", response.status());
-    }
-
-    Ok(response.json().await?)
-}
-
 pub async fn crawler_join(
     client: &reqwest::Client,
     server: &str,
@@ -112,8 +93,13 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                 let allowed_domains = config.allowed_domains.clone();
                 async move {
                     info!(
-                        "processing {} from {} depth {}",
-                        job.url, job.source, job.depth
+                        "processing {} from {} depth {}/{} attempt {} discovered {}",
+                        job.url,
+                        job.source,
+                        job.depth,
+                        job.max_depth,
+                        job.attempt_count,
+                        job.discovered_at
                     );
                     process_job(&fetch_client, &job, &state, &allowed_domains).await
                 }
@@ -124,9 +110,11 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
 
         let report = submit_report(&api_client, &config, results).await?;
         info!(
-            "crawler {} accepted {} documents, discovered {} urls, frontier depth {}, indexed documents {}",
+            "crawler {} accepted {} documents (duplicates {}, skipped {}), discovered {} urls, frontier depth {}, indexed documents {}",
             config.crawler_id,
             report.accepted_documents,
+            report.duplicate_documents,
+            report.skipped_documents,
             report.discovered_urls,
             report.frontier_depth,
             report.indexed_documents
@@ -206,12 +194,17 @@ async fn process_job(
             url: job.url.clone(),
             status_code: 599,
             fetched_at,
+            final_url: Some(job.url.clone()),
+            content_type: None,
             title: None,
-            snippet: Some("blocked by robots.txt".to_string()),
+            snippet: None,
             body: None,
             language: None,
             discovered_urls: Vec::new(),
             site_authority: None,
+            retryable: Some(false),
+            error_kind: Some("robots".to_string()),
+            error_message: Some("blocked by robots.txt".to_string()),
         };
     }
 
@@ -227,17 +220,24 @@ async fn process_job(
                 url: job.url.clone(),
                 status_code: 599,
                 fetched_at,
+                final_url: None,
+                content_type: None,
                 title: None,
                 snippet: None,
                 body: None,
                 language: None,
                 discovered_urls: Vec::new(),
                 site_authority: None,
+                retryable: Some(true),
+                error_kind: Some("network_error".to_string()),
+                error_message: Some(error.to_string()),
             };
         }
     };
 
     let status_code = response.status().as_u16();
+    let final_url = normalize_url_advanced(response.url().as_ref())
+        .unwrap_or_else(|| response.url().to_string());
     let content_type = response
         .headers()
         .get(CONTENT_TYPE)
@@ -245,29 +245,83 @@ async fn process_job(
         .unwrap_or("application/octet-stream")
         .to_string();
 
-    if !content_type.contains("text/html") {
+    if !(200..300).contains(&status_code) {
         return CrawlResultReport {
             job_id: job.job_id.clone(),
             url: job.url.clone(),
             status_code,
             fetched_at,
+            final_url: Some(final_url),
+            content_type: Some(content_type),
             title: None,
             snippet: None,
             body: None,
             language: None,
             discovered_urls: Vec::new(),
             site_authority: None,
+            retryable: Some(status_code == 429 || status_code >= 500),
+            error_kind: Some(http_failure_kind(status_code)),
+            error_message: Some(format!("fetch returned status {status_code}")),
+        };
+    }
+
+    if !content_type.contains("text/html") {
+        return CrawlResultReport {
+            job_id: job.job_id.clone(),
+            url: job.url.clone(),
+            status_code,
+            fetched_at,
+            final_url: Some(final_url),
+            content_type: Some(content_type.clone()),
+            title: None,
+            snippet: None,
+            body: None,
+            language: None,
+            discovered_urls: Vec::new(),
+            site_authority: None,
+            retryable: Some(false),
+            error_kind: Some("unsupported_content_type".to_string()),
+            error_message: Some(format!("unsupported content type {content_type}")),
         };
     }
 
     let body = response.text().await.unwrap_or_default();
-    let parsed = parse_html_document(&job.url, &body);
+    let mut parsed = parse_html_document(&final_url, &body);
+
+    // Check if JS rendering is needed
+    if needs_js_rendering(&body, parsed.body.as_deref().unwrap_or("")) {
+        if let Ok(rendered_html) = render_with_js(&final_url).await {
+            info!("re-parsing {} with JS rendering", final_url);
+            parsed = parse_html_document(&final_url, &rendered_html);
+        }
+    }
+
+    // Try fetching sitemap.xml for root URLs
+    let mut all_discovered = parsed.discovered_urls;
+    if let Ok(url) = url::Url::parse(&final_url) {
+        if url.path() == "/" || url.path().is_empty() {
+            if let Some(domain) = url.domain() {
+                let sitemap_url = format!("{}://{}/sitemap.xml", url.scheme(), domain);
+                if let Ok(sitemap_urls) = fetch_and_parse_sitemap(client, &sitemap_url).await {
+                    if !sitemap_urls.is_empty() {
+                        info!(
+                            "discovered {} URLs from sitemap at {}",
+                            sitemap_urls.len(),
+                            sitemap_url
+                        );
+                        all_discovered.extend(sitemap_urls);
+                    }
+                }
+            }
+        }
+    }
 
     // Filter discovered URLs by allowed domains
+    let normalized_discovered = normalize_discovered_urls(all_discovered);
     let discovered_urls = if allowed_domains.is_empty() {
-        parsed.discovered_urls
+        normalized_discovered
     } else {
-        filter_urls_by_domain(parsed.discovered_urls, allowed_domains)
+        filter_urls_by_domain(normalized_discovered, allowed_domains)
     };
 
     // Detect language from body text
@@ -277,16 +331,67 @@ async fn process_job(
         .and_then(detect_language)
         .or(Some("unknown".to_string()));
 
+    let has_body = parsed
+        .body
+        .as_deref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+
+    if !has_body {
+        return CrawlResultReport {
+            job_id: job.job_id.clone(),
+            url: job.url.clone(),
+            status_code,
+            fetched_at,
+            final_url: Some(final_url),
+            content_type: Some(content_type),
+            title: parsed.title,
+            snippet: parsed.snippet,
+            body: None,
+            language,
+            discovered_urls,
+            site_authority: Some(0.5),
+            retryable: Some(false),
+            error_kind: Some("empty_document".to_string()),
+            error_message: Some("parsed page had no indexable body".to_string()),
+        };
+    }
+
     CrawlResultReport {
         job_id: job.job_id.clone(),
         url: job.url.clone(),
         status_code,
         fetched_at,
+        final_url: Some(final_url),
+        content_type: Some(content_type),
         title: parsed.title,
         snippet: parsed.snippet,
         body: parsed.body,
         language,
         discovered_urls,
         site_authority: Some(0.5),
+        retryable: Some(false),
+        error_kind: None,
+        error_message: None,
+    }
+}
+
+fn normalize_discovered_urls(urls: Vec<String>) -> Vec<String> {
+    let mut normalized = BTreeSet::new();
+    for url in urls {
+        if let Some(url) = normalize_url_advanced(&url) {
+            normalized.insert(url);
+        }
+    }
+    normalized.into_iter().collect()
+}
+
+fn http_failure_kind(status_code: u16) -> String {
+    match status_code {
+        401 | 403 => "blocked".to_string(),
+        404 => "http_404".to_string(),
+        429 => "http_429".to_string(),
+        500..=599 => "http_5xx".to_string(),
+        _ => format!("http_{status_code}"),
     }
 }

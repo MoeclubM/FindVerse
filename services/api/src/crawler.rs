@@ -1,307 +1,85 @@
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::time::Duration;
 
-use anyhow::Context;
 use chrono::{DateTime, Utc};
-use rand::{Rng, distr::Alphanumeric};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::{fs, sync::RwLock};
-use url::Url;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
     error::ApiError,
     models::{
-        ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJob, CrawlOverviewResponse,
-        CrawlResultInput, CrawlRule, CrawlerMetadata, CreateCrawlRuleRequest,
-        CreateCrawlerRequest, CreatedCrawlerResponse, HelloCrawlerRequest, HelloCrawlerResponse,
-        IndexedDocument, JoinCrawlerRequest, JoinCrawlerResponse, SeedFrontierRequest,
-        SeedFrontierResponse, SubmitCrawlReportRequest, SubmitCrawlReportResponse,
-        UpdateCrawlRuleRequest,
+        ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJob, CrawlJobDetail,
+        CrawlJobListResponse, CrawlJobStats, CrawlOverviewResponse, CrawlResultInput, CrawlRule,
+        CrawlerMetadata, CreateCrawlRuleRequest, IndexedDocument, JoinCrawlerRequest,
+        JoinCrawlerResponse, SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
+        SubmitCrawlReportResponse, UpdateCrawlRuleRequest,
     },
-    store::{SearchIndex, atomic_write, derive_terms, display_url, stable_document_id},
+    store::{
+        CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, SearchIndex,
+        content_hash, derive_terms, display_url, extract_host, normalize_url, stable_document_id,
+        word_count,
+    },
 };
 
 #[derive(Debug, Clone)]
 pub struct CrawlerStore {
-    path: PathBuf,
-    inner: Arc<RwLock<CrawlerStoreState>>,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct CrawlerStoreState {
-    #[serde(default)]
-    crawlers: HashMap<String, StoredCrawler>,
-    #[serde(default)]
-    rules: HashMap<String, StoredCrawlRule>,
-    #[serde(default)]
-    frontier: VecDeque<FrontierRecord>,
-    #[serde(default)]
-    known_urls: HashSet<String>,
-    #[serde(default)]
-    in_flight: HashMap<String, InFlightRecord>,
-    #[serde(default)]
-    events: VecDeque<StoredCrawlEvent>,
-    #[serde(default)]
-    join_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredCrawler {
-    id: String,
-    #[serde(default = "default_owner_developer_id")]
-    owner_developer_id: String,
-    name: String,
-    preview: String,
-    key_hash: String,
-    /// Set when the crawler was auto-registered via an API key (hello endpoint).
-    #[serde(default)]
-    api_key_hash: Option<String>,
-    created_at: DateTime<Utc>,
-    #[serde(default)]
-    revoked_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    last_seen_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    last_claimed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    jobs_claimed: u64,
-    #[serde(default)]
-    jobs_reported: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredCrawlRule {
-    id: String,
-    #[serde(default = "default_owner_developer_id")]
-    owner_developer_id: String,
-    name: String,
-    seed_url: String,
-    interval_minutes: u64,
-    #[serde(default = "default_rule_depth")]
-    max_depth: u32,
-    #[serde(default = "default_true")]
-    enabled: bool,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-    #[serde(default)]
-    last_enqueued_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FrontierRecord {
-    job_id: String,
-    #[serde(default = "default_owner_developer_id")]
-    owner_developer_id: String,
-    url: String,
-    source: String,
-    depth: u32,
-    #[serde(default = "default_rule_depth")]
-    max_depth: u32,
-    discovered_at: DateTime<Utc>,
-    #[serde(default)]
-    submitted_by: Option<String>,
-    #[serde(default)]
-    rule_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct InFlightRecord {
-    crawler_id: String,
-    job: FrontierRecord,
-    claimed_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredCrawlEvent {
-    id: String,
-    #[serde(default = "default_owner_developer_id")]
-    owner_developer_id: String,
-    kind: String,
-    status: String,
-    message: String,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    crawler_id: Option<String>,
-    created_at: DateTime<Utc>,
+    pg_pool: PgPool,
 }
 
 impl CrawlerStore {
-    pub async fn load(path: PathBuf) -> anyhow::Result<Self> {
-        let empty = serde_json::to_string_pretty(&CrawlerStoreState::default())?;
-        ensure_file_with_fallbacks(
-            &path,
-            &empty,
-            &[
-                PathBuf::from("/opt/findverse/crawler_store.json"),
-                PathBuf::from("services/api/fixtures/crawler_store.json"),
-            ],
-        )
-        .await?;
-
-        let raw = fs::read_to_string(&path)
-            .await
-            .context("failed to read crawler store file")?;
-        let state: CrawlerStoreState =
-            serde_json::from_str(&raw).context("failed to parse crawler store file")?;
-
-        Ok(Self {
-            path,
-            inner: Arc::new(RwLock::new(state)),
-        })
+    pub fn new(pg_pool: PgPool) -> Self {
+        Self { pg_pool }
     }
 
-    pub async fn create_crawler(
+    pub async fn rename_crawler(
         &self,
         developer_id: &str,
-        request: CreateCrawlerRequest,
-    ) -> Result<CreatedCrawlerResponse, ApiError> {
-        let clean_name = request.name.trim();
-        if clean_name.len() < 2 {
+        crawler_id: &str,
+        new_name: &str,
+    ) -> Result<(), ApiError> {
+        let clean = new_name.trim();
+        if clean.len() < 2 {
             return Err(ApiError::BadRequest(
                 "crawler name must contain at least 2 characters".to_string(),
             ));
         }
 
-        let key = generate_token("fvc");
-        let preview = format!("{}...{}", &key[..8], &key[key.len() - 4..]);
-        let crawler = StoredCrawler {
-            id: Uuid::now_v7().to_string(),
-            owner_developer_id: developer_id.to_string(),
-            name: clean_name.to_string(),
-            preview: preview.clone(),
-            key_hash: hash_token(&key),
-            api_key_hash: None,
-            created_at: Utc::now(),
-            revoked_at: None,
-            last_seen_at: None,
-            last_claimed_at: None,
-            jobs_claimed: 0,
-            jobs_reported: 0,
-        };
+        let result =
+            sqlx::query("UPDATE crawlers SET name = $3 WHERE id = $1 AND owner_developer_id = $2")
+                .bind(crawler_id)
+                .bind(developer_id)
+                .bind(clean)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
 
-        {
-            let mut state = self.inner.write().await;
-            state.crawlers.insert(crawler.id.clone(), crawler.clone());
-            push_event(
-                &mut state,
-                developer_id,
-                "crawler-created",
-                "ok",
-                format!("created crawler {}", crawler.name),
-                None,
-                Some(crawler.id.clone()),
-            );
-            self.persist_locked(&state).await?;
+        if result.rows_affected() == 0 {
+            return Err(ApiError::NotFound("crawler not found".to_string()));
         }
 
-        Ok(CreatedCrawlerResponse {
-            id: crawler.id,
-            name: crawler.name,
-            preview,
-            key,
-            created_at: crawler.created_at,
-        })
-    }
-
-    /// Auto-register a crawler using a developer API key.
-    /// Idempotent: returns the same crawler_id for the same api_key_hash + developer.
-    pub async fn hello(
-        &self,
-        developer_id: &str,
-        api_key_hash: &str,
-        request: HelloCrawlerRequest,
-    ) -> Result<HelloCrawlerResponse, ApiError> {
-        let mut state = self.inner.write().await;
-
-        // Return existing registration if one already exists for this api key
-        if let Some(existing) = state
-            .crawlers
-            .values()
-            .find(|c| {
-                c.owner_developer_id == developer_id
-                    && c.api_key_hash.as_deref() == Some(api_key_hash)
-                    && c.revoked_at.is_none()
-            })
-            .cloned()
-        {
-            return Ok(HelloCrawlerResponse {
-                crawler_id: existing.id,
-                name: existing.name,
-            });
-        }
-
-        let clean_name = request
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| n.len() >= 2)
-            .unwrap_or("auto-crawler");
-
-        let crawler = StoredCrawler {
-            id: Uuid::now_v7().to_string(),
-            owner_developer_id: developer_id.to_string(),
-            name: clean_name.to_string(),
-            preview: format!("api:{}", &developer_id[..8.min(developer_id.len())]),
-            key_hash: String::new(),
-            api_key_hash: Some(api_key_hash.to_string()),
-            created_at: Utc::now(),
-            revoked_at: None,
-            last_seen_at: None,
-            last_claimed_at: None,
-            jobs_claimed: 0,
-            jobs_reported: 0,
-        };
-
-        let response = HelloCrawlerResponse {
-            crawler_id: crawler.id.clone(),
-            name: crawler.name.clone(),
-        };
-        push_event(
-            &mut state,
+        self.push_event(
             developer_id,
-            "crawler-registered",
+            "crawler-renamed",
             "ok",
-            format!("auto-registered crawler {}", crawler.name),
+            format!("renamed crawler {crawler_id} to {clean}"),
             None,
-            Some(crawler.id.clone()),
-        );
-        state.crawlers.insert(crawler.id.clone(), crawler);
-        self.persist_locked(&state).await?;
+            Some(crawler_id.to_string()),
+        )
+        .await?;
 
-        Ok(response)
+        Ok(())
     }
 
-    /// Register a crawler using a join key (no admin/developer credentials needed).
     pub async fn join(
         &self,
+        owner_developer_id: &str,
         config_join_key: Option<&str>,
         request: JoinCrawlerRequest,
     ) -> Result<JoinCrawlerResponse, ApiError> {
-        let expected = config_join_key
-            .or_else(|| {
-                // Fallback: try the persisted join key (set via admin API)
-                None // checked inside the lock below
-            });
-
-        let mut state = self.inner.write().await;
-
-        // Resolve expected key: config takes precedence, then persisted state
-        let expected_key = match expected {
-            Some(k) => k.to_string(),
-            None => state
-                .join_key
-                .clone()
-                .ok_or_else(|| {
-                    ApiError::BadRequest("crawler join key is not configured".to_string())
-                })?,
-        };
+        let expected_key = self
+            .resolve_join_key(config_join_key)
+            .await?
+            .ok_or_else(|| ApiError::BadRequest("crawler join key is not configured".to_string()))?;
 
         if request.join_key != expected_key {
             return Err(ApiError::Unauthorized("invalid join key".to_string()));
@@ -316,57 +94,49 @@ impl CrawlerStore {
 
         let key = generate_token("fvc");
         let preview = format!("{}...{}", &key[..8], &key[key.len() - 4..]);
-        let crawler = StoredCrawler {
-            id: Uuid::now_v7().to_string(),
-            owner_developer_id: "system:crawlers".to_string(),
-            name: clean_name.to_string(),
-            preview: preview.clone(),
-            key_hash: hash_token(&key),
-            api_key_hash: None,
-            created_at: Utc::now(),
-            revoked_at: None,
-            last_seen_at: None,
-            last_claimed_at: None,
-            jobs_claimed: 0,
-            jobs_reported: 0,
-        };
+        let id = Uuid::now_v7().to_string();
+        let now = Utc::now();
 
-        let response = JoinCrawlerResponse {
-            crawler_id: crawler.id.clone(),
-            crawler_key: key,
-            name: crawler.name.clone(),
-        };
+        sqlx::query(
+            "insert into crawlers (id, owner_developer_id, name, preview, key_hash, created_at, last_seen_at, metadata)
+             values ($1, $2, $3, $4, $5, $6, $6, '{}'::jsonb)",
+        )
+        .bind(&id)
+        .bind(owner_developer_id)
+        .bind(clean_name)
+        .bind(&preview)
+        .bind(hash_token(&key))
+        .bind(now)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
 
-        push_event(
-            &mut state,
-            "system:crawlers",
+        self.push_event(
+            owner_developer_id,
             "crawler-joined",
             "ok",
-            format!("crawler {} joined via join key", crawler.name),
+            format!("crawler {clean_name} joined via join key"),
             None,
-            Some(crawler.id.clone()),
-        );
-        state.crawlers.insert(crawler.id.clone(), crawler);
-        self.persist_locked(&state).await?;
+            Some(id.clone()),
+        )
+        .await?;
 
-        Ok(response)
+        Ok(JoinCrawlerResponse {
+            crawler_id: id,
+            crawler_key: key,
+            name: clean_name.to_string(),
+        })
     }
 
-    /// Get the current crawler join key (persisted or from config).
     pub async fn get_join_key(&self, config_join_key: Option<&str>) -> Option<String> {
-        if let Some(k) = config_join_key {
-            return Some(k.to_string());
-        }
-        let state = self.inner.read().await;
-        state.join_key.clone()
+        self.resolve_join_key(config_join_key).await.ok().flatten()
     }
 
-    /// Set or rotate the persisted crawler join key.
     pub async fn set_join_key(&self, new_key: Option<String>) -> Result<(), ApiError> {
-        let mut state = self.inner.write().await;
-        state.join_key = new_key;
-        self.persist_locked(&state).await?;
-        Ok(())
+        match new_key {
+            Some(k) => self.set_config("join_key", &k).await,
+            None => self.delete_config("join_key").await,
+        }
     }
 
     pub async fn create_rule(
@@ -375,39 +145,52 @@ impl CrawlerStore {
         request: CreateCrawlRuleRequest,
     ) -> Result<CrawlRule, ApiError> {
         let name = validate_rule_name(&request.name)?;
-        let seed_url = normalize_url(&request.seed_url)
-            .ok_or_else(|| ApiError::BadRequest("seed_url must be a valid http(s) url".to_string()))?;
+        let seed_url = normalize_url(&request.seed_url).ok_or_else(|| {
+            ApiError::BadRequest("seed_url must be a valid http(s) url".to_string())
+        })?;
 
-        let rule = StoredCrawlRule {
-            id: Uuid::now_v7().to_string(),
-            owner_developer_id: developer_id.to_string(),
+        let id = Uuid::now_v7().to_string();
+        let now = Utc::now();
+        let interval_minutes = request.interval_minutes.clamp(1, 10_080) as i64;
+        let max_depth = request.max_depth.min(10) as i32;
+
+        sqlx::query(
+            "insert into crawl_rules (id, owner_developer_id, owner_user_id, name, seed_url, pattern, status, interval_minutes, max_depth, enabled, created_at, updated_at)
+             values ($1, $2, null, $3, $4, $4, 'active', $5, $6, $7, $8, $8)",
+        )
+        .bind(&id)
+        .bind(developer_id)
+        .bind(&name)
+        .bind(&seed_url)
+        .bind(interval_minutes)
+        .bind(max_depth)
+        .bind(request.enabled)
+        .bind(now)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        self.push_event(
+            developer_id,
+            "rule-created",
+            "ok",
+            format!("created rule {name}"),
+            Some(seed_url.clone()),
+            None,
+        )
+        .await?;
+
+        Ok(CrawlRule {
+            id,
             name,
             seed_url,
-            interval_minutes: request.interval_minutes.clamp(1, 10_080),
-            max_depth: request.max_depth.min(10),
+            interval_minutes: interval_minutes as u64,
+            max_depth: max_depth as u32,
             enabled: request.enabled,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: now,
+            updated_at: now,
             last_enqueued_at: None,
-        };
-
-        let response = to_crawl_rule(&rule);
-        {
-            let mut state = self.inner.write().await;
-            state.rules.insert(rule.id.clone(), rule.clone());
-            push_event(
-                &mut state,
-                developer_id,
-                "rule-created",
-                "ok",
-                format!("created rule {}", rule.name),
-                Some(rule.seed_url.clone()),
-                None,
-            );
-            self.persist_locked(&state).await?;
-        }
-
-        Ok(response)
+        })
     }
 
     pub async fn update_rule(
@@ -416,78 +199,110 @@ impl CrawlerStore {
         rule_id: &str,
         request: UpdateCrawlRuleRequest,
     ) -> Result<CrawlRule, ApiError> {
-        let response = {
-            let mut state = self.inner.write().await;
-            let rule = state
-                .rules
-                .get_mut(rule_id)
-                .ok_or_else(|| ApiError::NotFound("crawl rule not found".to_string()))?;
+        let row = sqlx::query_as::<_, CrawlRuleRow>(
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, enabled, created_at, updated_at, last_enqueued_at
+             from crawl_rules where id = $1",
+        )
+        .bind(rule_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .ok_or_else(|| ApiError::NotFound("crawl rule not found".to_string()))?;
 
-            if rule.owner_developer_id != developer_id {
-                return Err(ApiError::NotFound("crawl rule not found".to_string()));
-            }
-
-            if let Some(name) = request.name.as_deref() {
-                rule.name = validate_rule_name(name)?;
-            }
-            if let Some(seed_url) = request.seed_url.as_deref() {
-                rule.seed_url = normalize_url(seed_url).ok_or_else(|| {
-                    ApiError::BadRequest("seed_url must be a valid http(s) url".to_string())
-                })?;
-            }
-            if let Some(interval_minutes) = request.interval_minutes {
-                rule.interval_minutes = interval_minutes.clamp(1, 10_080);
-            }
-            if let Some(max_depth) = request.max_depth {
-                rule.max_depth = max_depth.min(10);
-            }
-            if let Some(enabled) = request.enabled {
-                rule.enabled = enabled;
-            }
-            rule.updated_at = Utc::now();
-
-            let response = to_crawl_rule(rule);
-            let rule_name = rule.name.clone();
-            let rule_seed_url = rule.seed_url.clone();
-            push_event(
-                &mut state,
-                developer_id,
-                "rule-updated",
-                "ok",
-                format!("updated rule {rule_name}"),
-                Some(rule_seed_url),
-                None,
-            );
-            self.persist_locked(&state).await?;
-            response
-        };
-
-        Ok(response)
-    }
-
-    pub async fn delete_rule(&self, developer_id: &str, rule_id: &str) -> Result<(), ApiError> {
-        let mut state = self.inner.write().await;
-        let rule = state
-            .rules
-            .get(rule_id)
-            .cloned()
-            .ok_or_else(|| ApiError::NotFound("crawl rule not found".to_string()))?;
-
-        if rule.owner_developer_id != developer_id {
+        if row.owner_developer_id != developer_id {
             return Err(ApiError::NotFound("crawl rule not found".to_string()));
         }
 
-        state.rules.remove(rule_id);
-        push_event(
-            &mut state,
+        let new_name = match request.name.as_deref() {
+            Some(n) => validate_rule_name(n)?,
+            None => row.name,
+        };
+        let new_seed_url = match request.seed_url.as_deref() {
+            Some(u) => normalize_url(u).ok_or_else(|| {
+                ApiError::BadRequest("seed_url must be a valid http(s) url".to_string())
+            })?,
+            None => row.seed_url,
+        };
+        let new_interval = request
+            .interval_minutes
+            .map(|v| v.clamp(1, 10_080))
+            .unwrap_or(row.interval_minutes as u64) as i64;
+        let new_max_depth = request
+            .max_depth
+            .map(|v| v.min(10))
+            .unwrap_or(row.max_depth as u32) as i32;
+        let new_enabled = request.enabled.unwrap_or(row.enabled);
+        let now = Utc::now();
+
+        sqlx::query(
+            "update crawl_rules set name = $2, seed_url = $3, pattern = $3, interval_minutes = $4, max_depth = $5, enabled = $6, updated_at = $7
+             where id = $1",
+        )
+        .bind(rule_id)
+        .bind(&new_name)
+        .bind(&new_seed_url)
+        .bind(new_interval)
+        .bind(new_max_depth)
+        .bind(new_enabled)
+        .bind(now)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        self.push_event(
+            developer_id,
+            "rule-updated",
+            "ok",
+            format!("updated rule {new_name}"),
+            Some(new_seed_url.clone()),
+            None,
+        )
+        .await?;
+
+        Ok(CrawlRule {
+            id: rule_id.to_string(),
+            name: new_name,
+            seed_url: new_seed_url,
+            interval_minutes: new_interval as u64,
+            max_depth: new_max_depth as u32,
+            enabled: new_enabled,
+            created_at: row.created_at,
+            updated_at: now,
+            last_enqueued_at: row.last_enqueued_at,
+        })
+    }
+
+    pub async fn delete_rule(&self, developer_id: &str, rule_id: &str) -> Result<(), ApiError> {
+        let row = sqlx::query_as::<_, CrawlRuleRow>(
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, enabled, created_at, updated_at, last_enqueued_at
+             from crawl_rules where id = $1",
+        )
+        .bind(rule_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .ok_or_else(|| ApiError::NotFound("crawl rule not found".to_string()))?;
+
+        if row.owner_developer_id != developer_id {
+            return Err(ApiError::NotFound("crawl rule not found".to_string()));
+        }
+
+        sqlx::query("delete from crawl_rules where id = $1")
+            .bind(rule_id)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+        self.push_event(
             developer_id,
             "rule-deleted",
             "ok",
-            format!("deleted rule {}", rule.name),
-            Some(rule.seed_url),
+            format!("deleted rule {}", row.name),
+            Some(row.seed_url),
             None,
-        );
-        self.persist_locked(&state).await?;
+        )
+        .await?;
+
         Ok(())
     }
 
@@ -496,51 +311,119 @@ impl CrawlerStore {
         developer_id: &str,
         indexed_documents: usize,
     ) -> Result<CrawlOverviewResponse, ApiError> {
-        let state = self.inner.read().await;
+        let crawlers: Vec<CrawlerMetadata> = sqlx::query_as::<_, CrawlerMetadataRow>(
+            "select id, name, preview, created_at, revoked_at, last_seen_at, last_claimed_at, jobs_claimed, jobs_reported
+             from crawlers where owner_developer_id = $1
+             order by created_at desc",
+        )
+        .bind(developer_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .into_iter()
+        .map(|r| CrawlerMetadata {
+            id: r.id,
+            name: r.name,
+            preview: r.preview,
+            created_at: r.created_at,
+            revoked_at: r.revoked_at,
+            last_seen_at: r.last_seen_at,
+            last_claimed_at: r.last_claimed_at,
+            jobs_claimed: r.jobs_claimed as u64,
+            jobs_reported: r.jobs_reported as u64,
+        })
+        .collect();
 
-        let mut crawlers = state
-            .crawlers
-            .values()
-            .filter(|crawler| crawler.owner_developer_id == developer_id)
-            .map(to_crawler_metadata)
-            .collect::<Vec<_>>();
-        crawlers.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        let rules: Vec<CrawlRule> = sqlx::query_as::<_, CrawlRuleRow>(
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, enabled, created_at, updated_at, last_enqueued_at
+             from crawl_rules where owner_developer_id = $1
+             order by created_at desc",
+        )
+        .bind(developer_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .into_iter()
+        .map(|r| CrawlRule {
+            id: r.id,
+            name: r.name,
+            seed_url: r.seed_url,
+            interval_minutes: r.interval_minutes as u64,
+            max_depth: r.max_depth as u32,
+            enabled: r.enabled,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            last_enqueued_at: r.last_enqueued_at,
+        })
+        .collect();
 
-        let mut rules = state
-            .rules
-            .values()
-            .filter(|rule| rule.owner_developer_id == developer_id)
-            .map(to_crawl_rule)
-            .collect::<Vec<_>>();
-        rules.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        let frontier_depth: i64 = sqlx::query_scalar(
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and status = 'queued'",
+        )
+        .bind(developer_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
 
-        let recent_events = state
-            .events
-            .iter()
-            .rev()
-            .filter(|event| event.owner_developer_id == developer_id)
-            .take(40)
-            .map(to_crawl_event)
-            .collect::<Vec<_>>();
+        let known_urls: i64 =
+            sqlx::query_scalar("select count(*) from crawl_jobs where owner_developer_id = $1")
+                .bind(developer_id)
+                .fetch_one(&self.pg_pool)
+                .await
+                .unwrap_or(0);
+
+        let in_flight_jobs: i64 = sqlx::query_scalar(
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and status = 'claimed'",
+        )
+        .bind(developer_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
+
+        let duplicate_documents: i64 =
+            sqlx::query_scalar("select count(*) from documents where duplicate_of is not null")
+                .fetch_one(&self.pg_pool)
+                .await
+                .unwrap_or(0);
+
+        let terminal_failures: i64 = sqlx::query_scalar(
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and status in ('failed', 'blocked', 'dead_letter')",
+        )
+        .bind(developer_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
+
+        let recent_events: Vec<CrawlEvent> = sqlx::query_as::<_, CrawlEventRow>(
+            "select id, event_type, status, message, url, crawler_id, created_at
+             from crawl_events where owner_developer_id = $1
+             order by created_at desc
+             limit 40",
+        )
+        .bind(developer_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .into_iter()
+        .map(|r| CrawlEvent {
+            id: r.id,
+            kind: r.event_type,
+            status: r.status,
+            message: r.message,
+            url: r.url,
+            crawler_id: r.crawler_id,
+            created_at: r.created_at,
+        })
+        .collect();
 
         Ok(CrawlOverviewResponse {
-            developer_id: developer_id.to_string(),
-            frontier_depth: state
-                .frontier
-                .iter()
-                .filter(|job| job.owner_developer_id == developer_id)
-                .count(),
-            known_urls: state
-                .known_urls
-                .iter()
-                .filter(|key| key.starts_with(&format!("{developer_id}:")))
-                .count(),
-            in_flight_jobs: state
-                .in_flight
-                .values()
-                .filter(|job| job.job.owner_developer_id == developer_id)
-                .count(),
+            owner_id: developer_id.to_string(),
+            frontier_depth: frontier_depth as usize,
+            known_urls: known_urls as usize,
+            in_flight_jobs: in_flight_jobs as usize,
             indexed_documents,
+            duplicate_documents: duplicate_documents as usize,
+            terminal_failures: terminal_failures as usize,
             crawlers,
             rules,
             recent_events,
@@ -560,44 +443,52 @@ impl CrawlerStore {
 
         let source = request
             .source
-            .filter(|value| !value.trim().is_empty())
+            .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| format!("manual:{developer_id}"));
-        let mut state = self.inner.write().await;
-        let accepted_urls = enqueue_urls(
-            &mut state,
-            developer_id,
-            request.urls,
-            &source,
-            0,
-            request.max_depth.min(10),
-            Some(developer_id.to_string()),
-            None,
-            request.allow_revisit,
-        );
-        push_event(
-            &mut state,
+
+        let accepted_urls = self
+            .enqueue_urls(
+                developer_id,
+                request.urls,
+                &source,
+                0,
+                request.max_depth.min(10) as i32,
+                Some(developer_id),
+                None,
+                request.allow_revisit,
+            )
+            .await?;
+
+        self.push_event(
             developer_id,
             "seed-queued",
             "ok",
             format!("queued {accepted_urls} manual seed urls"),
             None,
             None,
-        );
-        let response = SeedFrontierResponse {
+        )
+        .await?;
+
+        let frontier_depth: i64 = sqlx::query_scalar(
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and status = 'queued'",
+        )
+        .bind(developer_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
+
+        let known_urls: i64 =
+            sqlx::query_scalar("select count(*) from crawl_jobs where owner_developer_id = $1")
+                .bind(developer_id)
+                .fetch_one(&self.pg_pool)
+                .await
+                .unwrap_or(0);
+
+        Ok(SeedFrontierResponse {
             accepted_urls,
-            frontier_depth: state
-                .frontier
-                .iter()
-                .filter(|job| job.owner_developer_id == developer_id)
-                .count(),
-            known_urls: state
-                .known_urls
-                .iter()
-                .filter(|key| key.starts_with(&format!("{developer_id}:")))
-                .count(),
-        };
-        self.persist_locked(&state).await?;
-        Ok(response)
+            frontier_depth: frontier_depth as usize,
+            known_urls: known_urls as usize,
+        })
     }
 
     pub async fn claim_jobs(
@@ -607,74 +498,94 @@ impl CrawlerStore {
         request: ClaimJobsRequest,
     ) -> Result<ClaimJobsResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
-        let max_jobs = request.max_jobs.clamp(1, 100);
-        let mut state = self.inner.write().await;
+        let max_jobs = request.max_jobs.clamp(1, 100) as i64;
         let now = Utc::now();
-        let (crawler_id_owned, owner_developer_id, crawler_name) = {
-            let crawler = state
-                .crawlers
-                .get_mut(crawler_id)
-                .ok_or_else(|| ApiError::Unauthorized("unknown crawler id".to_string()))?;
-            validate_crawler(crawler, &token_hash)?;
-            crawler.last_seen_at = Some(now);
-            crawler.last_claimed_at = Some(now);
-            (
-                crawler.id.clone(),
-                crawler.owner_developer_id.clone(),
-                crawler.name.clone(),
-            )
-        };
 
-        let mut jobs = Vec::new();
-        for _ in 0..max_jobs {
-            let Some(job) = take_frontier_job(&mut state, &owner_developer_id) else {
-                break;
-            };
-            state.in_flight.insert(
-                job.job_id.clone(),
-                InFlightRecord {
-                    crawler_id: crawler_id_owned.clone(),
-                    job: job.clone(),
-                    claimed_at: now,
-                },
-            );
-            jobs.push(CrawlJob {
-                job_id: job.job_id,
-                url: job.url,
-                source: job.source,
-                depth: job.depth,
-                max_depth: job.max_depth,
-                discovered_at: job.discovered_at,
-            });
-        }
+        let crawler = self.validate_crawler_auth(crawler_id, &token_hash).await?;
 
-        if let Some(crawler) = state.crawlers.get_mut(crawler_id) {
-            crawler.jobs_claimed += jobs.len() as u64;
-        }
+        // Update last_seen_at and last_claimed_at
+        sqlx::query("update crawlers set last_seen_at = $2, last_claimed_at = $2 where id = $1")
+            .bind(crawler_id)
+            .bind(now)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
 
+        // Claim jobs using FOR UPDATE SKIP LOCKED with priority
+        let lease_expires = now + chrono::Duration::minutes(30);
+        let claimed_rows = sqlx::query_as::<_, ClaimedJobRow>(
+            "update crawl_jobs
+             set status = 'claimed',
+                 claimed_by = $1,
+                 claimed_at = $2,
+                 lease_expires_at = $3,
+                 attempt_count = attempt_count + 1
+             where id in (
+                 select id from crawl_jobs
+                 where owner_developer_id = $4
+                   and status = 'queued'
+                   and (next_retry_at is null or next_retry_at <= $2)
+                 order by priority desc, discovered_at asc
+                 limit $5
+                 for update skip locked
+             )
+             returning id, url, source, depth, max_depth, attempt_count, discovered_at",
+        )
+        .bind(crawler_id)
+        .bind(now)
+        .bind(lease_expires)
+        .bind(&crawler.owner_developer_id)
+        .bind(max_jobs)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        let jobs: Vec<CrawlJob> = claimed_rows
+            .iter()
+            .map(|r| CrawlJob {
+                job_id: r.id.clone(),
+                url: r.url.clone(),
+                source: r.source.clone(),
+                depth: r.depth as u32,
+                max_depth: r.max_depth as u32,
+                attempt_count: r.attempt_count as u32,
+                discovered_at: r.discovered_at,
+            })
+            .collect();
+
+        // Update jobs_claimed counter
         if !jobs.is_empty() {
-            push_event(
-                &mut state,
-                &owner_developer_id,
+            sqlx::query("update crawlers set jobs_claimed = jobs_claimed + $2 where id = $1")
+                .bind(crawler_id)
+                .bind(jobs.len() as i64)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+            self.push_event(
+                &crawler.owner_developer_id,
                 "jobs-claimed",
                 "ok",
-                format!("crawler {crawler_name} claimed {} jobs", jobs.len()),
-                jobs.first().map(|job| job.url.clone()),
-                Some(crawler_id_owned.clone()),
-            );
+                format!("crawler {} claimed {} jobs", crawler.name, jobs.len()),
+                jobs.first().map(|j| j.url.clone()),
+                Some(crawler_id.to_string()),
+            )
+            .await?;
         }
 
-        let response = ClaimJobsResponse {
-            crawler_id: crawler_id_owned,
-            frontier_depth: state
-                .frontier
-                .iter()
-                .filter(|job| job.owner_developer_id == owner_developer_id)
-                .count(),
+        let frontier_depth: i64 = sqlx::query_scalar(
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and status = 'queued'",
+        )
+        .bind(&crawler.owner_developer_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
+
+        Ok(ClaimJobsResponse {
+            crawler_id: crawler_id.to_string(),
+            frontier_depth: frontier_depth as usize,
             jobs,
-        };
-        self.persist_locked(&state).await?;
-        Ok(response)
+        })
     }
 
     pub async fn submit_report(
@@ -685,97 +596,324 @@ impl CrawlerStore {
         search_index: &SearchIndex,
     ) -> Result<SubmitCrawlReportResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
-        let mut state = self.inner.write().await;
         let now = Utc::now();
-        let owner_developer_id = {
-            let crawler = state
-                .crawlers
-                .get_mut(crawler_id)
-                .ok_or_else(|| ApiError::Unauthorized("unknown crawler id".to_string()))?;
-            validate_crawler(crawler, &token_hash)?;
-            crawler.last_seen_at = Some(now);
-            crawler.owner_developer_id.clone()
-        };
+
+        let crawler = self.validate_crawler_auth(crawler_id, &token_hash).await?;
+
+        sqlx::query("update crawlers set last_seen_at = $2 where id = $1")
+            .bind(crawler_id)
+            .bind(now)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
 
         let mut documents = Vec::new();
         let mut discovered_urls = 0usize;
-        let mut reported = 0u64;
+        let mut reported = 0i64;
 
         for result in request.results {
-            let Some(in_flight) = state.in_flight.remove(&result.job_id) else {
+            let in_flight = sqlx::query_as::<_, InFlightJobRow>(
+                "select id, url, depth, max_depth, rule_id, attempt_count, max_attempts from crawl_jobs
+                 where id = $1 and claimed_by = $2 and status = 'claimed'",
+            )
+            .bind(&result.job_id)
+            .bind(crawler_id)
+            .fetch_optional(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+            let Some(in_flight) = in_flight else {
                 continue;
             };
 
-            if in_flight.crawler_id != crawler_id || in_flight.job.url != result.url {
+            if in_flight.url != result.url {
                 return Err(ApiError::BadRequest(
                     "crawl report contained a job not assigned to this crawler".to_string(),
                 ));
             }
 
             reported += 1;
-            let document = build_document(&result);
-            let allowed_discovery = in_flight.job.depth < in_flight.job.max_depth;
-            if allowed_discovery {
-                discovered_urls += enqueue_urls(
-                    &mut state,
-                    &owner_developer_id,
-                    result.discovered_urls.clone(),
-                    &result.url,
-                    in_flight.job.depth.saturating_add(1),
-                    in_flight.job.max_depth,
-                    Some(owner_developer_id.clone()),
-                    in_flight.job.rule_id.clone(),
-                    false,
-                );
-            }
+            let finalized_url = result
+                .final_url
+                .clone()
+                .unwrap_or_else(|| result.url.clone());
+            let discovered_count = result.discovered_urls.len() as i32;
+            let http_status = result.status_code as i32;
+            let content_type = result.content_type.clone();
 
-            push_event(
-                &mut state,
-                &owner_developer_id,
-                "job-reported",
-                if (200..300).contains(&result.status_code) {
-                    "ok"
-                } else {
-                    "error"
-                },
-                format!("fetched {} with status {}", result.url, result.status_code),
-                Some(result.url.clone()),
-                Some(crawler_id.to_string()),
-            );
+            match classify_job_outcome(&result, &in_flight) {
+                JobOutcome::Succeeded(document) => {
+                    sqlx::query(
+                        "update crawl_jobs
+                         set status = 'succeeded',
+                             failure_kind = null,
+                             failure_message = null,
+                             next_retry_at = null,
+                             finished_at = $2,
+                             final_url = $3,
+                             content_type = $4,
+                             http_status = $5,
+                             discovered_urls_count = $6,
+                             accepted_document_id = $7
+                         where id = $1",
+                    )
+                    .bind(&result.job_id)
+                    .bind(now)
+                    .bind(&finalized_url)
+                    .bind(content_type.as_deref())
+                    .bind(http_status)
+                    .bind(discovered_count)
+                    .bind(&document.id)
+                    .execute(&self.pg_pool)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.into()))?;
 
-            if let Some(document) = document {
-                documents.push(document);
+                    let allowed_discovery = in_flight.depth < in_flight.max_depth;
+                    if allowed_discovery {
+                        for discovered_url in &result.discovered_urls {
+                            let _ = sqlx::query(
+                                "update documents set inlink_count = inlink_count + 1
+                                 where canonical_url = $1",
+                            )
+                            .bind(discovered_url)
+                            .execute(&self.pg_pool)
+                            .await;
+                        }
+
+                        discovered_urls += self
+                            .enqueue_urls(
+                                &crawler.owner_developer_id,
+                                result.discovered_urls.clone(),
+                                &finalized_url,
+                                in_flight.depth + 1,
+                                in_flight.max_depth,
+                                Some(&crawler.owner_developer_id),
+                                in_flight.rule_id.as_deref(),
+                                false,
+                            )
+                            .await?;
+                    }
+
+                    self.push_event(
+                        &crawler.owner_developer_id,
+                        "job-succeeded",
+                        "ok",
+                        format!(
+                            "indexed {finalized_url} on attempt {}",
+                            in_flight.attempt_count
+                        ),
+                        Some(finalized_url.clone()),
+                        Some(crawler_id.to_string()),
+                    )
+                    .await?;
+
+                    documents.push(document);
+                }
+                JobOutcome::Retryable {
+                    failure_kind,
+                    failure_message,
+                    next_retry_at,
+                } => {
+                    sqlx::query(
+                        "update crawl_jobs
+                         set status = 'queued',
+                             claimed_by = null,
+                             claimed_at = null,
+                             lease_expires_at = null,
+                             next_retry_at = $2,
+                             failure_kind = $3,
+                             failure_message = $4,
+                             finished_at = null,
+                             final_url = $5,
+                             content_type = $6,
+                             http_status = $7,
+                             discovered_urls_count = $8,
+                             accepted_document_id = null
+                         where id = $1",
+                    )
+                    .bind(&result.job_id)
+                    .bind(next_retry_at)
+                    .bind(&failure_kind)
+                    .bind(&failure_message)
+                    .bind(&finalized_url)
+                    .bind(content_type.as_deref())
+                    .bind(http_status)
+                    .bind(discovered_count)
+                    .execute(&self.pg_pool)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    self.push_event(
+                        &crawler.owner_developer_id,
+                        "job-requeued",
+                        "error",
+                        format!(
+                            "{}; retrying at {}",
+                            failure_message,
+                            next_retry_at.to_rfc3339()
+                        ),
+                        Some(finalized_url.clone()),
+                        Some(crawler_id.to_string()),
+                    )
+                    .await?;
+                }
+                JobOutcome::Blocked {
+                    failure_kind,
+                    failure_message,
+                } => {
+                    sqlx::query(
+                        "update crawl_jobs
+                         set status = 'blocked',
+                             failure_kind = $2,
+                             failure_message = $3,
+                             next_retry_at = null,
+                             finished_at = $4,
+                             final_url = $5,
+                             content_type = $6,
+                             http_status = $7,
+                             discovered_urls_count = $8,
+                             accepted_document_id = null
+                         where id = $1",
+                    )
+                    .bind(&result.job_id)
+                    .bind(&failure_kind)
+                    .bind(&failure_message)
+                    .bind(now)
+                    .bind(&finalized_url)
+                    .bind(content_type.as_deref())
+                    .bind(http_status)
+                    .bind(discovered_count)
+                    .execute(&self.pg_pool)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    self.push_event(
+                        &crawler.owner_developer_id,
+                        "job-blocked",
+                        "error",
+                        failure_message,
+                        Some(finalized_url.clone()),
+                        Some(crawler_id.to_string()),
+                    )
+                    .await?;
+                }
+                JobOutcome::Failed {
+                    failure_kind,
+                    failure_message,
+                } => {
+                    sqlx::query(
+                        "update crawl_jobs
+                         set status = 'failed',
+                             failure_kind = $2,
+                             failure_message = $3,
+                             next_retry_at = null,
+                             finished_at = $4,
+                             final_url = $5,
+                             content_type = $6,
+                             http_status = $7,
+                             discovered_urls_count = $8,
+                             accepted_document_id = null
+                         where id = $1",
+                    )
+                    .bind(&result.job_id)
+                    .bind(&failure_kind)
+                    .bind(&failure_message)
+                    .bind(now)
+                    .bind(&finalized_url)
+                    .bind(content_type.as_deref())
+                    .bind(http_status)
+                    .bind(discovered_count)
+                    .execute(&self.pg_pool)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    self.push_event(
+                        &crawler.owner_developer_id,
+                        "job-failed",
+                        "error",
+                        failure_message,
+                        Some(finalized_url.clone()),
+                        Some(crawler_id.to_string()),
+                    )
+                    .await?;
+                }
+                JobOutcome::DeadLetter {
+                    failure_kind,
+                    failure_message,
+                } => {
+                    sqlx::query(
+                        "update crawl_jobs
+                         set status = 'dead_letter',
+                             failure_kind = $2,
+                             failure_message = $3,
+                             next_retry_at = null,
+                             finished_at = $4,
+                             final_url = $5,
+                             content_type = $6,
+                             http_status = $7,
+                             discovered_urls_count = $8,
+                             accepted_document_id = null
+                         where id = $1",
+                    )
+                    .bind(&result.job_id)
+                    .bind(&failure_kind)
+                    .bind(&failure_message)
+                    .bind(now)
+                    .bind(&finalized_url)
+                    .bind(content_type.as_deref())
+                    .bind(http_status)
+                    .bind(discovered_count)
+                    .execute(&self.pg_pool)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    self.push_event(
+                        &crawler.owner_developer_id,
+                        "job-dead-lettered",
+                        "error",
+                        failure_message,
+                        Some(finalized_url.clone()),
+                        Some(crawler_id.to_string()),
+                    )
+                    .await?;
+                }
             }
         }
 
-        if let Some(crawler) = state.crawlers.get_mut(crawler_id) {
-            crawler.jobs_reported += reported;
+        if reported > 0 {
+            sqlx::query("update crawlers set jobs_reported = jobs_reported + $2 where id = $1")
+                .bind(crawler_id)
+                .bind(reported)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
         }
-        let frontier_depth = state
-            .frontier
-            .iter()
-            .filter(|job| job.owner_developer_id == owner_developer_id)
-            .count();
-        self.persist_locked(&state).await?;
-        drop(state);
 
-        let accepted_documents = search_index.upsert_documents(documents).await?;
+        let frontier_depth: i64 = sqlx::query_scalar(
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and status = 'queued'",
+        )
+        .bind(&crawler.owner_developer_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
+
+        let ingest = search_index.upsert_documents(documents).await?;
         Ok(SubmitCrawlReportResponse {
-            accepted_documents,
+            accepted_documents: ingest.accepted_documents,
+            duplicate_documents: ingest.duplicate_documents,
+            skipped_documents: ingest.skipped_documents,
             discovered_urls,
-            frontier_depth,
-            indexed_documents: search_index.total_documents(),
+            frontier_depth: frontier_depth as usize,
+            indexed_documents: search_index.total_documents().await,
         })
     }
 
     pub async fn run_maintenance(&self, claim_timeout: Duration) -> Result<(), ApiError> {
-        let mut state = self.inner.write().await;
         let now = Utc::now();
-        let mut changed = apply_due_rules(&mut state, now, None);
-        changed |= requeue_stale_in_flight(&mut state, now, claim_timeout);
-        if changed {
-            self.persist_locked(&state).await?;
-        }
+        self.apply_due_rules(now).await?;
+        self.requeue_stale_jobs(now, claim_timeout).await?;
+        self.trim_events().await?;
+        crate::ranking::update_site_authority(&self.pg_pool).await?;
         Ok(())
     }
 
@@ -788,183 +926,680 @@ impl CrawlerStore {
         url: Option<String>,
         crawler_id: Option<String>,
     ) -> Result<(), ApiError> {
-        let mut state = self.inner.write().await;
-        push_event(
-            &mut state,
-            developer_id,
-            kind,
-            status,
-            message,
-            url,
-            crawler_id,
-        );
-        self.persist_locked(&state).await?;
-        Ok(())
+        self.push_event(developer_id, kind, status, message, url, crawler_id)
+            .await
     }
 
-    async fn persist_locked(&self, state: &CrawlerStoreState) -> Result<(), ApiError> {
-        let raw =
-            serde_json::to_string_pretty(state).map_err(|error| ApiError::Internal(error.into()))?;
-        atomic_write(&self.path, &raw).await?;
-        Ok(())
-    }
-}
+    pub async fn list_jobs(
+        &self,
+        developer_id: &str,
+        status_filter: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<CrawlJobListResponse, ApiError> {
+        let total: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM crawl_jobs
+             WHERE owner_developer_id = $1
+               AND ($2::text IS NULL OR status = $2)",
+        )
+        .bind(developer_id)
+        .bind(status_filter)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
 
-fn apply_due_rules(
-    state: &mut CrawlerStoreState,
-    now: DateTime<Utc>,
-    developer_id: Option<&str>,
-) -> bool {
-    let mut changed = false;
-    let due_rules = state
-        .rules
-        .values_mut()
-        .filter(|rule| developer_id.is_none_or(|filter| rule.owner_developer_id == filter))
-        .filter(|rule| rule.enabled)
-        .filter_map(|rule| {
-            let is_due = rule
-                .last_enqueued_at
-                .map(|last| now.signed_duration_since(last).num_minutes() >= rule.interval_minutes as i64)
-                .unwrap_or(true);
-            if !is_due {
-                return None;
-            }
-            rule.last_enqueued_at = Some(now);
-            Some((
-                rule.owner_developer_id.clone(),
-                rule.id.clone(),
-                rule.name.clone(),
-                rule.seed_url.clone(),
-                rule.max_depth,
-            ))
+        let rows = sqlx::query_as::<_, JobListRow>(
+            "SELECT id, url, final_url, status, depth, max_depth, attempt_count, max_attempts,
+                    source, rule_id, claimed_by, discovered_at, claimed_at, next_retry_at,
+                    content_type, http_status, discovered_urls_count, accepted_document_id,
+                    failure_kind, failure_message, finished_at
+             FROM crawl_jobs
+             WHERE owner_developer_id = $1
+               AND ($2::text IS NULL OR status = $2)
+             ORDER BY discovered_at DESC
+             LIMIT $3 OFFSET $4",
+        )
+        .bind(developer_id)
+        .bind(status_filter)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        let jobs: Vec<CrawlJobDetail> = rows
+            .into_iter()
+            .map(|r| CrawlJobDetail {
+                id: r.id,
+                url: r.url,
+                final_url: r.final_url,
+                status: r.status,
+                depth: r.depth as u32,
+                max_depth: r.max_depth as u32,
+                attempt_count: r.attempt_count as u32,
+                max_attempts: r.max_attempts as u32,
+                source: r.source,
+                rule_id: r.rule_id,
+                claimed_by: r.claimed_by,
+                discovered_at: r.discovered_at,
+                claimed_at: r.claimed_at,
+                next_retry_at: r.next_retry_at,
+                content_type: r.content_type,
+                http_status: r.http_status.map(|value| value as u16),
+                discovered_urls_count: r.discovered_urls_count.max(0) as usize,
+                accepted_document_id: r.accepted_document_id,
+                failure_kind: r.failure_kind,
+                failure_message: r.failure_message,
+                finished_at: r.finished_at,
+            })
+            .collect();
+
+        let next_offset = if (offset as usize) + jobs.len() < total as usize {
+            Some((offset as usize) + jobs.len())
+        } else {
+            None
+        };
+
+        Ok(CrawlJobListResponse {
+            total: total as usize,
+            next_offset,
+            jobs,
         })
-        .collect::<Vec<_>>();
+    }
 
-    for (owner_developer_id, rule_id, rule_name, seed_url, max_depth) in due_rules {
-        let accepted = enqueue_urls(
-            state,
-            &owner_developer_id,
-            vec![seed_url.clone()],
-            &format!("rule:{rule_name}"),
-            0,
-            max_depth,
-            Some(owner_developer_id.clone()),
-            Some(rule_id),
-            true,
-        );
-        if accepted > 0 {
-            changed = true;
-            push_event(
-                state,
-                &owner_developer_id,
-                "rule-enqueued",
+    pub async fn retry_failed_jobs(&self, developer_id: &str) -> Result<usize, ApiError> {
+        let result = sqlx::query(
+            "UPDATE crawl_jobs
+             SET status = 'queued',
+                 claimed_by = NULL,
+                 claimed_at = NULL,
+                 lease_expires_at = NULL,
+                 next_retry_at = NULL,
+                 failure_kind = NULL,
+                 failure_message = NULL,
+                 finished_at = NULL,
+                 final_url = NULL,
+                 content_type = NULL,
+                 http_status = NULL,
+                 discovered_urls_count = 0,
+                 accepted_document_id = NULL
+             WHERE owner_developer_id = $1 AND status in ('failed', 'dead_letter')",
+        )
+        .bind(developer_id)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        let count = result.rows_affected() as usize;
+
+        if count > 0 {
+            self.push_event(
+                developer_id,
+                "jobs-retried",
                 "ok",
-                format!("rule {rule_name} queued {accepted} urls"),
-                Some(seed_url),
+                format!("retried {count} failed jobs"),
                 None,
-            );
+                None,
+            )
+            .await?;
         }
+
+        Ok(count)
     }
 
-    changed
-}
+    pub async fn cleanup_completed_jobs(&self, developer_id: &str) -> Result<usize, ApiError> {
+        let result = sqlx::query(
+            "DELETE FROM crawl_jobs WHERE owner_developer_id = $1 AND status = 'succeeded'",
+        )
+        .bind(developer_id)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
 
-fn requeue_stale_in_flight(
-    state: &mut CrawlerStoreState,
-    now: DateTime<Utc>,
-    claim_timeout: Duration,
-) -> bool {
-    let timeout = chrono::Duration::from_std(claim_timeout).unwrap_or_else(|_| chrono::Duration::seconds(0));
-    let stale_job_ids = state
-        .in_flight
-        .iter()
-        .filter_map(|(job_id, record)| {
-            (now.signed_duration_since(record.claimed_at) >= timeout).then_some(job_id.clone())
+        let count = result.rows_affected() as usize;
+
+        if count > 0 {
+            self.push_event(
+                developer_id,
+                "jobs-cleaned",
+                "ok",
+                format!("cleaned up {count} completed jobs"),
+                None,
+                None,
+            )
+            .await?;
+        }
+
+        Ok(count)
+    }
+
+    pub async fn job_stats(&self, developer_id: &str) -> Result<CrawlJobStats, ApiError> {
+        let stats = sqlx::query_as::<_, JobStatsRow>(
+            "SELECT
+                 count(*) FILTER (WHERE status = 'queued') AS queued,
+                 count(*) FILTER (WHERE status = 'claimed') AS claimed,
+                 count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+                 count(*) FILTER (WHERE status = 'failed') AS failed,
+                 count(*) FILTER (WHERE status = 'blocked') AS blocked,
+                 count(*) FILTER (WHERE status = 'dead_letter') AS dead_letter
+             FROM crawl_jobs
+             WHERE owner_developer_id = $1",
+        )
+        .bind(developer_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        Ok(CrawlJobStats {
+            queued: stats.queued.unwrap_or(0) as usize,
+            claimed: stats.claimed.unwrap_or(0) as usize,
+            succeeded: stats.succeeded.unwrap_or(0) as usize,
+            failed: stats.failed.unwrap_or(0) as usize,
+            blocked: stats.blocked.unwrap_or(0) as usize,
+            dead_letter: stats.dead_letter.unwrap_or(0) as usize,
         })
-        .collect::<Vec<_>>();
-
-    let mut changed = false;
-    for job_id in stale_job_ids {
-        let Some(record) = state.in_flight.remove(&job_id) else {
-            continue;
-        };
-        let owner_developer_id = record.job.owner_developer_id.clone();
-        let url = record.job.url.clone();
-        let crawler_id = record.crawler_id.clone();
-        state.frontier.push_front(record.job);
-        push_event(
-            state,
-            &owner_developer_id,
-            "stale-job-requeued",
-            "ok",
-            format!("requeued stale in-flight job {job_id}"),
-            Some(url),
-            Some(crawler_id),
-        );
-        changed = true;
     }
 
-    changed
+    // ---- private helpers ----
+
+    async fn push_event(
+        &self,
+        developer_id: &str,
+        kind: &str,
+        status: &str,
+        message: String,
+        url: Option<String>,
+        crawler_id: Option<String>,
+    ) -> Result<(), ApiError> {
+        let id = Uuid::now_v7().to_string();
+        sqlx::query(
+            "insert into crawl_events (id, owner_developer_id, crawler_id, event_type, status, message, url, payload, created_at)
+             values ($1, $2, $3, $4, $5, $6, $7, '{}'::jsonb, $8)",
+        )
+        .bind(&id)
+        .bind(developer_id)
+        .bind(crawler_id.as_deref())
+        .bind(kind)
+        .bind(status)
+        .bind(&message)
+        .bind(url.as_deref())
+        .bind(Utc::now())
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+        Ok(())
+    }
+
+    async fn trim_events(&self) -> Result<(), ApiError> {
+        // Keep at most 400 events per owner, using window function (O(n log n))
+        sqlx::query(
+            "DELETE FROM crawl_events WHERE id IN (
+                 SELECT id FROM (
+                     SELECT id, ROW_NUMBER() OVER (
+                         PARTITION BY owner_developer_id
+                         ORDER BY created_at DESC
+                     ) AS rn
+                     FROM crawl_events
+                 ) ranked
+                 WHERE rn > 400
+             )",
+        )
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+        Ok(())
+    }
+
+    async fn enqueue_urls(
+        &self,
+        developer_id: &str,
+        urls: Vec<String>,
+        source: &str,
+        depth: i32,
+        max_depth: i32,
+        submitted_by: Option<&str>,
+        rule_id: Option<&str>,
+        allow_revisit: bool,
+    ) -> Result<usize, ApiError> {
+        let mut accepted = 0usize;
+        for url in urls {
+            let Some(normalized) = normalize_url(&url) else {
+                continue;
+            };
+
+            if allow_revisit {
+                // Delete any existing completed job so it can be re-queued
+                sqlx::query(
+                    "delete from crawl_jobs
+                     where owner_developer_id = $1
+                       and url = $2
+                       and status in ('succeeded', 'failed', 'blocked', 'dead_letter')",
+                )
+                .bind(developer_id)
+                .bind(&normalized)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+            }
+
+            // 计算优先级：深度越浅优先级越高，种子URL最高
+            let priority = if depth == 0 {
+                80 // 种子URL
+            } else {
+                50 + (10 - depth.min(10)) * 3 // 深度越浅优先级越高
+            };
+
+            let id = Uuid::now_v7().to_string();
+            let result = sqlx::query(
+                "insert into crawl_jobs (
+                    id,
+                    owner_developer_id,
+                    url,
+                    depth,
+                    max_depth,
+                    attempt_count,
+                    max_attempts,
+                    next_retry_at,
+                    failure_kind,
+                    failure_message,
+                    source,
+                    submitted_by,
+                    rule_id,
+                    status,
+                    priority,
+                    discovered_at
+                 )
+                 values ($1, $2, $3, $4, $5, 0, 3, null, null, null, $6, $7, $8, 'queued', $9, now())
+                 on conflict (owner_developer_id, url) do nothing",
+            )
+            .bind(&id)
+            .bind(developer_id)
+            .bind(&normalized)
+            .bind(depth)
+            .bind(max_depth)
+            .bind(source)
+            .bind(submitted_by)
+            .bind(rule_id)
+            .bind(priority)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+            if result.rows_affected() > 0 {
+                accepted += 1;
+            }
+        }
+        Ok(accepted)
+    }
+
+    async fn validate_crawler_auth(
+        &self,
+        crawler_id: &str,
+        token_hash: &str,
+    ) -> Result<CrawlerAuthInfo, ApiError> {
+        let row = sqlx::query_as::<_, CrawlerAuthRow>(
+            "select id, owner_developer_id, name, key_hash, revoked_at
+             from crawlers where id = $1",
+        )
+        .bind(crawler_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .ok_or_else(|| ApiError::Unauthorized("unknown crawler id".to_string()))?;
+
+        if row.revoked_at.is_some() {
+            return Err(ApiError::Unauthorized("crawler key is revoked".to_string()));
+        }
+
+        let matches_key = !row.key_hash.is_empty() && row.key_hash == token_hash;
+
+        if !matches_key {
+            return Err(ApiError::Unauthorized("invalid crawler key".to_string()));
+        }
+
+        Ok(CrawlerAuthInfo {
+            owner_developer_id: row.owner_developer_id,
+            name: row.name,
+        })
+    }
+
+    async fn apply_due_rules(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
+        let due_rules = sqlx::query_as::<_, DueRuleRow>(
+            "select id, owner_developer_id, name, seed_url, max_depth
+             from crawl_rules
+             where enabled = true
+               and (last_enqueued_at is null
+                    or extract(epoch from ($1 - last_enqueued_at)) / 60 >= interval_minutes)",
+        )
+        .bind(now)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        for rule in due_rules {
+            sqlx::query("update crawl_rules set last_enqueued_at = $2 where id = $1")
+                .bind(&rule.id)
+                .bind(now)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+            let accepted = self
+                .enqueue_urls(
+                    &rule.owner_developer_id,
+                    vec![rule.seed_url.clone()],
+                    &format!("rule:{}", rule.name),
+                    0,
+                    rule.max_depth,
+                    Some(&rule.owner_developer_id),
+                    Some(&rule.id),
+                    true,
+                )
+                .await?;
+
+            if accepted > 0 {
+                self.push_event(
+                    &rule.owner_developer_id,
+                    "rule-enqueued",
+                    "ok",
+                    format!("rule {} queued seed {}", rule.name, rule.seed_url),
+                    Some(rule.seed_url),
+                    None,
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn requeue_stale_jobs(
+        &self,
+        now: DateTime<Utc>,
+        claim_timeout: Duration,
+    ) -> Result<(), ApiError> {
+        let timeout_secs = claim_timeout.as_secs() as i64;
+        let cutoff = now - chrono::Duration::seconds(timeout_secs);
+
+        let stale = sqlx::query_as::<_, StaleJobRow>(
+            "update crawl_jobs
+             set status = 'queued',
+                 claimed_by = null,
+                 claimed_at = null,
+                 lease_expires_at = null,
+                 next_retry_at = $2
+             where status = 'claimed' and claimed_at < $1
+             returning id, owner_developer_id, url, claimed_by",
+        )
+        .bind(cutoff)
+        .bind(now + chrono::Duration::seconds(30))
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        for job in stale {
+            self.push_event(
+                &job.owner_developer_id,
+                "stale-job-requeued",
+                "ok",
+                format!("requeued stale in-flight job {}", job.id),
+                Some(job.url),
+                job.claimed_by,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn get_config(&self, key: &str) -> Result<Option<String>, ApiError> {
+        sqlx::query_scalar::<_, String>("select value from crawler_config where key = $1")
+            .bind(key)
+            .fetch_optional(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))
+    }
+
+    async fn resolve_join_key(
+        &self,
+        config_join_key: Option<&str>,
+    ) -> Result<Option<String>, ApiError> {
+        if let Some(stored_key) = self.get_config("join_key").await? {
+            return Ok(Some(stored_key));
+        }
+
+        Ok(config_join_key.map(ToString::to_string))
+    }
+
+    async fn set_config(&self, key: &str, value: &str) -> Result<(), ApiError> {
+        sqlx::query(
+            "insert into crawler_config (key, value, updated_at) values ($1, $2, now())
+             on conflict (key) do update set value = excluded.value, updated_at = now()",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+        Ok(())
+    }
+
+    async fn delete_config(&self, key: &str) -> Result<(), ApiError> {
+        sqlx::query("delete from crawler_config where key = $1")
+            .bind(key)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+        Ok(())
+    }
 }
 
-fn take_frontier_job(
-    state: &mut CrawlerStoreState,
-    developer_id: &str,
-) -> Option<FrontierRecord> {
-    let position = state
-        .frontier
-        .iter()
-        .position(|job| job.owner_developer_id == developer_id)?;
-    state.frontier.remove(position)
+// ---- SQL row types ----
+
+#[derive(sqlx::FromRow)]
+struct CrawlerAuthRow {
+    #[allow(dead_code)]
+    id: String,
+    owner_developer_id: String,
+    name: String,
+    key_hash: String,
+    revoked_at: Option<DateTime<Utc>>,
 }
 
-fn enqueue_urls(
-    state: &mut CrawlerStoreState,
-    developer_id: &str,
-    urls: Vec<String>,
-    source: &str,
-    depth: u32,
-    max_depth: u32,
-    submitted_by: Option<String>,
+struct CrawlerAuthInfo {
+    owner_developer_id: String,
+    name: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct CrawlerMetadataRow {
+    id: String,
+    name: String,
+    preview: String,
+    created_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+    last_seen_at: Option<DateTime<Utc>>,
+    last_claimed_at: Option<DateTime<Utc>>,
+    jobs_claimed: i64,
+    jobs_reported: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct CrawlRuleRow {
+    id: String,
+    owner_developer_id: String,
+    name: String,
+    seed_url: String,
+    interval_minutes: i64,
+    max_depth: i32,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    last_enqueued_at: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CrawlEventRow {
+    id: String,
+    event_type: String,
+    status: String,
+    message: String,
+    url: Option<String>,
+    crawler_id: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ClaimedJobRow {
+    id: String,
+    url: String,
+    source: String,
+    depth: i32,
+    max_depth: i32,
+    attempt_count: i32,
+    discovered_at: DateTime<Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct InFlightJobRow {
+    #[allow(dead_code)]
+    id: String,
+    url: String,
+    depth: i32,
+    max_depth: i32,
     rule_id: Option<String>,
-    allow_revisit: bool,
-) -> usize {
-    let mut accepted = 0usize;
-    for url in urls {
-        let Some(normalized) = normalize_url(&url) else {
-            continue;
+    attempt_count: i32,
+    max_attempts: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct DueRuleRow {
+    id: String,
+    owner_developer_id: String,
+    name: String,
+    seed_url: String,
+    max_depth: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct StaleJobRow {
+    id: String,
+    owner_developer_id: String,
+    url: String,
+    claimed_by: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct JobListRow {
+    id: String,
+    url: String,
+    final_url: Option<String>,
+    status: String,
+    depth: i32,
+    max_depth: i32,
+    attempt_count: i32,
+    max_attempts: i32,
+    source: String,
+    rule_id: Option<String>,
+    claimed_by: Option<String>,
+    discovered_at: DateTime<Utc>,
+    claimed_at: Option<DateTime<Utc>>,
+    next_retry_at: Option<DateTime<Utc>>,
+    content_type: Option<String>,
+    http_status: Option<i32>,
+    discovered_urls_count: i32,
+    accepted_document_id: Option<String>,
+    failure_kind: Option<String>,
+    failure_message: Option<String>,
+    finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct JobStatsRow {
+    queued: Option<i64>,
+    claimed: Option<i64>,
+    succeeded: Option<i64>,
+    failed: Option<i64>,
+    blocked: Option<i64>,
+    dead_letter: Option<i64>,
+}
+
+// ---- free functions ----
+
+enum JobOutcome {
+    Succeeded(IndexedDocument),
+    Retryable {
+        failure_kind: String,
+        failure_message: String,
+        next_retry_at: DateTime<Utc>,
+    },
+    Blocked {
+        failure_kind: String,
+        failure_message: String,
+    },
+    Failed {
+        failure_kind: String,
+        failure_message: String,
+    },
+    DeadLetter {
+        failure_kind: String,
+        failure_message: String,
+    },
+}
+
+fn classify_job_outcome(result: &CrawlResultInput, job: &InFlightJobRow) -> JobOutcome {
+    let kind = result
+        .error_kind
+        .clone()
+        .unwrap_or_else(|| infer_failure_kind(result.status_code));
+    let message = result
+        .error_message
+        .clone()
+        .unwrap_or_else(|| infer_failure_message(result));
+    let retryable = result
+        .retryable
+        .unwrap_or_else(|| is_retryable_status(result.status_code));
+    let attempt_count = job.attempt_count.max(1) as u32;
+    let max_attempts = job.max_attempts.max(1) as u32;
+
+    if (200..300).contains(&result.status_code) && result.error_kind.is_none() {
+        if let Some(document) = build_document(result) {
+            return JobOutcome::Succeeded(document);
+        }
+        return JobOutcome::Failed {
+            failure_kind: "unindexable_document".to_string(),
+            failure_message: "fetch succeeded but parsing produced no indexable document"
+                .to_string(),
         };
-
-        let known_key = format!("{developer_id}:{normalized}");
-        let already_pending = state.frontier.iter().any(|job| {
-            job.owner_developer_id == developer_id && job.url == normalized
-        }) || state.in_flight.values().any(|job| {
-            job.job.owner_developer_id == developer_id && job.job.url == normalized
-        });
-
-        if already_pending {
-            continue;
-        }
-
-        let is_new = state.known_urls.insert(known_key);
-        if !is_new && !allow_revisit {
-            continue;
-        }
-
-        accepted += 1;
-        state.frontier.push_back(FrontierRecord {
-            job_id: Uuid::now_v7().to_string(),
-            owner_developer_id: developer_id.to_string(),
-            url: normalized,
-            source: source.to_string(),
-            depth,
-            max_depth,
-            discovered_at: Utc::now(),
-            submitted_by: submitted_by.clone(),
-            rule_id: rule_id.clone(),
-        });
     }
-    accepted
+
+    if is_blocked_result(result.status_code, &kind) {
+        return JobOutcome::Blocked {
+            failure_kind: kind,
+            failure_message: message,
+        };
+    }
+
+    if retryable {
+        if attempt_count < max_attempts {
+            return JobOutcome::Retryable {
+                failure_kind: kind,
+                failure_message: message,
+                next_retry_at: Utc::now()
+                    + chrono::Duration::seconds(backoff_seconds_for_attempt(attempt_count)),
+            };
+        }
+
+        return JobOutcome::DeadLetter {
+            failure_kind: kind,
+            failure_message: format!("{message}; retries exhausted"),
+        };
+    }
+
+    JobOutcome::Failed {
+        failure_kind: kind,
+        failure_message: message,
+    }
 }
 
 fn build_document(result: &CrawlResultInput) -> Option<IndexedDocument> {
@@ -981,134 +1616,48 @@ fn build_document(result: &CrawlResultInput) -> Option<IndexedDocument> {
     let snippet_source = result.snippet.as_deref().unwrap_or(body.as_str());
     let snippet = snippet_source.trim().chars().take(220).collect::<String>();
     let suggest_terms = derive_terms(&title, &body);
+    let resolved_url = result
+        .final_url
+        .clone()
+        .unwrap_or_else(|| result.url.clone());
+    let host = extract_host(&resolved_url);
+    let body_word_count = word_count(&body) as u32;
 
-    Some(IndexedDocument {
-        id: stable_document_id(&result.url),
+    let document = IndexedDocument {
+        id: stable_document_id(&resolved_url),
         title,
-        url: result.url.clone(),
-        display_url: display_url(&result.url),
+        url: resolved_url.clone(),
+        display_url: display_url(&resolved_url),
         snippet: snippet.chars().take(220).collect(),
-        body: body.chars().take(4_000).collect(),
+        body: body.clone(),
         language: result
             .language
             .clone()
             .unwrap_or_else(|| "unknown".to_string()),
         last_crawled_at: result.fetched_at,
+        canonical_url: Some(resolved_url),
+        host,
+        content_hash: Some(content_hash(&body)),
         suggest_terms,
-        site_authority: result.site_authority.unwrap_or(0.5),
-    })
-}
+        site_authority: result.site_authority.unwrap_or(0.5).max(0.5),
+        content_type: result
+            .content_type
+            .clone()
+            .unwrap_or_else(|| "text/html".to_string()),
+        word_count: body_word_count,
+        source_job_id: Some(result.job_id.clone()),
+        parser_version: CURRENT_PARSER_VERSION,
+        schema_version: CURRENT_SCHEMA_VERSION,
+        index_version: CURRENT_INDEX_VERSION,
+        duplicate_of: None,
+    };
 
-fn to_crawler_metadata(crawler: &StoredCrawler) -> CrawlerMetadata {
-    CrawlerMetadata {
-        id: crawler.id.clone(),
-        name: crawler.name.clone(),
-        preview: crawler.preview.clone(),
-        created_at: crawler.created_at,
-        revoked_at: crawler.revoked_at,
-        last_seen_at: crawler.last_seen_at,
-        last_claimed_at: crawler.last_claimed_at,
-        jobs_claimed: crawler.jobs_claimed,
-        jobs_reported: crawler.jobs_reported,
-    }
-}
-
-fn to_crawl_rule(rule: &StoredCrawlRule) -> CrawlRule {
-    CrawlRule {
-        id: rule.id.clone(),
-        name: rule.name.clone(),
-        seed_url: rule.seed_url.clone(),
-        interval_minutes: rule.interval_minutes,
-        max_depth: rule.max_depth,
-        enabled: rule.enabled,
-        created_at: rule.created_at,
-        updated_at: rule.updated_at,
-        last_enqueued_at: rule.last_enqueued_at,
-    }
-}
-
-fn to_crawl_event(event: &StoredCrawlEvent) -> CrawlEvent {
-    CrawlEvent {
-        id: event.id.clone(),
-        kind: event.kind.clone(),
-        status: event.status.clone(),
-        message: event.message.clone(),
-        url: event.url.clone(),
-        crawler_id: event.crawler_id.clone(),
-        created_at: event.created_at,
-    }
-}
-
-fn push_event(
-    state: &mut CrawlerStoreState,
-    developer_id: &str,
-    kind: &str,
-    status: &str,
-    message: String,
-    url: Option<String>,
-    crawler_id: Option<String>,
-) {
-    state.events.push_back(StoredCrawlEvent {
-        id: Uuid::now_v7().to_string(),
-        owner_developer_id: developer_id.to_string(),
-        kind: kind.to_string(),
-        status: status.to_string(),
-        message,
-        url,
-        crawler_id,
-        created_at: Utc::now(),
-    });
-
-    while state.events.len() > 400 {
-        state.events.pop_front();
-    }
-}
-
-fn validate_crawler(crawler: &StoredCrawler, token_hash: &str) -> Result<(), ApiError> {
-    if crawler.revoked_at.is_some() {
-        return Err(ApiError::Unauthorized("crawler key is revoked".to_string()));
-    }
-    let matches_key = !crawler.key_hash.is_empty() && crawler.key_hash == token_hash;
-    let matches_api_key = crawler
-        .api_key_hash
-        .as_deref()
-        .map(|h| !h.is_empty() && h == token_hash)
-        .unwrap_or(false);
-    if !matches_key && !matches_api_key {
-        return Err(ApiError::Unauthorized("invalid crawler key".to_string()));
-    }
-    Ok(())
-}
-
-fn validate_rule_name(input: &str) -> Result<String, ApiError> {
-    let clean = input.trim();
-    if clean.len() < 2 {
-        return Err(ApiError::BadRequest(
-            "rule name must contain at least 2 characters".to_string(),
-        ));
-    }
-    Ok(clean.to_string())
-}
-
-fn default_owner_developer_id() -> String {
-    "local:admin".to_string()
-}
-
-fn default_rule_depth() -> u32 {
-    2
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn normalize_url(input: &str) -> Option<String> {
-    let mut url = Url::parse(input).ok()?;
-    if !matches!(url.scheme(), "http" | "https") {
+    // 过滤垃圾内容
+    if crate::quality::spam_detector::SpamDetector::is_spam(&document) {
         return None;
     }
-    url.set_fragment(None);
-    Some(url.to_string())
+
+    Some(document)
 }
 
 fn bearer_hash(auth_header: Option<&str>) -> Result<String, ApiError> {
@@ -1133,6 +1682,8 @@ fn hash_token(token: &str) -> String {
 }
 
 fn generate_token(prefix: &str) -> String {
+    use rand::{Rng, distr::Alphanumeric};
+
     let secret = rand::rng()
         .sample_iter(&Alphanumeric)
         .take(40)
@@ -1141,105 +1692,59 @@ fn generate_token(prefix: &str) -> String {
     format!("{prefix}_{secret}")
 }
 
-async fn ensure_file_with_fallbacks(
-    path: &PathBuf,
-    default_contents: &str,
-    fallbacks: &[PathBuf],
-) -> anyhow::Result<()> {
-    if fs::metadata(path).await.is_ok() {
-        return Ok(());
+fn validate_rule_name(input: &str) -> Result<String, ApiError> {
+    let clean = input.trim();
+    if clean.len() < 2 {
+        return Err(ApiError::BadRequest(
+            "rule name must contain at least 2 characters".to_string(),
+        ));
     }
+    Ok(clean.to_string())
+}
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
+fn infer_failure_kind(status_code: u16) -> String {
+    match status_code {
+        599 => "network_error".to_string(),
+        401 | 403 => "blocked".to_string(),
+        404 => "http_404".to_string(),
+        408 => "timeout".to_string(),
+        429 => "http_429".to_string(),
+        500..=599 => "http_5xx".to_string(),
+        _ => format!("http_{status_code}"),
     }
+}
 
-    for fallback in fallbacks {
-        if fallback != path && fs::metadata(fallback).await.is_ok() {
-            fs::copy(fallback, path).await?;
-            return Ok(());
-        }
+fn infer_failure_message(result: &CrawlResultInput) -> String {
+    if let Some(content_type) = result.content_type.as_deref() {
+        format!(
+            "fetch returned status {} ({content_type})",
+            result.status_code
+        )
+    } else {
+        format!("fetch returned status {}", result.status_code)
     }
+}
 
-    fs::write(path, default_contents).await?;
-    Ok(())
+fn is_retryable_status(status_code: u16) -> bool {
+    matches!(status_code, 408 | 425 | 429 | 599) || status_code >= 500
+}
+
+fn is_blocked_result(status_code: u16, failure_kind: &str) -> bool {
+    matches!(status_code, 401 | 403)
+        || matches!(failure_kind, "robots" | "blocked" | "robots_blocked")
+}
+
+fn backoff_seconds_for_attempt(attempt_count: u32) -> i64 {
+    match attempt_count {
+        0 | 1 => 30,
+        2 => 120,
+        _ => 300,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{env, time::Duration};
-
-    use chrono::{Duration as ChronoDuration, Utc};
-
-    use super::{
-        CrawlerStore, CrawlerStoreState, FrontierRecord, InFlightRecord, apply_due_rules,
-        enqueue_urls, normalize_url, push_event, requeue_stale_in_flight, take_frontier_job,
-    };
-    use tokio::fs;
-    use uuid::Uuid;
-
-    #[test]
-    fn apply_due_rules_enqueues_enabled_rules() {
-        let mut state = CrawlerStoreState::default();
-        state.rules.insert(
-            "rule-1".to_string(),
-            super::StoredCrawlRule {
-                id: "rule-1".to_string(),
-                owner_developer_id: "local:admin".to_string(),
-                name: "Hourly".to_string(),
-                seed_url: "https://example.com/seed".to_string(),
-                interval_minutes: 60,
-                max_depth: 2,
-                enabled: true,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                last_enqueued_at: None,
-            },
-        );
-
-        let changed = apply_due_rules(&mut state, Utc::now(), None);
-
-        assert!(changed);
-        assert_eq!(state.frontier.len(), 1);
-        assert!(state
-            .events
-            .iter()
-            .any(|event| event.kind == "rule-enqueued"));
-    }
-
-    #[test]
-    fn requeue_stale_jobs_returns_jobs_to_frontier() {
-        let mut state = CrawlerStoreState::default();
-        let job = FrontierRecord {
-            job_id: "job-1".to_string(),
-            owner_developer_id: "local:admin".to_string(),
-            url: "https://example.com/stale".to_string(),
-            source: "rule:test".to_string(),
-            depth: 0,
-            max_depth: 2,
-            discovered_at: Utc::now(),
-            submitted_by: None,
-            rule_id: Some("rule-1".to_string()),
-        };
-        state.in_flight.insert(
-            job.job_id.clone(),
-            InFlightRecord {
-                crawler_id: "crawler-1".to_string(),
-                job: job.clone(),
-                claimed_at: Utc::now() - ChronoDuration::minutes(10),
-            },
-        );
-
-        let changed = requeue_stale_in_flight(&mut state, Utc::now(), Duration::from_secs(300));
-
-        assert!(changed);
-        assert!(state.in_flight.is_empty());
-        assert_eq!(state.frontier.front().map(|record| record.job_id.as_str()), Some("job-1"));
-        assert!(state
-            .events
-            .iter()
-            .any(|event| event.kind == "stale-job-requeued"));
-    }
+    use super::normalize_url;
 
     #[test]
     fn normalize_url_rejects_invalid_schemes_and_fragments() {
@@ -1248,105 +1753,5 @@ mod tests {
             normalize_url("https://example.com/a#fragment"),
             Some("https://example.com/a".to_string())
         );
-    }
-
-    #[test]
-    fn enqueue_urls_deduplicates_known_urls() {
-        let mut state = CrawlerStoreState::default();
-        let accepted = enqueue_urls(
-            &mut state,
-            "local:admin",
-            vec![
-                "https://example.com".to_string(),
-                "https://example.com".to_string(),
-            ],
-            "seed",
-            0,
-            2,
-            Some("local:admin".to_string()),
-            None,
-            false,
-        );
-
-        assert_eq!(accepted, 1);
-        assert_eq!(state.frontier.len(), 1);
-        assert_eq!(state.known_urls.len(), 1);
-    }
-
-    #[test]
-    fn take_frontier_job_is_owner_scoped() {
-        let mut state = CrawlerStoreState::default();
-        enqueue_urls(
-            &mut state,
-            "local:admin",
-            vec!["https://example.com".to_string()],
-            "seed",
-            0,
-            1,
-            None,
-            None,
-            false,
-        );
-        enqueue_urls(
-            &mut state,
-            "local:other",
-            vec!["https://example.org".to_string()],
-            "seed",
-            0,
-            1,
-            None,
-            None,
-            false,
-        );
-
-        let job = take_frontier_job(&mut state, "local:other").expect("missing job");
-        assert_eq!(job.url, "https://example.org/");
-    }
-
-    #[test]
-    fn event_log_is_capped() {
-        let mut state = CrawlerStoreState::default();
-        for index in 0..405 {
-            push_event(
-                &mut state,
-                "local:admin",
-                "test",
-                "ok",
-                format!("event {index}"),
-                None,
-                None,
-            );
-        }
-
-        assert_eq!(state.events.len(), 400);
-    }
-
-    #[tokio::test]
-    async fn load_accepts_legacy_store_shape() {
-        let temp_path = env::temp_dir().join(format!("findverse-crawler-{}.json", Uuid::now_v7()));
-        fs::write(
-            &temp_path,
-            r#"{
-  "crawlers": {},
-  "frontier": [],
-  "known_urls": [],
-  "in_flight": {}
-}"#,
-        )
-        .await
-        .expect("failed to write legacy store");
-
-        let store = CrawlerStore::load(temp_path.clone())
-            .await
-            .expect("legacy crawler store should load");
-        let overview = store
-            .overview("local:admin", 0)
-            .await
-            .expect("overview should succeed");
-
-        assert_eq!(overview.rules.len(), 0);
-        assert_eq!(overview.recent_events.len(), 0);
-
-        let _ = fs::remove_file(temp_path).await;
     }
 }

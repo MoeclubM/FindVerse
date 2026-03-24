@@ -34,13 +34,6 @@ export function JoinKeyManager({ token }: { token: string }) {
     }
   }
 
-  function handleGenerate() {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let key = "fvjk_";
-    for (let i = 0; i < 32; i++) key += chars[Math.floor(Math.random() * chars.length)];
-    setNewKey(key);
-  }
-
   if (loading) return <p>Loading...</p>;
 
   return (
@@ -50,29 +43,34 @@ export function JoinKeyManager({ token }: { token: string }) {
         <input
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
-          placeholder="Join key (leave empty to disable)"
+          placeholder="Join key for enrolling new workers"
           style={{ minWidth: 300 }}
         />
-        <button type="button" onClick={handleGenerate}>Generate</button>
-        <button type="submit" disabled={saving}>Save</button>
+        <button type="submit" disabled={saving}>Save key</button>
       </form>
       {joinKey ? (
         <p className="section-meta" style={{ marginTop: 8 }}>
-          Current key: <code>{joinKey}</code>
+          Current join key: <code>{joinKey}</code>
         </p>
       ) : (
-        <p className="section-meta" style={{ marginTop: 8 }}>No join key configured. External crawlers cannot self-register.</p>
+        <p className="section-meta" style={{ marginTop: 8 }}>
+          No join key configured. New workers cannot enroll until you set one.
+        </p>
       )}
       <details style={{ marginTop: 8 }}>
-        <summary className="section-meta">Setup instructions</summary>
+        <summary className="section-meta">Worker setup</summary>
         <pre style={{ fontSize: "0.85em", marginTop: 4 }}>
-{`# Unix
+{`Share this key with crawler operators so they can register a worker. The join key is only used during enrollment; after joining, each worker continues with its own crawler credentials.
+
+Use any supported worker startup flow that passes the join key, for example:
+
+# Unix setup script
 ./scripts/crawler-setup.sh --server <API_URL> --join-key <KEY> --start
 
-# Windows
+# Windows setup script
 .\\scripts\\crawler-setup.ps1 -Server <API_URL> -JoinKey <KEY> -Start
 
-# Or directly with cargo:
+# Direct worker launch
 cargo run -p findverse-crawler -- worker --server <API_URL> --join-key <KEY>`}
         </pre>
       </details>

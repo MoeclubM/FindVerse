@@ -6,6 +6,8 @@ target/
 .env
 .env.local
 .env.*.local
+.env.crawler
+.env.crawler.*
 playwright-report/
 test-results/
 blob-report/

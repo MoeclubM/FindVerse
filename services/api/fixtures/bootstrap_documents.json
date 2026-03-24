@@ -104,7 +104,7 @@
     "body": "Practical ranking starts with lexical retrieval, field boosts, domain quality, and freshness decay before learned ranking layers. For an initial beta search engine, deterministic scoring keeps debugging and quality review tractable.",
     "language": "en",
     "last_crawled_at": "2026-03-19T12:20:00Z",
-    "suggest_terms": ["search ranking", "lexical retrieval", "freshness decay"],
+    "suggest_terms": ["search ranking", "ranking", "ranking systems", "lexical retrieval", "freshness decay"],
     "site_authority": 0.64
   },
   {

@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(process.cwd());
 
-test("developer self-service, admin management, crawler auto-registration, and search flow", async ({
+test("developer self-service, admin management, crawler join registration, and search flow", async ({
   page,
 }) => {
   const username = process.env.FINDVERSE_LOCAL_ADMIN_USERNAME ?? "admin";
@@ -16,6 +16,7 @@ test("developer self-service, admin management, crawler auto-registration, and s
   const apiBaseUrl = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:8080";
   const developerUsername = `dev-${Date.now()}`;
   const developerPassword = "dev-password-123";
+  const joinKey = `e2e-join-key-${Date.now()}`;
 
   await page.goto("/?q=ranking");
   await expect(page.getByRole("link", { name: "Designing Ranking Systems for Search" }).first()).toBeVisible();
@@ -41,8 +42,6 @@ test("developer self-service, admin management, crawler auto-registration, and s
   await expect(page.getByText("Developer key active")).toBeVisible();
   await expect(page.getByRole("link", { name: "Designing Ranking Systems for Search" }).first()).toBeVisible();
 
-  let workerApiKey: string | null = null;
-
   await page.goto("/console");
   await page.getByPlaceholder("Username").fill(username);
   await page.getByPlaceholder("Password").fill(password);
@@ -50,18 +49,15 @@ test("developer self-service, admin management, crawler auto-registration, and s
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByPlaceholder("Key name").fill("Admin worker key");
-  await page.getByRole("button", { name: "Create" }).first().click();
-  const workerApiKeyEl = page.locator("pre").filter({ hasText: "fvk_" }).first();
-  await expect(workerApiKeyEl).toBeVisible();
-  workerApiKey = (await workerApiKeyEl.textContent())?.trim() ?? null;
-  expect(workerApiKey).toBeTruthy();
+  await expect(page.getByRole("heading", { name: "Crawler join key" })).toBeVisible();
+  await page.getByPlaceholder("Join key for enrolling new workers").fill(joinKey);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByText("Join key updated")).toBeVisible();
 
   await page.getByRole("button", { name: "Users" }).click();
   await expect(page.getByText(developerUsername)).toBeVisible();
 
   const developerRow = page.locator(".table-row").filter({ hasText: developerUsername }).first();
-  await developerRow.getByLabel(`QPS limit for ${developerUsername}`).fill("7");
   await developerRow.getByLabel(`Daily quota for ${developerUsername}`).fill("1234");
   await developerRow.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(/Refresh failed/i)).toHaveCount(0);
@@ -81,8 +77,8 @@ test("developer self-service, admin management, crawler auto-registration, and s
       "worker",
       "--server",
       apiBaseUrl,
-      "--api-key",
-      workerApiKey!,
+      "--join-key",
+      joinKey,
       "--once",
       "--max-jobs",
       "1",

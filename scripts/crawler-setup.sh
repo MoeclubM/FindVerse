@@ -19,6 +19,11 @@ JOIN_KEY=""
 NAME="worker-$(hostname 2>/dev/null || echo unknown)"
 START=false
 CONCURRENCY=4
+MAX_JOBS=10
+POLL_INTERVAL_SECS=5
+ALLOWED_DOMAINS=""
+PROXY=""
+BIN_PATH=""
 ENV_FILE=".env.crawler"
 
 while [[ $# -gt 0 ]]; do
@@ -28,6 +33,11 @@ while [[ $# -gt 0 ]]; do
     --name) NAME="$2"; shift 2 ;;
     --start) START=true; shift ;;
     --concurrency) CONCURRENCY="$2"; shift 2 ;;
+    --max-jobs) MAX_JOBS="$2"; shift 2 ;;
+    --poll-interval-secs) POLL_INTERVAL_SECS="$2"; shift 2 ;;
+    --allowed-domains) ALLOWED_DOMAINS="$2"; shift 2 ;;
+    --proxy) PROXY="$2"; shift 2 ;;
+    --bin-path) BIN_PATH="$2"; shift 2 ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
@@ -38,6 +48,36 @@ if [[ -z "$SERVER" || -z "$JOIN_KEY" ]]; then
   exit 1
 fi
 
+start_worker() {
+  local -a args=(
+    worker
+    --server "$SERVER"
+    --crawler-id "$CRAWLER_ID"
+    --crawler-key "$CRAWLER_KEY"
+    --max-jobs "$MAX_JOBS"
+    --poll-interval-secs "$POLL_INTERVAL_SECS"
+    --concurrency "$CONCURRENCY"
+  )
+
+  if [[ -n "$ALLOWED_DOMAINS" ]]; then
+    args+=(--allowed-domains "$ALLOWED_DOMAINS")
+  fi
+  if [[ -n "$PROXY" ]]; then
+    args+=(--proxy "$PROXY")
+  fi
+
+  if [[ -n "$BIN_PATH" ]]; then
+    exec "$BIN_PATH" "${args[@]}"
+  elif command -v findverse-crawler &>/dev/null; then
+    exec findverse-crawler "${args[@]}"
+  elif command -v cargo &>/dev/null; then
+    exec cargo run -p findverse-crawler -- "${args[@]}"
+  else
+    echo "Error: neither findverse-crawler binary nor cargo found"
+    exit 1
+  fi
+}
+
 # Check if already registered
 if [[ -f "$ENV_FILE" ]]; then
   echo "Found existing credentials in $ENV_FILE"
@@ -47,15 +87,7 @@ if [[ -f "$ENV_FILE" ]]; then
     echo "  Using cached credentials. Delete $ENV_FILE to re-register."
     if $START; then
       echo "Starting crawler worker..."
-      # Try binary first, then cargo
-      if command -v findverse-crawler &>/dev/null; then
-        exec findverse-crawler worker --server "$SERVER" --crawler-id "$CRAWLER_ID" --crawler-key "$CRAWLER_KEY" --concurrency "$CONCURRENCY"
-      elif command -v cargo &>/dev/null; then
-        exec cargo run -p findverse-crawler -- worker --server "$SERVER" --crawler-id "$CRAWLER_ID" --crawler-key "$CRAWLER_KEY" --concurrency "$CONCURRENCY"
-      else
-        echo "Error: neither findverse-crawler binary nor cargo found"
-        exit 1
-      fi
+      start_worker
     fi
     exit 0
   fi
@@ -98,16 +130,9 @@ echo "Credentials saved to $ENV_FILE"
 
 if $START; then
   echo "Starting crawler worker..."
-  if command -v findverse-crawler &>/dev/null; then
-    exec findverse-crawler worker --server "$SERVER" --crawler-id "$CRAWLER_ID" --crawler-key "$CRAWLER_KEY" --concurrency "$CONCURRENCY"
-  elif command -v cargo &>/dev/null; then
-    exec cargo run -p findverse-crawler -- worker --server "$SERVER" --crawler-id "$CRAWLER_ID" --crawler-key "$CRAWLER_KEY" --concurrency "$CONCURRENCY"
-  else
-    echo "Error: neither findverse-crawler binary nor cargo found"
-    exit 1
-  fi
+  start_worker
 else
   echo ""
   echo "To start the crawler manually:"
-  echo "  findverse-crawler worker --server $SERVER --crawler-id $CRAWLER_ID --crawler-key \$CRAWLER_KEY"
+  echo "  findverse-crawler worker --server $SERVER --crawler-id $CRAWLER_ID --crawler-key \$CRAWLER_KEY --max-jobs $MAX_JOBS --poll-interval-secs $POLL_INTERVAL_SECS --concurrency $CONCURRENCY"
 fi

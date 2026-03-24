@@ -1,83 +1,88 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
-
 use chrono::{DateTime, Utc};
-use rand::{Rng, distr::Alphanumeric};
-use tokio::sync::RwLock;
+use sqlx::PgPool;
 
 use crate::{
+    auth_support::{PASSWORD_SCHEME_ARGON2ID, bearer_token, hash_password, verify_password},
     error::ApiError,
     models::{AdminLoginRequest, AdminSessionResponse},
+    store::{generate_token, hash_token},
 };
 
 #[derive(Debug, Clone)]
 pub struct AdminAuth {
-    username: String,
-    password: String,
-    developer_id: String,
-    sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
-}
-
-#[derive(Debug, Clone)]
-struct SessionRecord {
-    username: String,
-    developer_id: String,
-    last_seen_at: DateTime<Utc>,
+    pg_pool: PgPool,
 }
 
 #[derive(Debug, Clone)]
 pub struct AdminIdentity {
-    pub developer_id: String,
+    pub user_id: String,
 }
 
 impl AdminAuth {
-    pub fn new(username: String, password: String) -> Self {
-        Self {
-            developer_id: format!("local:{username}"),
-            username,
-            password,
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-        }
+    pub fn new(pg_pool: PgPool) -> Self {
+        Self { pg_pool }
     }
 
     pub async fn login(
         &self,
         request: AdminLoginRequest,
     ) -> Result<AdminSessionResponse, ApiError> {
-        if request.username.trim() != self.username || request.password != self.password {
-            return Err(ApiError::Unauthorized("invalid username or password".to_string()));
+        let username = request.username.trim();
+        let record = sqlx::query_as::<_, AdminPasswordRow>(
+            "select u.id, u.external_id, u.username, u.enabled, pc.password_hash, pc.password_scheme, pc.password_salt
+             from users u
+             join password_credentials pc on pc.user_id = u.id
+             where u.username = $1 and u.role = 'admin'",
+        )
+        .bind(username)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?
+        .ok_or_else(|| ApiError::Unauthorized("invalid username or password".to_string()))?;
+
+        if !record.enabled {
+            return Err(ApiError::Unauthorized("account is disabled".to_string()));
+        }
+        if !verify_password(
+            &request.password,
+            &record.password_hash,
+            &record.password_scheme,
+            record.password_salt.as_deref(),
+        )? {
+            return Err(ApiError::Unauthorized(
+                "invalid username or password".to_string(),
+            ));
         }
 
-        let token = generate_token();
         let now = Utc::now();
-        self.sessions.write().await.insert(
-            token.clone(),
-            SessionRecord {
-                username: self.username.clone(),
-                developer_id: self.developer_id.clone(),
-                last_seen_at: now,
-            },
-        );
+        let mut tx = self
+            .pg_pool
+            .begin()
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?;
 
-        Ok(AdminSessionResponse {
-            developer_id: self.developer_id.clone(),
-            username: self.username.clone(),
-            token,
-        })
+        maybe_upgrade_password_tx(&mut tx, &record, &request.password, now).await?;
+        let response = create_admin_session_tx(
+            &mut tx,
+            record.id,
+            &record.external_id,
+            &record.username,
+            now,
+        )
+        .await?;
+
+        tx.commit()
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?;
+
+        Ok(response)
     }
 
     pub async fn authorize(&self, auth_header: Option<&str>) -> Result<AdminIdentity, ApiError> {
         let token = bearer_token(auth_header)?;
-        let mut sessions = self.sessions.write().await;
-        let session = sessions
-            .get_mut(token)
-            .ok_or_else(|| ApiError::Unauthorized("admin session is invalid".to_string()))?;
-        session.last_seen_at = Utc::now();
-
+        let session = authorize_admin_session(&self.pg_pool, token).await?;
         Ok(AdminIdentity {
-            developer_id: session.developer_id.clone(),
+            user_id: session.external_id,
         })
     }
 
@@ -85,51 +90,124 @@ impl AdminAuth {
         &self,
         auth_header: Option<&str>,
     ) -> Result<AdminSessionResponse, ApiError> {
-        let token = bearer_token(auth_header)?.to_string();
-        let mut sessions = self.sessions.write().await;
-        let session = sessions
-            .get_mut(&token)
-            .ok_or_else(|| ApiError::Unauthorized("admin session is invalid".to_string()))?;
-        session.last_seen_at = Utc::now();
-
+        let token = bearer_token(auth_header)?;
+        let session = authorize_admin_session(&self.pg_pool, token).await?;
         Ok(AdminSessionResponse {
-            developer_id: session.developer_id.clone(),
-            username: session.username.clone(),
-            token,
+            user_id: session.external_id,
+            username: session.username,
+            token: token.to_string(),
         })
     }
 
     pub async fn logout(&self, auth_header: Option<&str>) -> Result<(), ApiError> {
-        let token = bearer_token(auth_header)?.to_string();
-        let removed = self.sessions.write().await.remove(&token);
-        if removed.is_none() {
-            return Err(ApiError::Unauthorized("admin session is invalid".to_string()));
+        let token = bearer_token(auth_header)?;
+        let revoked = sqlx::query(
+            "update sessions set revoked_at = now() where token_hash = $1 and revoked_at is null",
+        )
+        .bind(hash_token(token))
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?
+        .rows_affected();
+        if revoked == 0 {
+            return Err(ApiError::Unauthorized(
+                "admin session is invalid".to_string(),
+            ));
         }
 
         Ok(())
     }
 }
 
-fn bearer_token(auth_header: Option<&str>) -> Result<&str, ApiError> {
-    let header =
-        auth_header.ok_or_else(|| ApiError::Unauthorized("missing authorization".to_string()))?;
-    let token = header
-        .strip_prefix("Bearer ")
-        .ok_or_else(|| ApiError::Unauthorized("invalid authorization scheme".to_string()))?
-        .trim();
-
-    if token.is_empty() {
-        return Err(ApiError::Unauthorized("empty bearer token".to_string()));
-    }
-
-    Ok(token)
+#[derive(sqlx::FromRow)]
+struct AdminPasswordRow {
+    id: uuid::Uuid,
+    external_id: String,
+    username: String,
+    enabled: bool,
+    password_hash: String,
+    password_scheme: String,
+    password_salt: Option<String>,
 }
 
-fn generate_token() -> String {
-    let secret = rand::rng()
-        .sample_iter(&Alphanumeric)
-        .take(48)
-        .map(char::from)
-        .collect::<String>();
-    format!("fva_{secret}")
+#[derive(sqlx::FromRow)]
+struct AuthorizedAdminSessionRow {
+    external_id: String,
+    username: String,
+}
+
+async fn maybe_upgrade_password_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    record: &AdminPasswordRow,
+    password: &str,
+    now: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    if record.password_scheme == PASSWORD_SCHEME_ARGON2ID {
+        return Ok(());
+    }
+
+    let upgraded_hash = hash_password(password)?;
+    sqlx::query(
+        "update password_credentials set password_hash = $2, password_scheme = $3, password_salt = null, updated_at = $4 where user_id = $1",
+    )
+    .bind(record.id)
+    .bind(upgraded_hash)
+    .bind(PASSWORD_SCHEME_ARGON2ID)
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| ApiError::Internal(error.into()))?;
+    Ok(())
+}
+
+async fn create_admin_session_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: uuid::Uuid,
+    external_id: &str,
+    username: &str,
+    now: DateTime<Utc>,
+) -> Result<AdminSessionResponse, ApiError> {
+    let token = generate_token("fva");
+    sqlx::query(
+        "insert into sessions (id, user_id, token_hash, created_at, last_used_at) values ($1, $2, $3, $4, $4)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(user_id)
+    .bind(hash_token(&token))
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| ApiError::Internal(error.into()))?;
+
+    Ok(AdminSessionResponse {
+        user_id: external_id.to_string(),
+        username: username.to_string(),
+        token,
+    })
+}
+
+async fn authorize_admin_session(
+    pg_pool: &PgPool,
+    token: &str,
+) -> Result<AuthorizedAdminSessionRow, ApiError> {
+    let token_hash = hash_token(token);
+    let session = sqlx::query_as::<_, AuthorizedAdminSessionRow>(
+        "select u.external_id, u.username
+         from sessions s
+         join users u on u.id = s.user_id
+         where s.token_hash = $1 and s.revoked_at is null and u.enabled = true and u.role = 'admin'",
+    )
+    .bind(&token_hash)
+    .fetch_optional(pg_pool)
+    .await
+    .map_err(|error| ApiError::Internal(error.into()))?
+    .ok_or_else(|| ApiError::Unauthorized("admin session is invalid".to_string()))?;
+
+    sqlx::query("update sessions set last_used_at = now() where token_hash = $1")
+        .bind(token_hash)
+        .execute(pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?;
+
+    Ok(session)
 }

@@ -3,13 +3,14 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use chrono::Utc;
+use findverse_common::{
+    CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, derive_terms,
+    display_url, stable_document_id, word_count,
+};
 use reqwest::header::CONTENT_TYPE;
-use scraper::{Html, Selector};
-use sha2::{Digest, Sha256};
 use tracing::{info, warn};
-use url::Url;
 
-use crate::extract::{detect_language, extract_clean_body_text, extract_links, extract_sitemap_urls};
+use crate::extract::{detect_language, extract_links, extract_sitemap_urls, parse_html_document};
 use crate::models::{FetchManifestEntry, FrontierEntry, IndexedDocument, SeedConfig};
 
 // ---------------------------------------------------------------------------
@@ -128,7 +129,7 @@ pub async fn fetch(frontier: PathBuf, output_dir: PathBuf, limit: usize) -> anyh
         }
 
         let body = response.text().await.unwrap_or_default();
-        let hash = hex_hash(&entry.url);
+        let hash = stable_document_id(&entry.url);
         let filename = format!("{hash}.html");
         let output_path = output_dir.join(&filename);
         tokio::fs::write(&output_path, body).await?;
@@ -180,39 +181,21 @@ pub async fn build_index(input_dir: PathBuf, output: PathBuf) -> anyhow::Result<
 }
 
 fn build_document(entry: &FetchManifestEntry, html: &str) -> Option<IndexedDocument> {
-    let parsed_url = Url::parse(&entry.url).ok()?;
-    let document = Html::parse_document(html);
-    let title_selector = Selector::parse("title").ok()?;
-    let meta_selector = Selector::parse("meta[name='description']").ok()?;
-
-    let title = document
-        .select(&title_selector)
-        .next()
-        .map(|node| node.text().collect::<String>())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| parsed_url.as_str().to_string());
-
-    let body = extract_clean_body_text(&document);
-    let body_text = body.unwrap_or_default();
+    let parsed = parse_html_document(&entry.url, html);
+    let body_text = parsed.body?;
 
     if body_text.is_empty() {
         return None;
     }
 
-    let meta_snippet = document
-        .select(&meta_selector)
-        .next()
-        .and_then(|node| node.value().attr("content"))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-
-    let snippet = meta_snippet.unwrap_or_else(|| body_text.chars().take(200).collect());
-
+    let title = parsed.title.unwrap_or_else(|| entry.url.clone());
+    let snippet = parsed
+        .snippet
+        .unwrap_or_else(|| body_text.chars().take(200).collect());
     let language = detect_language(&body_text).unwrap_or_else(|| "unknown".to_string());
 
     Some(IndexedDocument {
-        id: hex_hash(&entry.url),
+        id: stable_document_id(&entry.url),
         title: title.trim().to_string(),
         url: entry.url.clone(),
         display_url: display_url(&entry.url),
@@ -222,48 +205,14 @@ fn build_document(entry: &FetchManifestEntry, html: &str) -> Option<IndexedDocum
         last_crawled_at: entry.fetched_at,
         suggest_terms: derive_terms(&title, &body_text),
         site_authority: 0.5,
+        content_type: entry.content_type.clone(),
+        word_count: word_count(&body_text) as u32,
+        source_job_id: None,
+        parser_version: CURRENT_PARSER_VERSION,
+        schema_version: CURRENT_SCHEMA_VERSION,
+        index_version: CURRENT_INDEX_VERSION,
+        duplicate_of: None,
     })
-}
-
-// ---------------------------------------------------------------------------
-// Utility functions
-// ---------------------------------------------------------------------------
-fn derive_terms(title: &str, body: &str) -> Vec<String> {
-    let mut terms = BTreeSet::new();
-    for source in [title, body] {
-        for token in source
-            .split(|ch: char| !ch.is_alphanumeric())
-            .map(str::trim)
-            .filter(|token| token.len() >= 4)
-        {
-            terms.insert(token.to_lowercase());
-            if terms.len() >= 12 {
-                return terms.into_iter().collect();
-            }
-        }
-    }
-    terms.into_iter().collect()
-}
-
-fn display_url(input: &str) -> String {
-    Url::parse(input)
-        .ok()
-        .and_then(|url| {
-            let host = url.host_str()?.to_string();
-            let path = url.path().trim_end_matches('/').to_string();
-            Some(if path.is_empty() {
-                host
-            } else {
-                format!("{host}{path}")
-            })
-        })
-        .unwrap_or_else(|| input.to_string())
-}
-
-fn hex_hash(value: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    format!("{:x}", hasher.finalize())
 }
 
 // ---------------------------------------------------------------------------

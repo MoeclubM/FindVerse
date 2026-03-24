@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use findverse_common::{CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -45,9 +46,6 @@ pub enum Command {
         /// Explicit crawler key (use with --crawler-id for manual setup)
         #[arg(long)]
         crawler_key: Option<String>,
-        /// Developer API key — auto-registers a crawler via /internal/crawlers/hello
-        #[arg(long)]
-        api_key: Option<String>,
         /// Join key — auto-registers via /internal/crawlers/join
         #[arg(long)]
         join_key: Option<String>,
@@ -99,7 +97,7 @@ pub struct FetchManifestEntry {
     pub content_type: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct IndexedDocument {
     pub id: String,
     pub title: String,
@@ -111,6 +109,36 @@ pub struct IndexedDocument {
     pub last_crawled_at: DateTime<Utc>,
     pub suggest_terms: Vec<String>,
     pub site_authority: f32,
+    #[serde(default = "default_content_type")]
+    pub content_type: String,
+    #[serde(default)]
+    pub word_count: u32,
+    #[serde(default)]
+    pub source_job_id: Option<String>,
+    #[serde(default = "default_parser_version")]
+    pub parser_version: i32,
+    #[serde(default = "default_schema_version")]
+    pub schema_version: i32,
+    #[serde(default = "default_index_version")]
+    pub index_version: i32,
+    #[serde(default)]
+    pub duplicate_of: Option<String>,
+}
+
+fn default_content_type() -> String {
+    "text/html".to_string()
+}
+
+fn default_parser_version() -> i32 {
+    CURRENT_PARSER_VERSION
+}
+
+fn default_schema_version() -> i32 {
+    CURRENT_SCHEMA_VERSION
+}
+
+fn default_index_version() -> i32 {
+    CURRENT_INDEX_VERSION
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +162,8 @@ pub struct CrawlJob {
     pub url: String,
     pub source: String,
     pub depth: u32,
+    pub max_depth: u32,
+    pub attempt_count: u32,
     pub discovered_at: DateTime<Utc>,
 }
 
@@ -148,17 +178,24 @@ pub struct CrawlResultReport {
     pub url: String,
     pub status_code: u16,
     pub fetched_at: DateTime<Utc>,
+    pub final_url: Option<String>,
+    pub content_type: Option<String>,
     pub title: Option<String>,
     pub snippet: Option<String>,
     pub body: Option<String>,
     pub language: Option<String>,
     pub discovered_urls: Vec<String>,
     pub site_authority: Option<f32>,
+    pub retryable: Option<bool>,
+    pub error_kind: Option<String>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SubmitCrawlReportResponse {
     pub accepted_documents: usize,
+    pub duplicate_documents: usize,
+    pub skipped_documents: usize,
     pub discovered_urls: usize,
     pub frontier_depth: usize,
     pub indexed_documents: usize,
@@ -177,12 +214,6 @@ pub struct WorkerConfig {
     pub once: bool,
     pub concurrency: usize,
     pub allowed_domains: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct HelloCrawlerResponse {
-    pub crawler_id: String,
-    pub name: String,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,19 +1,30 @@
 openapi: 3.1.0
 info:
-  title: FindVerse API
-  version: 0.2.0
+  title: FindVerse Split API
+  version: 0.3.0
 servers:
+  - url: http://localhost:8081
+    description: query-api
   - url: http://localhost:8080
+    description: control-api
+
 paths:
   /healthz:
     get:
-      summary: Health probe
+      summary: Liveness probe
       responses:
         "200":
           description: OK
+  /readyz:
+    get:
+      summary: Readiness probe
+      responses:
+        "200":
+          description: Ready or degraded
+
   /v1/search:
     get:
-      summary: Search indexed documents
+      summary: Public search
       parameters:
         - in: query
           name: q
@@ -24,13 +35,10 @@ paths:
           name: limit
           schema:
             type: integer
-            minimum: 1
-            maximum: 20
         - in: query
           name: offset
           schema:
             type: integer
-            minimum: 0
         - in: query
           name: lang
           schema:
@@ -47,9 +55,10 @@ paths:
       responses:
         "200":
           description: Search results
+
   /v1/suggest:
     get:
-      summary: Suggest query prefixes
+      summary: Prefix suggestions
       parameters:
         - in: query
           name: q
@@ -59,46 +68,95 @@ paths:
       responses:
         "200":
           description: Suggestions
-  /v1/developer/usage:
+
+  /v1/developer/search:
     get:
-      summary: Read developer search API usage
+      summary: Developer API search
       parameters:
         - in: header
-          name: x-developer-id
+          name: Authorization
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: q
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Usage summary
-  /v1/developer/keys:
+          description: Search results
+
+  /v1/dev/register:
     post:
-      summary: Create search API key
+      summary: Register developer
+      responses:
+        "201":
+          description: Developer session
+
+  /v1/dev/login:
+    post:
+      summary: Developer login
+      responses:
+        "200":
+          description: Developer session
+
+  /v1/dev/me:
+    get:
+      summary: Current developer session
       parameters:
         - in: header
-          name: x-developer-id
+          name: Authorization
           required: true
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name]
-              properties:
-                name:
-                  type: string
+      responses:
+        "200":
+          description: Developer session
+
+  /v1/dev/logout:
+    post:
+      summary: Developer logout
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Logged out
+
+  /v1/dev/keys:
+    get:
+      summary: List current developer keys and daily usage
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Developer usage
+    post:
+      summary: Create developer key
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
       responses:
         "201":
           description: Key created
-  /v1/developer/keys/{id}:
+
+  /v1/dev/keys/{id}:
     delete:
-      summary: Revoke search API key
+      summary: Revoke developer key
       parameters:
         - in: header
-          name: x-developer-id
+          name: Authorization
           required: true
           schema:
             type: string
@@ -110,67 +168,278 @@ paths:
       responses:
         "204":
           description: Key revoked
-  /v1/developer/crawl/overview:
+
+  /v1/admin/session/login:
+    post:
+      summary: Admin login
+      responses:
+        "200":
+          description: Admin session
+
+  /v1/admin/session/me:
     get:
-      summary: Read crawler overview for the developer
+      summary: Current admin session
       parameters:
         - in: header
-          name: x-developer-id
+          name: Authorization
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Crawl overview
-  /v1/developer/crawlers:
+          description: Admin session
+
+  /v1/admin/session/logout:
     post:
-      summary: Create crawler credential
+      summary: Admin logout
       parameters:
         - in: header
-          name: x-developer-id
+          name: Authorization
           required: true
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name]
-              properties:
-                name:
-                  type: string
+      responses:
+        "204":
+          description: Logged out
+
+  /v1/admin/developers:
+    get:
+      summary: List developer accounts
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Developer account list
+
+  /v1/admin/developers/{user_id}:
+    patch:
+      summary: Update developer enabled state or daily quota
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Updated
+
+  /v1/admin/developers/{user_id}/keys:
+    get:
+      summary: List developer keys
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Developer key list
+    post:
+      summary: Create developer key as admin
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
       responses:
         "201":
-          description: Crawler created
-  /v1/developer/frontier/seed:
-    post:
-      summary: Add seed URLs into the crawl frontier
+          description: Key created
+
+  /v1/admin/developers/{user_id}/keys/{key_id}:
+    delete:
+      summary: Revoke developer key as admin
       parameters:
         - in: header
-          name: x-developer-id
+          name: Authorization
           required: true
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [urls]
-              properties:
-                urls:
-                  type: array
-                  items:
-                    type: string
-                    format: uri
-                source:
-                  type: string
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: key_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Key revoked
+
+  /v1/admin/crawlers/{id}:
+    patch:
+      summary: Rename crawler worker
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Crawler updated
+
+  /v1/admin/frontier/seed:
+    post:
+      summary: Queue manual crawl seeds
       responses:
         "200":
           description: Frontier seeded
+
+  /v1/admin/crawl/overview:
+    get:
+      summary: Crawl overview
+      responses:
+        "200":
+          description: Overview data
+
+  /v1/admin/crawl/rules:
+    post:
+      summary: Create crawl rule
+      responses:
+        "201":
+          description: Rule created
+
+  /v1/admin/crawl/rules/{id}:
+    patch:
+      summary: Update crawl rule
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rule updated
+    delete:
+      summary: Delete crawl rule
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Rule deleted
+
+  /v1/admin/crawl/jobs:
+    get:
+      summary: List crawl jobs
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+        - in: query
+          name: offset
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job list
+
+  /v1/admin/crawl/jobs/stats:
+    get:
+      summary: Job status counters
+      responses:
+        "200":
+          description: Job stats
+
+  /v1/admin/crawl/jobs/retry:
+    post:
+      summary: Retry failed and dead-letter jobs
+      responses:
+        "200":
+          description: Retry count
+
+  /v1/admin/crawl/jobs/completed:
+    delete:
+      summary: Cleanup succeeded jobs
+      responses:
+        "200":
+          description: Cleanup count
+
+  /v1/admin/documents:
+    get:
+      summary: List indexed documents
+      responses:
+        "200":
+          description: Document list
+
+  /v1/admin/documents/{id}:
+    delete:
+      summary: Delete one indexed document
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /v1/admin/documents/purge-site:
+    post:
+      summary: Delete indexed documents by site
+      responses:
+        "200":
+          description: Purge result
+
+  /v1/admin/crawler-join-key:
+    get:
+      summary: Read crawler join key
+      responses:
+        "200":
+          description: Join key
+    put:
+      summary: Set crawler join key
+      responses:
+        "204":
+          description: Updated
+
+  /internal/crawlers/join:
+    post:
+      summary: Register worker with join key
+      responses:
+        "201":
+          description: Worker credentials
+
   /internal/crawlers/claim:
     post:
       summary: Claim crawl jobs
@@ -185,21 +454,13 @@ paths:
           required: true
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                max_jobs:
-                  type: integer
       responses:
         "200":
           description: Claimed jobs
+
   /internal/crawlers/report:
     post:
-      summary: Submit crawl results
+      summary: Report crawl results
       parameters:
         - in: header
           name: x-crawler-id
@@ -211,12 +472,6 @@ paths:
           required: true
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
       responses:
         "200":
-          description: Results accepted
+          description: Report accepted

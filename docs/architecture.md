@@ -1,30 +1,39 @@
-# FindVerse Architecture Notes
+# FindVerse Architecture
 
-This repository now implements a flatter V1 slice focused on three concerns: a minimal search UI, a console control plane, and a crawler service.
+## Runtime split
 
-## Current shape
+- `query-api`: public search traffic and developer search traffic
+- `control-api`: admin UI, developer portal, crawler control, scheduling, document management
+- `crawler-worker`: fetch, parse, discover, report
+- `web`: single SPA that proxies search routes to `query-api` and everything else to `control-api`
 
-- Query plane:
-  - Rust `axum` API exposes public search endpoints plus admin endpoints for crawler and document control.
-  - Search data is file-backed today, but isolated behind a `SearchIndex` module so the storage backend can change later.
-- Experience plane:
-  - A static Vite SPA serves two routes: `/` for search and `/console` for crawler/data administration.
-  - The frontend does not own auth anymore; it calls API login directly and stores a local admin token in browser storage.
-- Crawl plane:
-  - Rust crawler service covers seed expansion, distributed worker mode, and static bootstrap index generation.
-  - The API owns frontier state, crawl rules, crawl history, crawler credentials, and document ingestion.
+## Storage split
 
-## Planned replacement points
+- `PostgreSQL`: users, sessions, API keys, crawler workers, crawl rules, crawl jobs, crawl events, indexed document metadata
+- `Redis/Valkey`: basic rate limiting
+- `OpenSearch`: search index and suggestions
 
-- file-backed `SearchIndex` -> OpenSearch-backed repository
-- file-backed `DeveloperStore` -> PostgreSQL + Valkey-backed API key control plane
-- file-backed `CrawlerStore` -> Redpanda + PostgreSQL + object storage crawler flow
-- static ranking -> blended lexical relevance plus link quality/freshness signals
+## Search flow
 
-## Beta defaults
+1. `crawler-worker` fetches and parses pages.
+2. `control-api` classifies the report into `succeeded`, `failed`, `blocked`, `dead_letter`, or re-queued `queued`.
+3. Successful documents are written to PostgreSQL metadata tables and indexed into OpenSearch.
+4. `query-api` serves `/v1/search` and `/v1/suggest` from OpenSearch only.
 
-- Query API accepts anonymous traffic and optional bearer keys for usage tracking.
-- Admin API uses local username/password login and opaque admin session tokens.
-- Automatic crawl rules are scheduler-lite: the API enqueues due seeds during admin overview reads and crawler claim cycles.
-- Search ranking is lexical and deterministic.
-- JavaScript rendering is not part of the default crawl path.
+## Crawl flow
+
+1. Seeds and rules create `queued` jobs in PostgreSQL.
+2. Workers join through `/internal/crawlers/join`.
+3. Workers claim jobs through `/internal/crawlers/claim`; claim increments `attempt_count`.
+4. Workers report results through `/internal/crawlers/report`.
+5. Retryable failures are re-queued with `next_retry_at`.
+6. Non-retryable failures become `failed` or `blocked`.
+7. Retry exhaustion becomes `dead_letter`.
+
+## Design defaults for this phase
+
+- Keep authentication simple.
+- Keep scheduling inside `control-api`.
+- Keep bootstrap imports and admin/developer seed logic inside `control-api`; `query-api` should stay read-only apart from quota tracking and rate limiting.
+- Do not add JS rendering, Kafka, object storage, or learning-to-rank yet.
+- Prioritize crawler correctness, management UX, and a clean search/control split.

@@ -13,10 +13,61 @@ param(
     [string]$Name = "worker-$env:COMPUTERNAME",
     [switch]$Start,
     [int]$Concurrency = 4,
+    [int]$MaxJobs = 10,
+    [int]$PollIntervalSecs = 5,
+    [string]$AllowedDomains,
+    [string]$Proxy,
+    [string]$BinaryPath,
     [string]$EnvFile = ".env.crawler"
 )
 
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+function Start-CrawlerWorker {
+    param(
+        [string]$Server,
+        [string]$CrawlerId,
+        [string]$CrawlerKey
+    )
+
+    $workerArgs = @(
+        "worker",
+        "--server", $Server,
+        "--crawler-id", $CrawlerId,
+        "--crawler-key", $CrawlerKey,
+        "--max-jobs", $MaxJobs,
+        "--poll-interval-secs", $PollIntervalSecs,
+        "--concurrency", $Concurrency
+    )
+
+    if ($AllowedDomains) {
+        $workerArgs += @("--allowed-domains", $AllowedDomains)
+    }
+    if ($Proxy) {
+        $workerArgs += @("--proxy", $Proxy)
+    }
+
+    if ($BinaryPath) {
+        & $BinaryPath @workerArgs
+        return
+    }
+
+    $binary = Get-Command findverse-crawler -ErrorAction SilentlyContinue
+    if ($binary) {
+        & $binary.Source @workerArgs
+        return
+    }
+
+    $cargoPath = Get-Command cargo -ErrorAction SilentlyContinue
+    if ($cargoPath) {
+        & cargo run -p findverse-crawler -- @workerArgs
+        return
+    }
+
+    throw "neither findverse-crawler nor cargo found in PATH"
+}
 
 # Check cached credentials
 if (Test-Path $EnvFile) {
@@ -34,12 +85,7 @@ if (Test-Path $EnvFile) {
         Write-Host "  Using cached credentials. Delete $EnvFile to re-register."
         if ($Start) {
             Write-Host "Starting crawler worker..."
-            $cargoPath = Get-Command cargo -ErrorAction SilentlyContinue
-            if ($cargoPath) {
-                & cargo run -p findverse-crawler -- worker --server $Server --crawler-id $crawlerId --crawler-key $crawlerKey --concurrency $Concurrency
-            } else {
-                Write-Error "cargo not found in PATH"
-            }
+            Start-CrawlerWorker -Server $Server -CrawlerId $crawlerId -CrawlerKey $crawlerKey
         }
         return
     }
@@ -76,14 +122,9 @@ Write-Host "Credentials saved to $EnvFile"
 
 if ($Start) {
     Write-Host "Starting crawler worker..."
-    $cargoPath = Get-Command cargo -ErrorAction SilentlyContinue
-    if ($cargoPath) {
-        & cargo run -p findverse-crawler -- worker --server $Server --crawler-id $crawlerId --crawler-key $crawlerKey --concurrency $Concurrency
-    } else {
-        Write-Error "cargo not found in PATH"
-    }
+    Start-CrawlerWorker -Server $Server -CrawlerId $crawlerId -CrawlerKey $crawlerKey
 } else {
     Write-Host ""
     Write-Host "To start the crawler manually:"
-    Write-Host "  cargo run -p findverse-crawler -- worker --server $Server --crawler-id $crawlerId --crawler-key `$crawlerKey"
+    Write-Host "  findverse-crawler worker --server $Server --crawler-id $crawlerId --crawler-key <crawler-key> --max-jobs $MaxJobs --poll-interval-secs $PollIntervalSecs --concurrency $Concurrency"
 }
