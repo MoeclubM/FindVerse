@@ -1,4 +1,4 @@
-# Deployment Notes
+# Deployment And Operations
 
 ## Services
 
@@ -9,6 +9,14 @@
 - `query-api`
 - `web`
 - `crawler-worker` via the `crawler` profile
+
+## What this document covers
+
+- Docker deployment of the main stack
+- Docker or script deployment of crawler workers
+- Smoke testing and Playwright validation
+- Release tagging and GitHub Actions automation
+- API entry points and proxy routing
 
 ## Docker Compose
 
@@ -130,6 +138,48 @@ Release example:
 git tag v0.1.0
 git push origin v0.1.0
 ```
+
+## API highlights
+
+- Query API:
+  - `GET /healthz`
+  - `GET /readyz`
+  - `GET /v1/search`
+  - `GET /v1/suggest`
+  - `GET /v1/developer/search`
+- Control API:
+  - `POST /v1/dev/register`
+  - `POST /v1/dev/login`
+  - `GET /v1/dev/me`
+  - `POST /v1/dev/logout`
+  - `GET /v1/dev/keys`
+  - `POST /v1/dev/keys`
+  - `DELETE /v1/dev/keys/:id`
+  - `POST /v1/admin/session/login`
+  - `GET /v1/admin/session/me`
+  - `POST /v1/admin/session/logout`
+  - `GET /v1/admin/developers`
+  - `PATCH /v1/admin/developers/:user_id`
+  - `GET /v1/admin/developers/:user_id/keys`
+  - `POST /v1/admin/developers/:user_id/keys`
+  - `DELETE /v1/admin/developers/:user_id/keys/:key_id`
+  - `GET /v1/admin/crawl/overview`
+  - `POST /v1/admin/frontier/seed`
+  - `POST /v1/admin/crawl/rules`
+  - `PATCH /v1/admin/crawl/rules/:id`
+  - `DELETE /v1/admin/crawl/rules/:id`
+  - `GET /v1/admin/crawl/jobs`
+  - `GET /v1/admin/crawl/jobs/stats`
+  - `POST /v1/admin/crawl/jobs/retry`
+  - `DELETE /v1/admin/crawl/jobs/completed`
+  - `GET /v1/admin/documents`
+  - `DELETE /v1/admin/documents/:id`
+  - `POST /v1/admin/documents/purge-site`
+  - `GET /v1/admin/crawler-join-key`
+  - `PUT /v1/admin/crawler-join-key`
+  - `POST /internal/crawlers/join`
+  - `POST /internal/crawlers/claim`
+  - `POST /internal/crawlers/report`
 
 ## Search proxying
 
