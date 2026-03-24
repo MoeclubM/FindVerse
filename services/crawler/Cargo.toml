@@ -24,7 +24,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
-whatlang = "0.16"
+whatlang = "0.18"
 
 [features]
 default = []
