@@ -90,7 +90,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Start stack
-        run: ./scripts/deploy-stack.sh --rebuild --with-crawler --crawler-join-key "$FINDVERSE_CRAWLER_JOIN_KEY"
+        run: bash ./scripts/deploy-stack.sh --rebuild --with-crawler --crawler-join-key "$FINDVERSE_CRAWLER_JOIN_KEY"
 
       - name: Verify web proxy and crawler container
         shell: bash
@@ -120,7 +120,7 @@ jobs:
           exit 1
 
       - name: Smoke test and Playwright
-        run: ./scripts/smoke-test.sh --control-api-base-url http://127.0.0.1:8080 --query-api-base-url http://127.0.0.1:8081 --run-playwright
+        run: bash ./scripts/smoke-test.sh --control-api-base-url http://127.0.0.1:8080 --query-api-base-url http://127.0.0.1:8081 --run-playwright
 
       - name: Capture Docker logs
         if: failure()
