@@ -5,8 +5,6 @@ target/
 .DS_Store
 .env
 .env.local
-.env.production
-.env.production.*
 .env.*.local
 .env.crawler
 .env.crawler.*
@@ -17,10 +15,5 @@ blob-report/
 apps/web/dist/
 services/api/.data/
 services/crawler/.cache/
-data/frontier/*
-!data/frontier/.gitkeep
-data/raw/*
-!data/raw/.gitkeep
-data/index/*
-!data/index/.gitkeep
+data/
 /.codex-artifacts

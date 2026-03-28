@@ -30,91 +30,53 @@
 - `query-api` on `8081`
 - `web` on `3000`
 
-Start the stack:
-
-Windows:
-
-```powershell
-.\scripts\deploy-stack.ps1 -Rebuild
-```
-
-Linux or WSL:
-
-```bash
-./scripts/deploy-stack.sh --rebuild
-```
-
-`--rebuild` / `-Rebuild` now stops the app containers first, removes the previous project images, and prunes old builder cache before rebuilding, so repeated local builds do not keep filling the disk.
-
-The default path stays intentionally simple: one compose file, one command, local ports exposed for development.
-When you need environment-specific deployment without rewriting scripts, both deployment scripts also support:
-
-- `--env-file <path>` / `-EnvFile <path>` to load a dedicated deployment env file
-- `--compose-file <path>` / `-ComposeFile <path>` to replace the default compose file when you truly need a custom override
-
-Example with the shared production env file:
-
-Windows:
-
-```powershell
-.\scripts\deploy-stack.ps1 -EnvFile .env.production
-```
-
-Linux or WSL:
-
-```bash
-./scripts/deploy-stack.sh --env-file .env.production
-```
+The default path is intentionally simple: one compose file, one `.env`, one command.
 
 Recommended shared deployment path for long-lived development and production:
 
 - keep one `docker-compose.yml` for both local and production paths
 - keep `postgres`, `valkey`, `opensearch`, `control-api`, and `query-api` bound to loopback only
 - expose only `web` publicly
-- run crawler workers outside Docker with `scripts/crawler-setup.sh`
+- run crawler workers outside Docker with the GitHub-hosted `install-crawler.sh` installer
 
-Production bootstrap:
+Bootstrap the shared env file:
 
 ```bash
-cp .env.production.example .env.production
+cp .env.example .env
 ```
 
-Edit `.env.production` and set at least:
+Edit `.env` and set at least:
 
-- `FINDVERSE_IMAGE_PREFIX`
-- `FINDVERSE_IMAGE_TAG`
 - `FINDVERSE_FRONTEND_ORIGIN`
 - `FINDVERSE_LOCAL_ADMIN_PASSWORD`
 - `FINDVERSE_POSTGRES_PASSWORD`
 - `FINDVERSE_CRAWLER_JOIN_KEY`
 
-The same `.env.production` template can be used for long-lived development as well. For a dev machine, change the origin and bind hosts to local values, but keep the file shape the same so the deployment path does not fork.
+The shared env template points `FINDVERSE_INDEX_PATH`, `FINDVERSE_DEVELOPER_STORE`, and `FINDVERSE_DEV_AUTH_STORE` at empty JSON templates under `config/production/` so the control plane does not import local demo fixture data by accident.
 
-The production env example points `FINDVERSE_INDEX_PATH`, `FINDVERSE_DEVELOPER_STORE`, and `FINDVERSE_DEV_AUTH_STORE` at empty JSON templates under `config/production/` so the control plane does not import local demo fixture data by accident.
-
-Deploy the production stack:
+Build and start the main stack:
 
 ```bash
-./scripts/deploy-prod.sh --env-file .env.production
+docker compose up -d --build
 ```
 
-After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false` in `.env.production` and deploy again so subsequent restarts do not keep the bootstrap-admin path enabled.
+Persistent service data now lives under:
+
+- `./data/postgres`
+- `./data/valkey`
+- `./data/opensearch`
+
+`docker compose down` stops the stack but keeps those directories intact. If you really want a clean reset, stop the stack first and then remove the matching directories under `./data`.
+
+After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false` in `.env` and run the same compose command again so subsequent restarts do not keep the bootstrap-admin path enabled.
 
 Start the stack with the bundled crawler worker:
 
-Windows:
-
-```powershell
-.\scripts\deploy-stack.ps1 -Rebuild -WithCrawler -CrawlerJoinKey change-me
-```
-
-Linux or WSL:
-
 ```bash
-./scripts/deploy-stack.sh --rebuild --with-crawler --crawler-join-key change-me
+docker compose --profile crawler up -d --build
 ```
 
-That bundled Docker crawler is intended for local development and CI smoke coverage. The recommended production topology is main stack in Docker plus crawler nodes installed as host services.
+That bundled Docker crawler is intended for local development and optional smoke coverage. The recommended production topology is main stack in Docker plus crawler nodes installed as host services.
 
 ## Local run
 
@@ -129,16 +91,15 @@ npm run dev:web
 
 ### Machine install and update
 
-For production or long-lived WSL nodes, the recommended entrypoint is:
+For production or long-lived WSL nodes, the only recommended entrypoint is the GitHub-hosted installer:
 
 ```bash
-sudo ./scripts/install-crawler.sh \
-  --server https://search.example.com/api \
-  --join-key "<join-key>"
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release
 ```
 
 What it does:
 
+- downloads the installer script from GitHub instead of assuming a local repo checkout
 - downloads the crawler binary from GitHub instead of building in the repo
 - installs only the crawler binary under `/opt/findverse-crawler`
 - writes only one crawler config file under `/etc/findverse-crawler/crawler.env`
@@ -146,76 +107,110 @@ What it does:
 - reuses existing crawler credentials on updates unless you pass `--rejoin`
 - cleans up its temporary download directory automatically
 
-Update the machine in place by re-running the same command. If the env file already exists, `--server` and `--join-key` are only needed when you want to change the target server or rotate credentials with `--rejoin`.
+Legacy `crawler-setup.sh` and `crawler-setup.ps1` flows have been removed from this repository. Do not build the crawler in-place for production nodes, and do not depend on a repo checkout on the target machine. Use the GitHub installer for both first install and updates.
 
-Release channel examples:
+Public release installs do not need a GitHub token. Only `--channel dev` needs `GITHUB_TOKEN`, because GitHub Actions artifact downloads go through the authenticated API even when the repository itself is public.
 
-```bash
-sudo ./scripts/install-crawler.sh \
-  --server https://search.example.com/api \
-  --channel release
-```
+The GitHub installer:
 
-```bash
-sudo ./scripts/install-crawler.sh \
-  --server https://search.example.com/api \
-  --channel release \
-  --version v0.0.2
-```
-
-Dev channel example:
-
-```bash
-sudo GITHUB_TOKEN=github_pat_xxx ./scripts/install-crawler.sh \
-  --server https://search.example.com/api \
-  --channel dev
-```
-
-`--channel dev` downloads the latest successful CI artifact from `.github/workflows/ci.yml`, so it requires GitHub API authentication.
-
-### Scripted local worker
-
-Windows:
-
-```powershell
-.\scripts\crawler-setup.ps1 -Server http://127.0.0.1:3000/api -JoinKey change-me -Start
-```
-
-Linux or WSL:
-
-```bash
-./scripts/crawler-setup.sh --server http://127.0.0.1:3000/api --join-key change-me --start
-```
-
-Install the crawler as a WSL `systemd` service:
-
-```bash
-sudo ./scripts/crawler-setup.sh --server http://127.0.0.1:3000/api --join-key change-me --env-file .env.crawler.fvlocal --install-service --service-name findverse-crawler-fvlocal
-```
-
-Recommended production crawler node with the lower-level setup script:
-
-```bash
-sudo ./scripts/crawler-setup.sh \
-  --server https://search.example.com/api \
-  --join-key "$FINDVERSE_CRAWLER_JOIN_KEY" \
-  --env-file /etc/findverse/crawler.env \
-  --install-service \
-  --service-name findverse-crawler
-```
-
-That path keeps crawler scaling separate from the main search stack, and it avoids rebuilding or redeploying the public web stack whenever you need more crawl capacity.
-
-The crawler setup scripts:
-
-- auto-register via `/internal/crawlers/join`
-- write `.env.crawler`
-- start `findverse-crawler` or `cargo run`
-- optionally install and enable a `systemd` service in WSL
-- enable JS rendering by default in current crawler builds
-- support `concurrency`, `max-jobs`, `poll-interval-secs`, `allowed-domains`, `proxy`, and optional OpenAI-compatible LLM filter settings
+- registers the crawler via `/internal/crawlers/join` when needed
+- downloads a GitHub release binary or the latest successful CI dev artifact
+- keeps crawler scaling separate from the main search stack
+- updates the existing `systemd` service in place without leaving extra runtime files behind
+- enables JS rendering by default in current crawler builds
+- supports `concurrency`, `max-jobs`, `poll-interval-secs`, `allowed-domains`, and `proxy`
 
 For production crawler nodes, install a local Chromium or Chrome package first so the default JS rendering path can execute when the page heuristics detect a client-rendered shell. If no browser is installed, the worker now logs a warning and falls back to static HTML fetch instead of failing the crawl job.
+
+## Online deployment
+
+Recommended production topology:
+
+- one Linux host for the main Docker stack
+- one or more Linux hosts for crawler workers
+- only `web` exposed publicly
+- `postgres`, `valkey`, `opensearch`, `control-api`, and `query-api` kept on private bind addresses
+
+Main stack deployment:
+
+1. Copy the env template and fill in production values.
+
+```bash
+cp .env.example .env
+```
+
+You must set at least:
+
+- `FINDVERSE_FRONTEND_ORIGIN`
+- `FINDVERSE_LOCAL_ADMIN_PASSWORD`
+- `FINDVERSE_POSTGRES_PASSWORD`
+- `FINDVERSE_CRAWLER_JOIN_KEY`
+
+2. Build and start the production stack from the current repo checkout.
+
+```bash
+docker compose up -d --build
+```
+
+3. Log in once with the bootstrap admin, then turn bootstrap admin back off and deploy again.
+
+```bash
+FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false
+docker compose up -d --build
+```
+
+4. Install crawler nodes from GitHub.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "$FINDVERSE_CRAWLER_JOIN_KEY" --channel release
+```
+
+The installer writes the crawler binary to `/opt/findverse-crawler`, the config to `/etc/findverse-crawler/crawler.env`, and a `systemd` unit named `findverse-crawler.service`.
+
+## Upgrade And Maintenance
+
+Main stack updates:
+
+- pull the latest repo changes onto the server
+- run `docker compose up -d --build`
+
+Example:
+
+```bash
+git pull --ff-only
+docker compose up -d --build
+```
+
+Crawler node updates:
+
+- stable upgrade: rerun the installer with `--channel release`
+- pin a specific release: rerun it with `--channel release --version <tag>`
+- follow the latest successful CI build: rerun it with `--channel dev`
+
+Examples:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --channel release
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --channel release --version <tag>
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=github_pat_xxx bash -s -- --server https://search.example.com/api --channel dev
+```
+
+`--channel dev` downloads the latest successful crawler dev artifact from `.github/workflows/crawler-dev-artifact.yml`, so it requires GitHub API authentication even for a public repo. `--channel release` does not need a token.
+
+Useful maintenance commands on crawler hosts:
+
+```bash
+systemctl status findverse-crawler.service
+journalctl -u findverse-crawler.service -f
+systemctl restart findverse-crawler.service
+cat /etc/findverse-crawler/crawler.env
+```
 
 ### Docker worker
 

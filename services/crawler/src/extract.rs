@@ -1,7 +1,10 @@
 use std::collections::BTreeSet;
 
 use findverse_common::normalize_url;
-use scraper::{Html, Selector};
+use scraper::{
+    ElementRef, Html, Selector,
+    node::{Element, Node},
+};
 use url::Url;
 
 use crate::models::{ParsedHtml, RobotsDirectives};
@@ -22,42 +25,38 @@ pub fn parse_html_document(url: &str, html: &str) -> ParsedHtml {
         .as_ref()
         .and_then(|s| document.select(s).next())
         .and_then(|n| n.value().attr("content"))
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
+        .and_then(sanitize_extracted_text)
         .or_else(|| {
             title_selector
                 .as_ref()
                 .and_then(|selector| document.select(selector).next())
                 .map(|node| node.text().collect::<String>())
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
+                .and_then(|value| sanitize_extracted_text(&value))
         });
 
     let meta_snippet = og_desc_selector
         .as_ref()
         .and_then(|s| document.select(s).next())
         .and_then(|n| n.value().attr("content"))
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToString::to_string)
+        .and_then(sanitize_extracted_text)
         .or_else(|| {
             meta_selector
                 .as_ref()
                 .and_then(|selector| document.select(selector).next())
                 .and_then(|node| node.value().attr("content"))
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
+                .and_then(sanitize_extracted_text)
         });
 
     let body = extract_clean_body_text(&document);
 
-    let snippet = meta_snippet.or_else(|| {
-        body.as_ref().map(|b| {
-            let chars: String = b.chars().take(200).collect();
-            chars
-        })
-    });
+    let snippet = meta_snippet
+        .filter(|value| !looks_like_low_signal_snippet(value))
+        .or_else(|| {
+            body.as_ref().map(|b| {
+                let chars: String = b.chars().take(200).collect();
+                chars
+            })
+        });
 
     let canonical_url = canonical_selector
         .as_ref()
@@ -108,60 +107,10 @@ pub fn parse_x_robots_tag_values<'a>(
 
 /// Extract body text after stripping script, style, nav, and footer elements.
 pub fn extract_clean_body_text(document: &Html) -> Option<String> {
-    let body_selector = Selector::parse("body").ok()?;
-    let body_element = document.select(&body_selector).next()?;
-
-    let script_sel = Selector::parse("script").ok();
-    let style_sel = Selector::parse("style").ok();
-    let nav_sel = Selector::parse("nav").ok();
-    let footer_sel = Selector::parse("footer").ok();
-
-    // Collect IDs of nodes to exclude
-    let mut excluded_ids = BTreeSet::new();
-    for sel in [&script_sel, &style_sel, &nav_sel, &footer_sel]
-        .into_iter()
-        .flatten()
-    {
-        for el in document.select(sel) {
-            excluded_ids.insert(el.id());
-        }
-    }
-
-    // Walk text nodes under body, skipping those inside excluded elements
-    let mut text_parts = Vec::new();
-    for text_node in body_element.text() {
-        text_parts.push(text_node);
-    }
-
-    // For a more accurate exclusion, re-extract text skipping excluded subtrees
-    // We use the scraper tree traversal approach
-    let body_html = body_element.html();
-    let mut cleaned = body_html.clone();
-
-    // Remove excluded elements from the HTML string, then re-parse
-    for sel in [&script_sel, &style_sel, &nav_sel, &footer_sel]
-        .into_iter()
-        .flatten()
-    {
-        for el in document.select(sel) {
-            let outer = el.html();
-            cleaned = cleaned.replacen(&outer, "", 1);
-        }
-    }
-
-    let cleaned_doc = Html::parse_fragment(&cleaned);
-    let text: String = cleaned_doc
-        .root_element()
-        .text()
-        .collect::<Vec<_>>()
-        .join(" ");
-    let normalized: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
+    let root = select_content_root(document)?;
+    let mut parts = Vec::new();
+    collect_visible_text(root, &mut parts);
+    sanitize_extracted_text(&parts.join(" "))
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +223,229 @@ fn applies_to_findverse(agent: Option<&str>) -> bool {
         agent,
         None | Some("*") | Some("findverse") | Some("findversebot")
     )
+}
+
+fn select_content_root<'a>(document: &'a Html) -> Option<ElementRef<'a>> {
+    for selector in [
+        "#mw-content-text",
+        "article",
+        "main",
+        "[role='main']",
+        ".mw-parser-output",
+        ".article-content",
+        ".entry-content",
+        ".post-content",
+        ".article-body",
+        "#content",
+        "#main-content",
+        ".mw-body-content",
+        "body",
+    ] {
+        let Ok(parsed) = Selector::parse(selector) else {
+            continue;
+        };
+        if let Some(element) = document.select(&parsed).next() {
+            return Some(element);
+        }
+    }
+    None
+}
+
+fn collect_visible_text(root: ElementRef<'_>, parts: &mut Vec<String>) {
+    for child in root.children() {
+        collect_visible_text_node(child.value(), child.children(), parts);
+    }
+}
+
+fn collect_visible_text_node<'a>(
+    node: &Node,
+    children: impl Iterator<Item = ego_tree::NodeRef<'a, Node>>,
+    parts: &mut Vec<String>,
+) {
+    match node {
+        Node::Text(text) => {
+            let normalized = normalize_whitespace(text);
+            if !normalized.is_empty() && !looks_like_noise_fragment(&normalized) {
+                parts.push(normalized);
+            }
+        }
+        Node::Element(element) => {
+            if should_skip_element(element) {
+                return;
+            }
+            for child in children {
+                collect_visible_text_node(child.value(), child.children(), parts);
+            }
+            if is_block_element(element.name()) {
+                parts.push("\n".to_string());
+            }
+        }
+        _ => {
+            for child in children {
+                collect_visible_text_node(child.value(), child.children(), parts);
+            }
+        }
+    }
+}
+
+fn should_skip_element(element: &Element) -> bool {
+    let tag = element.name();
+    if matches!(
+        tag,
+        "script"
+            | "style"
+            | "noscript"
+            | "nav"
+            | "footer"
+            | "header"
+            | "aside"
+            | "form"
+            | "button"
+            | "svg"
+            | "canvas"
+            | "iframe"
+    ) {
+        return true;
+    }
+
+    if element.attr("hidden").is_some()
+        || element
+            .attr("aria-hidden")
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+    {
+        return true;
+    }
+
+    if element.attr("style").is_some_and(looks_like_hidden_style) {
+        return true;
+    }
+
+    if element
+        .attr("id")
+        .is_some_and(|value| has_noisy_token(value, &["toc", "catlinks", "footer", "sitenotice"]))
+    {
+        return true;
+    }
+
+    element.attr("class").is_some_and(|value| {
+        has_noisy_token(
+            value,
+            &[
+                "navbox",
+                "navbar",
+                "noprint",
+                "nomobile",
+                "infobox",
+                "infobox-incompleted",
+                "mw-editsection",
+                "mw-empty-elt",
+                "metadata",
+                "catlinks",
+                "toc",
+                "colorededit",
+                "plainlinks",
+                "sistersitebox",
+                "vertical-navbox",
+                "navbox-title",
+                "navbox-group",
+                "navbox-list",
+                "portalbox",
+            ],
+        )
+    })
+}
+
+fn looks_like_hidden_style(style: &str) -> bool {
+    let lower = style.to_ascii_lowercase().replace(' ', "");
+    lower.contains("display:none") || lower.contains("visibility:hidden")
+}
+
+fn has_noisy_token(value: &str, tokens: &[&str]) -> bool {
+    value
+        .split(|ch: char| ch.is_ascii_whitespace() || ch == '-' || ch == '_' || ch == ':')
+        .filter(|segment| !segment.is_empty())
+        .any(|segment| {
+            let lower = segment.to_ascii_lowercase();
+            tokens.iter().any(|token| lower == *token)
+        })
+}
+
+fn is_block_element(tag: &str) -> bool {
+    matches!(
+        tag,
+        "article"
+            | "aside"
+            | "blockquote"
+            | "br"
+            | "dd"
+            | "div"
+            | "dl"
+            | "dt"
+            | "figcaption"
+            | "figure"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "hr"
+            | "li"
+            | "main"
+            | "p"
+            | "section"
+            | "table"
+            | "tbody"
+            | "td"
+            | "th"
+            | "thead"
+            | "tr"
+            | "ul"
+            | "ol"
+    )
+}
+
+fn sanitize_extracted_text(value: &str) -> Option<String> {
+    let mut current = normalize_whitespace(value);
+    if current.is_empty() {
+        return None;
+    }
+
+    for _ in 0..2 {
+        let parsed = Html::parse_fragment(&current);
+        let collapsed =
+            normalize_whitespace(&parsed.root_element().text().collect::<Vec<_>>().join(" "));
+        if collapsed.is_empty() {
+            return None;
+        }
+        if collapsed == current {
+            break;
+        }
+        current = collapsed;
+    }
+
+    Some(current)
+}
+
+fn normalize_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn looks_like_low_signal_snippet(value: &str) -> bool {
+    value.contains("欢迎您参与完善")
+        || value.contains("编辑前请阅读")
+        || value.contains("协助编辑本条目")
+        || value.contains(".mw-parser-output")
+        || value.contains("Wikiplus")
+        || looks_like_noise_fragment(value)
+}
+
+fn looks_like_noise_fragment(value: &str) -> bool {
+    value.contains("RLSTATE=")
+        || value.contains("RLPAGEMODULES=")
+        || value.contains(".mw-parser-output")
+        || value.contains("Wikiplus-Edit-EveryWhereBtn")
+        || (value.contains('{') && value.contains('}') && value.contains(':'))
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +620,80 @@ mod tests {
         assert!(!body.contains("color: red"));
         assert!(!body.contains("Footer text"));
         assert!(body.contains("Main content here"));
+    }
+
+    #[test]
+    fn html_parser_sanitizes_encoded_html_title() {
+        let html = r#"
+        <html>
+          <head>
+            <title>主角座位 - 萌娘百科 万物皆可萌的百科全书</title>
+            <meta property="og:title" content="&lt;span class=&quot;mw-page-title-main&quot;&gt;主角座位&lt;/span&gt;" />
+          </head>
+          <body>
+            <template id="MOE_SKIN_TEMPLATE_BODYCONTENT">
+              <div id="mw-content-text" class="mw-body-content">
+                <div class="mw-parser-output">
+                  <p>主角座位，指主角在构图中位于中心的位置。</p>
+                </div>
+              </div>
+            </template>
+          </body>
+        </html>
+        "#;
+
+        let parsed = parse_html_document(
+            "https://zh.moegirl.org.cn/%E4%B8%BB%E8%A7%92%E5%BA%A7%E4%BD%8D",
+            html,
+        );
+        assert_eq!(parsed.title.as_deref(), Some("主角座位"));
+    }
+
+    #[test]
+    fn html_parser_prefers_template_content_and_drops_wiki_noise() {
+        let html = r#"
+        <html>
+          <head>
+            <title>filian - 萌娘百科 万物皆可萌的百科全书</title>
+            <meta name="description" content="萌娘百科欢迎您参与完善虚拟UP主相关条目☆Kira~ 协助.mw-parser-output .colorededit .Wikiplus-Edit-EveryWhereBtn,...." />
+            <meta property="og:title" content="filian" />
+            <meta property="og:description" content="萌娘百科欢迎您参与完善虚拟UP主相关条目☆Kira~ 协助.mw-parser-output .colorededit .Wikiplus-Edit-EveryWhereBtn,...." />
+          </head>
+          <body>
+            <noscript>This site requires JavaScript enabled.</noscript>
+            <template id="MOE_SKIN_TEMPLATE_BODYCONTENT">
+              <div id="mw-content-text" class="mw-body-content">
+                <div class="mw-parser-output">
+                  <p class="mw-empty-elt">
+                    协助
+                    <style>.mw-parser-output .colorededit .Wikiplus-Edit-EveryWhereBtn { color: inherit; }</style>
+                    <span class="plainlinks colorededit">编辑本条目</span>
+                    前，请先阅读萌百编辑简明指南。
+                  </p>
+                  <p>Filian是活跃于Twitch和YouTube的英语虚拟UP主，以夸张肢体表演和高能直播片段闻名。</p>
+                  <div style="display:none!important;">隐藏奖项</div>
+                  <table class="navbox"><tr><td>导航模板</td></tr></table>
+                </div>
+              </div>
+            </template>
+            <script type="application/json">
+              {"title":"filian","footer":"moeskin-footer-top","raw":"RLSTATE=bad"}
+            </script>
+          </body>
+        </html>
+        "#;
+
+        let parsed = parse_html_document("https://zh.moegirl.org.cn/%E8%8F%B2%E8%8E%B2", html);
+        let body = parsed.body.unwrap();
+        let snippet = parsed.snippet.unwrap();
+
+        assert_eq!(parsed.title.as_deref(), Some("filian"));
+        assert!(body.contains("Filian是活跃于Twitch和YouTube的英语虚拟UP主"));
+        assert!(!body.contains("编辑本条目"));
+        assert!(!body.contains("导航模板"));
+        assert!(!body.contains("隐藏奖项"));
+        assert!(!snippet.contains("欢迎您参与完善"));
+        assert!(snippet.contains("Filian是活跃于Twitch和YouTube的英语虚拟UP主"));
     }
 
     #[test]

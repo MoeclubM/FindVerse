@@ -21,12 +21,11 @@ SKIP_BROWSER_INSTALL=false
 
 TMP_DIR=""
 SOURCE_LABEL=""
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/install-crawler.sh --server <url> [options]
+  install-crawler.sh --server <url> [options]
 
 Install or update the FindVerse crawler binary and systemd service on this machine.
 The script downloads either the latest GitHub release artifact or the latest CI dev artifact,
@@ -36,7 +35,7 @@ Options:
   --server <url>                Control API base URL. Required on first install
   --join-key <key>              Join key for first install or forced re-registration
   --channel <release|dev>       Download source. Default: release
-  --version <tag>               Specific release tag, for example v0.0.2
+  --version <tag>               Specific release tag, for example v1.2.3
   --repo <owner/name>           GitHub repo. Default: MoeclubM/FindVerse
   --name <crawler-name>         Registration name. Default: worker-<hostname>
   --service-name <name>         systemd service name. Default: findverse-crawler
@@ -47,16 +46,17 @@ Options:
   --poll-interval-secs <n>      Poll interval. Reuses existing config if omitted
   --allowed-domains <csv>       Optional domain allowlist
   --proxy <url>                 Optional outbound proxy
-  --github-token <token>        GitHub token. Required for --channel dev
+  --github-token <token>        GitHub token. Only needed for --channel dev
   --rejoin                      Force re-registration and refresh crawler credentials
   --skip-browser-install        Do not auto-install Chromium when missing
   --help                        Show this help
 
 Notes:
+  - This script is standalone and can be downloaded or piped directly from GitHub onto the target machine.
   - Re-running the script updates the binary in place and restarts the service.
   - Once the env file exists, updates can reuse the saved server and credentials.
-  - Release mode downloads the public GitHub release asset.
-  - Dev mode downloads the latest successful CI artifact and requires GitHub API auth.
+  - Release mode downloads the public GitHub release asset without auth.
+  - Dev mode downloads the latest successful crawler dev build artifact and requires GitHub API auth even for public repos.
 EOF
 }
 
@@ -216,7 +216,7 @@ download_dev_archive() {
   local artifact_dir="$TMP_DIR/dev-artifact"
   local archive_path
 
-  runs_json="$(github_api_json "https://api.github.com/repos/${REPO}/actions/workflows/ci.yml/runs?status=success&per_page=20" true)"
+  runs_json="$(github_api_json "https://api.github.com/repos/${REPO}/actions/workflows/crawler-dev-artifact.yml/runs?status=success&per_page=20" true)"
   run_id="$(printf '%s' "$runs_json" | jq -r '.workflow_runs[] | select(.head_branch == "main" or .head_branch == "master") | .id' | head -n 1)"
   [[ -n "$run_id" ]] || fail "no successful CI runs found on main/master for ${REPO}"
 
@@ -273,19 +273,16 @@ load_existing_config() {
 }
 
 register_crawler() {
-  local registration_env="$TMP_DIR/crawler-register.env"
+  local join_url request_body response
 
   [[ -n "$JOIN_KEY" ]] || fail "--join-key is required for first install or --rejoin"
-  "$SCRIPT_DIR/crawler-setup.sh" \
-    --server "$SERVER_URL" \
-    --join-key "$JOIN_KEY" \
-    --name "$CRAWLER_NAME" \
-    --env-file "$registration_env" >/dev/null
+  join_url="${SERVER_URL%/}/internal/crawlers/join"
+  request_body="$(jq -nc --arg join_key "$JOIN_KEY" --arg name "$CRAWLER_NAME" '{join_key: $join_key, name: $name}')"
+  response="$(curl -fsSL -X POST "$join_url" -H "Content-Type: application/json" -d "$request_body")" \
+    || fail "crawler registration failed for ${join_url}"
 
-  # shellcheck disable=SC1090
-  source "$registration_env"
-  REGISTERED_CRAWLER_ID="${CRAWLER_ID:-}"
-  REGISTERED_CRAWLER_KEY="${CRAWLER_KEY:-}"
+  REGISTERED_CRAWLER_ID="$(printf '%s' "$response" | jq -r '.crawler_id')"
+  REGISTERED_CRAWLER_KEY="$(printf '%s' "$response" | jq -r '.crawler_key')"
   [[ -n "$REGISTERED_CRAWLER_ID" && "$REGISTERED_CRAWLER_ID" != "null" ]] || fail "crawler registration returned no crawler_id"
   [[ -n "$REGISTERED_CRAWLER_KEY" && "$REGISTERED_CRAWLER_KEY" != "null" ]] || fail "crawler registration returned no crawler_key"
 }

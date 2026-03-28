@@ -67,16 +67,14 @@ export function JoinKeyManager(props: { token: string; setFlash: (value: string 
         <pre style={{ fontSize: "0.85em", marginTop: 4 }}>
 {`Share this key with crawler operators so they can register a worker. The join key is only used during enrollment; after joining, each worker continues with its own crawler credentials.
 
-Use any supported worker startup flow that passes the join key, for example:
+Install or update a worker directly from GitHub:
 
-# Unix setup script
-./scripts/crawler-setup.sh --server <API_URL> --join-key <KEY> --start
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server <API_URL> --join-key <KEY> --channel release
+# public release installs do not need a token
+# only use GITHUB_TOKEN when following the latest CI build with --channel dev
+# curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server <API_URL> --join-key <KEY> --channel dev
 
-# Windows setup script
-.\\scripts\\crawler-setup.ps1 -Server <API_URL> -JoinKey <KEY> -Start
-
-# Direct worker launch
-cargo run -p findverse-crawler -- worker --server <API_URL> --join-key <KEY>`}
+Re-run the same command later to update the node in place.`}
         </pre>
       </details>
     </div>

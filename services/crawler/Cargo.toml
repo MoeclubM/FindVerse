@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+ego-tree.workspace = true
 findverse-common = { path = "../../crates/findverse-common" }
 flate2 = "1"
 futures = "0.3.32"

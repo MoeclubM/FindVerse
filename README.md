@@ -1,17 +1,19 @@
 # FindVerse
 
-FindVerse is a development-stage general search system built for simple deployment and long-term extensibility. It separates the public query path, the control plane, and crawler workers so crawling, indexing, search, and management can evolve independently without turning the project into an over-complicated platform too early.
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## Overview
+FindVerse is a self-hosted search stack with a split control plane, query API, web UI, and independent crawler workers. It is designed to stay easy to deploy on a single machine while keeping the crawler and indexing pipeline extensible.
+
+## Highlights
 
 - Public search, suggest, and developer search APIs
-- Admin console for developers, crawl rules, crawl jobs, workers, and indexed documents
-- Independent crawler workers that can be deployed as host services or local scripts
-- Recursive crawl controls with per-rule discovery scope and per-page expansion limits
-- Optional OpenAI-compatible LLM page filtering before indexing
-- OpenSearch for search, PostgreSQL for control-plane metadata, and Valkey for short-lived coordination state
+- Admin console for crawler workers, crawl rules, jobs, and indexed documents
+- Independent crawler workers that can be scaled and upgraded separately
+- Recursive crawl controls with domain and expansion limits
+- Optional OpenAI-compatible LLM filtering before indexing
+- Simple Docker Compose deployment for the main stack
 
-## Runtime modules
+## Repository Layout
 
 - `apps/web`: React SPA for `/`, `/dev`, and `/console`
 - `services/control-api`: admin, developer, crawler control, frontier, jobs, rules, and documents
@@ -19,15 +21,53 @@ FindVerse is a development-stage general search system built for simple deployme
 - `services/crawler`: crawler worker and local crawl tooling
 - `services/api`: shared backend library used by the split APIs
 
-## Design goals
+## Quick Start
 
-- Keep the default deployment simple enough for a single-machine development stack
-- Preserve explicit boundaries between crawling, indexing, querying, and management
-- Make crawler, indexing, and query pipelines easy to extend without rewriting the whole system
+1. Copy the shared environment template.
+
+```bash
+cp .env.example .env
+```
+
+2. Update at least these values in `.env`.
+
+- `FINDVERSE_FRONTEND_ORIGIN`
+- `FINDVERSE_LOCAL_ADMIN_PASSWORD`
+- `FINDVERSE_POSTGRES_PASSWORD`
+- `FINDVERSE_CRAWLER_JOIN_KEY`
+
+3. Build and start the main stack.
+
+```bash
+docker compose up -d --build
+```
+
+Main service data is persisted under `./data` and will be created automatically by Docker when the stack starts.
+
+## Crawler Worker
+
+Install or update a crawler worker directly from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release
+```
+
+To follow the latest successful development artifact instead of the latest release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --channel dev
+```
+
+`--channel release` does not need a token. `--channel dev` does, because GitHub Actions artifact downloads require authenticated API access.
+
+## Development Notes
+
+- Main stack deployment is `docker compose up -d --build`
+- Crawler nodes are intended to run as host services, not inside the main production compose stack
+- Current CI only runs regular validation from `.github/workflows/_validate.yml`
+- A separate workflow builds the crawler development artifact used by `install-crawler.sh --channel dev`
 
 ## Documentation
 
-- Deployment, crawler setup, smoke tests, and release flow: [docs/deployment.md](docs/deployment.md)
-- Architecture and service boundaries: [docs/architecture.md](docs/architecture.md)
-
-The deployment scripts are kept as the main entrypoint for local and containerized environments, and they now support explicit env files plus compose overrides so the default path stays simple while long-lived development and production can share the same deployment shape.
+- Deployment and operations: [docs/deployment.md](docs/deployment.md)
+- Architecture overview: [docs/architecture.md](docs/architecture.md)
