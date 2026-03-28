@@ -1,7 +1,7 @@
 FROM quay.io/fedora/fedora:43 AS builder
 WORKDIR /app
 
-RUN dnf install -y cargo rustc gcc gcc-c++ make pkgconf-pkg-config perl \
+RUN dnf install -y cargo rustc rustfmt gcc gcc-c++ make pkgconf-pkg-config perl \
     && dnf clean all
 
 COPY Cargo.toml Cargo.lock ./
