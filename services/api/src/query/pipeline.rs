@@ -44,10 +44,16 @@ impl PreparedSearch {
         if let Some(site_filter) = build_site_filter(params.site.as_deref()) {
             filters.push(site_filter);
         }
+        if let Some(ref net) = params.network {
+            if matches!(net.as_str(), "clearnet" | "tor") {
+                filters.push(serde_json::json!({ "term": { "network": net } }));
+            }
+        }
 
         let cache_key = if params.offset == 0
             && params.lang.is_none()
             && params.site.is_none()
+            && params.network.is_none()
             && matches!(params.freshness, Freshness::All)
         {
             Some(format!("search:{}:{}", query, limit))
@@ -314,6 +320,7 @@ mod tests {
             offset: 0,
             lang: None,
             site: None,
+            network: None,
             freshness: Freshness::All,
         });
 

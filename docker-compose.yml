@@ -3,31 +3,51 @@ services:
     image: postgres:17
     restart: unless-stopped
     environment:
-      POSTGRES_DB: findverse
-      POSTGRES_USER: findverse
-      POSTGRES_PASSWORD: findverse
+      POSTGRES_DB: ${FINDVERSE_POSTGRES_DB:-findverse}
+      POSTGRES_USER: ${FINDVERSE_POSTGRES_USER:-findverse}
+      POSTGRES_PASSWORD: ${FINDVERSE_POSTGRES_PASSWORD:-findverse}
     ports:
-      - "${FINDVERSE_POSTGRES_PORT:-5432}:5432"
+      - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    mem_limit: ${FINDVERSE_POSTGRES_MEM_LIMIT:-1g}
 
   valkey:
     image: valkey/valkey:8.1
     restart: unless-stopped
+    command:
+      - valkey-server
+      - --appendonly
+      - "yes"
     ports:
-      - "${FINDVERSE_REDIS_PORT:-6379}:6379"
+      - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_REDIS_PORT:-6379}:6379"
+    volumes:
+      - valkey_data:/data
+    mem_limit: ${FINDVERSE_VALKEY_MEM_LIMIT:-256m}
 
   opensearch:
     image: opensearchproject/opensearch:2
     restart: unless-stopped
     environment:
       discovery.type: single-node
+      bootstrap.memory_lock: "true"
       DISABLE_SECURITY_PLUGIN: "true"
-      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      OPENSEARCH_JAVA_OPTS: "${FINDVERSE_OPENSEARCH_JAVA_OPTS:--Xms512m -Xmx512m}"
     ports:
-      - "${FINDVERSE_OPENSEARCH_PORT:-9200}:9200"
+      - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_OPENSEARCH_PORT:-9200}:9200"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: ${FINDVERSE_OPENSEARCH_MEM_LIMIT:-2g}
 
   control-api:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-control-api:${FINDVERSE_IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: services/control-api/Dockerfile
@@ -37,18 +57,31 @@ services:
       - valkey
       - opensearch
     environment:
-      FINDVERSE_CONTROL_API_BIND: 0.0.0.0:8080
-      FINDVERSE_POSTGRES_URL: postgres://findverse:findverse@postgres:5432/findverse
-      FINDVERSE_REDIS_URL: redis://valkey:6379/0
-      FINDVERSE_OPENSEARCH_URL: http://opensearch:9200
-      FINDVERSE_FRONTEND_ORIGIN: http://localhost:${FINDVERSE_WEB_PORT:-3000}
+      FINDVERSE_CONTROL_API_BIND: ${FINDVERSE_CONTROL_API_BIND:-0.0.0.0:8080}
+      FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
+      FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
+      FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS: ${FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS:-5}
+      FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
+      FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
+      FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
+      FINDVERSE_FRONTEND_ORIGIN: ${FINDVERSE_FRONTEND_ORIGIN:-http://localhost:${FINDVERSE_WEB_PORT:-3000}}
       FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
       FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
-      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-}
+      FINDVERSE_BOOTSTRAP_ADMIN_ENABLED: ${FINDVERSE_BOOTSTRAP_ADMIN_ENABLED:-true}
+      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-change-me}
+      FINDVERSE_INDEX_PATH: ${FINDVERSE_INDEX_PATH:-services/api/fixtures/bootstrap_documents.json}
+      FINDVERSE_DEVELOPER_STORE: ${FINDVERSE_DEVELOPER_STORE:-services/api/fixtures/developer_store.json}
+      FINDVERSE_DEV_AUTH_STORE: ${FINDVERSE_DEV_AUTH_STORE:-services/api/fixtures/dev_auth_store.json}
+      FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS: ${FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS:-15}
+      FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS: ${FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS:-300}
     ports:
-      - "${FINDVERSE_CONTROL_API_PORT:-8080}:8080"
+      - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_CONTROL_API_PORT:-8080}:8080"
+    volumes:
+      - ./config/production:/opt/findverse/production:ro
+    mem_limit: ${FINDVERSE_CONTROL_API_MEM_LIMIT:-512m}
 
   query-api:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-query-api:${FINDVERSE_IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: services/query-api/Dockerfile
@@ -58,31 +91,39 @@ services:
       - valkey
       - opensearch
     environment:
-      FINDVERSE_QUERY_API_BIND: 0.0.0.0:8081
-      FINDVERSE_POSTGRES_URL: postgres://findverse:findverse@postgres:5432/findverse
-      FINDVERSE_REDIS_URL: redis://valkey:6379/0
-      FINDVERSE_OPENSEARCH_URL: http://opensearch:9200
-      FINDVERSE_FRONTEND_ORIGIN: http://localhost:${FINDVERSE_WEB_PORT:-3000}
+      FINDVERSE_QUERY_API_BIND: ${FINDVERSE_QUERY_API_BIND:-0.0.0.0:8081}
+      FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
+      FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
+      FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS: ${FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS:-5}
+      FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
+      FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
+      FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
+      FINDVERSE_FRONTEND_ORIGIN: ${FINDVERSE_FRONTEND_ORIGIN:-http://localhost:${FINDVERSE_WEB_PORT:-3000}}
       FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
       FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
     ports:
-      - "${FINDVERSE_QUERY_API_PORT:-8081}:8081"
+      - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_QUERY_API_PORT:-8081}:8081"
+    mem_limit: ${FINDVERSE_QUERY_API_MEM_LIMIT:-512m}
 
   web:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-web:${FINDVERSE_IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: apps/web/Dockerfile
       args:
         FINDVERSE_CONTROL_API_PROXY: http://control-api:8080
         FINDVERSE_QUERY_API_PROXY: http://query-api:8081
+        FINDVERSE_SITE_NAME: ${FINDVERSE_SITE_NAME:-FindVerse}
     restart: unless-stopped
     depends_on:
       - control-api
       - query-api
     ports:
-      - "${FINDVERSE_WEB_PORT:-3000}:3000"
+      - "${FINDVERSE_WEB_BIND_HOST:-0.0.0.0}:${FINDVERSE_WEB_PORT:-3000}:3000"
+    mem_limit: ${FINDVERSE_WEB_MEM_LIMIT:-256m}
 
   crawler-worker:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-crawler:${FINDVERSE_IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: services/crawler/Dockerfile
@@ -93,12 +134,17 @@ services:
       - control-api
     environment:
       FINDVERSE_CRAWLER_SERVER: ${FINDVERSE_CRAWLER_SERVER:-http://control-api:8080}
-      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-}
+      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-change-me}
       FINDVERSE_CRAWLER_MAX_JOBS: ${FINDVERSE_CRAWLER_MAX_JOBS:-10}
       FINDVERSE_CRAWLER_POLL_INTERVAL_SECS: ${FINDVERSE_CRAWLER_POLL_INTERVAL_SECS:-5}
       FINDVERSE_CRAWLER_CONCURRENCY: ${FINDVERSE_CRAWLER_CONCURRENCY:-4}
       FINDVERSE_CRAWLER_ALLOWED_DOMAINS: ${FINDVERSE_CRAWLER_ALLOWED_DOMAINS:-}
       FINDVERSE_CRAWLER_PROXY: ${FINDVERSE_CRAWLER_PROXY:-}
+      FINDVERSE_CRAWLER_LLM_BASE_URL: ${FINDVERSE_CRAWLER_LLM_BASE_URL:-}
+      FINDVERSE_CRAWLER_LLM_API_KEY: ${FINDVERSE_CRAWLER_LLM_API_KEY:-}
+      FINDVERSE_CRAWLER_LLM_MODEL: ${FINDVERSE_CRAWLER_LLM_MODEL:-}
+      FINDVERSE_CRAWLER_LLM_MIN_SCORE: ${FINDVERSE_CRAWLER_LLM_MIN_SCORE:-0.45}
+      FINDVERSE_CRAWLER_LLM_MAX_BODY_CHARS: ${FINDVERSE_CRAWLER_LLM_MAX_BODY_CHARS:-6000}
     entrypoint:
       - /bin/sh
       - -lc
@@ -115,7 +161,15 @@ services:
           if [ -n "$$FINDVERSE_CRAWLER_PROXY" ]; then
           set -- "$$@" --proxy "$$FINDVERSE_CRAWLER_PROXY";
           fi;
+          if [ -n "$$FINDVERSE_CRAWLER_LLM_BASE_URL" ] && [ -n "$$FINDVERSE_CRAWLER_LLM_MODEL" ]; then
+          set -- "$$@" --llm-base-url "$$FINDVERSE_CRAWLER_LLM_BASE_URL" --llm-model "$$FINDVERSE_CRAWLER_LLM_MODEL" --llm-min-score "$$FINDVERSE_CRAWLER_LLM_MIN_SCORE" --llm-max-body-chars "$$FINDVERSE_CRAWLER_LLM_MAX_BODY_CHARS";
+          fi;
+          if [ -n "$$FINDVERSE_CRAWLER_LLM_API_KEY" ]; then
+          set -- "$$@" --llm-api-key "$$FINDVERSE_CRAWLER_LLM_API_KEY";
+          fi;
           exec findverse-crawler "$$@"
 
 volumes:
   postgres_data:
+  valkey_data:
+  opensearch_data:

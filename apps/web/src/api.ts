@@ -16,6 +16,19 @@ export type SearchResponse = {
   }>;
 };
 
+export type SuggestResponse = {
+  query: string;
+  suggestions: string[];
+};
+
+export type SystemConfigEntry = {
+  key: string;
+  value: string;
+  updated_at: string;
+};
+
+export type DiscoveryScope = "same_host" | "same_domain" | "any";
+
 export type AdminSession = {
   user_id: string;
   username: string;
@@ -43,6 +56,57 @@ export type DeveloperUsage = {
   keys: ApiKey[];
 };
 
+export type DeveloperDomainInsight = {
+  domain: string;
+  property_url: string;
+  indexed_documents: number;
+  duplicate_documents: number;
+  pending_jobs: number;
+  successful_jobs: number;
+  filtered_jobs: number;
+  failed_jobs: number;
+  blocked_jobs: number;
+  last_indexed_at: string | null;
+  last_crawled_at: string | null;
+  top_languages: Array<{
+    label: string;
+    count: number;
+  }>;
+  top_content_types: Array<{
+    label: string;
+    count: number;
+  }>;
+  recent_documents: Array<{
+    id: string;
+    title: string;
+    url: string;
+    display_url: string;
+    language: string;
+    last_crawled_at: string;
+    word_count: number;
+    content_type: string;
+    duplicate_of: string | null;
+  }>;
+  recent_jobs: Array<{
+    id: string;
+    url: string;
+    status: string;
+    http_status: number | null;
+    depth: number;
+    discovered_at: string;
+    finished_at: string | null;
+    failure_kind: string | null;
+    failure_message: string | null;
+    accepted_document_id: string | null;
+  }>;
+};
+
+export type DeveloperDomainSubmitResult = {
+  accepted_urls: number;
+  queued_domain_jobs: number;
+  known_domain_urls: number;
+};
+
 export type AdminDeveloperRecord = {
   user_id: string;
   username: string;
@@ -67,6 +131,9 @@ export type CrawlRule = {
   seed_url: string;
   interval_minutes: number;
   max_depth: number;
+  max_pages: number;
+  discovery_scope: DiscoveryScope;
+  max_discovered_urls_per_page: number;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -164,6 +231,10 @@ export function search(query: string, apiKey?: string | null) {
   return request<SearchResponse>(`/v1/search?q=${encodeURIComponent(query)}`, { token: apiKey });
 }
 
+export function suggestSearch(query: string) {
+  return request<SuggestResponse>(`/v1/suggest?q=${encodeURIComponent(query)}`);
+}
+
 export function developerSearch(query: string, apiKey: string) {
   return request<SearchResponse>(`/v1/developer/search?q=${encodeURIComponent(query)}`, {
     token: apiKey,
@@ -210,6 +281,9 @@ export function seedFrontier(
   token: string,
   urls: string[],
   maxDepth: number,
+  maxPages: number,
+  discoveryScope: DiscoveryScope,
+  maxDiscoveredUrlsPerPage: number,
   allowRevisit: boolean,
 ) {
   return request<{
@@ -223,6 +297,9 @@ export function seedFrontier(
       urls,
       source: "admin-panel",
       max_depth: maxDepth,
+      max_pages: maxPages,
+      discovery_scope: discoveryScope,
+      max_discovered_urls_per_page: maxDiscoveredUrlsPerPage,
       allow_revisit: allowRevisit,
     }),
   });
@@ -235,6 +312,9 @@ export function createRule(
     seed_url: string;
     interval_minutes: number;
     max_depth: number;
+    max_pages: number;
+    discovery_scope: DiscoveryScope;
+    max_discovered_urls_per_page: number;
     enabled: boolean;
   },
 ) {
@@ -253,6 +333,9 @@ export function updateRule(
     seed_url: string;
     interval_minutes: number;
     max_depth: number;
+    max_pages: number;
+    discovery_scope: DiscoveryScope;
+    max_discovered_urls_per_page: number;
     enabled: boolean;
   }>,
 ) {
@@ -342,6 +425,33 @@ export function getDeveloperKeys(token: string) {
   });
 }
 
+export function getDeveloperDomainInsight(token: string, domain: string) {
+  return request<DeveloperDomainInsight>(
+    `/v1/dev/domains/inspect?domain=${encodeURIComponent(domain)}`,
+    {
+      method: "GET",
+      token,
+    },
+  );
+}
+
+export function submitDeveloperDomain(
+  token: string,
+  payload: {
+    domain: string;
+    urls: string[];
+    max_depth: number;
+    max_pages: number;
+    allow_revisit: boolean;
+  },
+) {
+  return request<DeveloperDomainSubmitResult>("/v1/dev/domains/submit", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getAdminDeveloperKeys(token: string, userId: string) {
   return request<DeveloperUsage>(`/v1/admin/developers/${userId}/keys`, {
     method: "GET",
@@ -392,12 +502,20 @@ export function updateDeveloper(
   payload: {
     daily_limit?: number;
     enabled?: boolean;
+    password?: string;
   },
 ) {
   return request<void>(`/v1/admin/developers/${userId}`, {
     method: "PATCH",
     token,
     body: JSON.stringify(payload),
+  });
+}
+
+export function deleteDeveloper(token: string, userId: string) {
+  return request<void>(`/v1/admin/developers/${userId}`, {
+    method: "DELETE",
+    token,
   });
 }
 
@@ -413,6 +531,21 @@ export function setCrawlerJoinKey(token: string, joinKey: string | null) {
     method: "PUT",
     token,
     body: JSON.stringify({ join_key: joinKey }),
+  });
+}
+
+export function getSystemConfig(token: string): Promise<{ entries: SystemConfigEntry[] }> {
+  return request<{ entries: SystemConfigEntry[] }>("/v1/admin/system-config", {
+    method: "GET",
+    token,
+  });
+}
+
+export function setSystemConfig(token: string, key: string, value: string | null): Promise<void> {
+  return request<void>(`/v1/admin/system-config/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ value }),
   });
 }
 
@@ -437,6 +570,9 @@ export type CrawlJobDetail = {
   http_status: number | null;
   discovered_urls_count: number;
   accepted_document_id: string | null;
+  llm_decision: string | null;
+  llm_reason: string | null;
+  llm_relevance_score: number | null;
   failure_kind: string | null;
   failure_message: string | null;
   finished_at: string | null;
@@ -497,9 +633,25 @@ export function cleanupCompletedJobs(token: string) {
   });
 }
 
+export function stopAllCrawlJobs(token: string) {
+  return request<{ disabled_rules: number; removed_jobs: number }>(
+    "/v1/admin/crawl/jobs/stop",
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
 export function searchWithParams(
   query: string,
-  params: { offset?: number; site?: string; lang?: string; freshness?: string } = {},
+  params: {
+    offset?: number;
+    site?: string;
+    lang?: string;
+    freshness?: string;
+    network?: "clearnet" | "tor";
+  } = {},
   apiKey?: string | null,
 ) {
   const search = new URLSearchParams();
@@ -508,6 +660,7 @@ export function searchWithParams(
   if (params.site) search.set("site", params.site);
   if (params.lang) search.set("lang", params.lang);
   if (params.freshness) search.set("freshness", params.freshness);
+  if (params.network) search.set("network", params.network);
 
   const path = apiKey ? "/v1/developer/search" : "/v1/search";
   return request<SearchResponse>(`${path}?${search.toString()}`, { token: apiKey });

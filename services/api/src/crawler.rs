@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sha2::{Digest, Sha256};
+use findverse_common::{DiscoveryScope, host_matches_scope, origin_key};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -10,14 +10,16 @@ use crate::{
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJob, CrawlJobDetail,
         CrawlJobListResponse, CrawlJobStats, CrawlOverviewResponse, CrawlResultInput, CrawlRule,
-        CrawlerMetadata, CreateCrawlRuleRequest, IndexedDocument, JoinCrawlerRequest,
-        JoinCrawlerResponse, SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
+        CrawlerMetadata, CreateCrawlRuleRequest, DeveloperDomainDocument, DeveloperDomainFacet,
+        DeveloperDomainInsightResponse, DeveloperDomainJob, DeveloperDomainSubmitRequest,
+        DeveloperDomainSubmitResponse, IndexedDocument, JoinCrawlerRequest, JoinCrawlerResponse,
+        SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
         SubmitCrawlReportResponse, UpdateCrawlRuleRequest,
     },
     store::{
         CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, SearchIndex,
-        content_hash, derive_terms, display_url, extract_host, normalize_url, stable_document_id,
-        word_count,
+        content_hash, derive_terms, display_url, extract_host, generate_token, hash_token,
+        normalize_url, stable_document_id, word_count,
     },
 };
 
@@ -79,7 +81,9 @@ impl CrawlerStore {
         let expected_key = self
             .resolve_join_key(config_join_key)
             .await?
-            .ok_or_else(|| ApiError::BadRequest("crawler join key is not configured".to_string()))?;
+            .ok_or_else(|| {
+                ApiError::BadRequest("crawler join key is not configured".to_string())
+            })?;
 
         if request.join_key != expected_key {
             return Err(ApiError::Unauthorized("invalid join key".to_string()));
@@ -139,6 +143,45 @@ impl CrawlerStore {
         }
     }
 
+    pub async fn get_all_system_config(
+        &self,
+    ) -> Result<Vec<crate::models::SystemConfigEntry>, crate::error::ApiError> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            key: String,
+            value: String,
+            updated_at: chrono::DateTime<chrono::Utc>,
+        }
+        sqlx::query_as::<_, Row>("SELECT key, value, updated_at FROM system_config ORDER BY key")
+            .fetch_all(&self.pg_pool)
+            .await
+            .map_err(|e| crate::error::ApiError::Internal(e.into()))
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|r| crate::models::SystemConfigEntry {
+                        key: r.key,
+                        value: r.value,
+                        updated_at: r.updated_at,
+                    })
+                    .collect()
+            })
+    }
+
+    pub async fn get_system_config(&self, key: &str) -> Option<String> {
+        self.get_config(key).await.ok().flatten()
+    }
+
+    pub async fn set_system_config(
+        &self,
+        key: &str,
+        value: Option<String>,
+    ) -> Result<(), crate::error::ApiError> {
+        match value {
+            Some(v) => self.set_config(key, &v).await,
+            None => self.delete_config(key).await,
+        }
+    }
+
     pub async fn create_rule(
         &self,
         developer_id: &str,
@@ -153,10 +196,13 @@ impl CrawlerStore {
         let now = Utc::now();
         let interval_minutes = request.interval_minutes.clamp(1, 10_080) as i64;
         let max_depth = request.max_depth.min(10) as i32;
+        let max_pages = request.max_pages.clamp(1, 10_000) as i32;
+        let max_discovered_urls_per_page =
+            request.max_discovered_urls_per_page.clamp(1, 200) as i32;
 
         sqlx::query(
-            "insert into crawl_rules (id, owner_developer_id, owner_user_id, name, seed_url, pattern, status, interval_minutes, max_depth, enabled, created_at, updated_at)
-             values ($1, $2, null, $3, $4, $4, 'active', $5, $6, $7, $8, $8)",
+            "insert into crawl_rules (id, owner_developer_id, owner_user_id, name, seed_url, pattern, status, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at)
+             values ($1, $2, null, $3, $4, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $11)",
         )
         .bind(&id)
         .bind(developer_id)
@@ -164,6 +210,9 @@ impl CrawlerStore {
         .bind(&seed_url)
         .bind(interval_minutes)
         .bind(max_depth)
+        .bind(max_pages)
+        .bind(request.discovery_scope.as_str())
+        .bind(max_discovered_urls_per_page)
         .bind(request.enabled)
         .bind(now)
         .execute(&self.pg_pool)
@@ -186,6 +235,9 @@ impl CrawlerStore {
             seed_url,
             interval_minutes: interval_minutes as u64,
             max_depth: max_depth as u32,
+            max_pages: max_pages as u32,
+            discovery_scope: request.discovery_scope,
+            max_discovered_urls_per_page: max_discovered_urls_per_page as u32,
             enabled: request.enabled,
             created_at: now,
             updated_at: now,
@@ -200,7 +252,7 @@ impl CrawlerStore {
         request: UpdateCrawlRuleRequest,
     ) -> Result<CrawlRule, ApiError> {
         let row = sqlx::query_as::<_, CrawlRuleRow>(
-            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, enabled, created_at, updated_at, last_enqueued_at
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
              from crawl_rules where id = $1",
         )
         .bind(rule_id)
@@ -231,11 +283,23 @@ impl CrawlerStore {
             .max_depth
             .map(|v| v.min(10))
             .unwrap_or(row.max_depth as u32) as i32;
+        let new_max_pages = request
+            .max_pages
+            .map(|value| value.clamp(1, 10_000))
+            .unwrap_or(row.max_pages as u32) as i32;
+        let new_discovery_scope = request
+            .discovery_scope
+            .unwrap_or_else(|| DiscoveryScope::from_db_value(&row.discovery_scope));
+        let new_max_discovered_urls_per_page = request
+            .max_discovered_urls_per_page
+            .map(|value| value.clamp(1, 200))
+            .unwrap_or(row.max_discovered_urls_per_page as u32)
+            as i32;
         let new_enabled = request.enabled.unwrap_or(row.enabled);
         let now = Utc::now();
 
         sqlx::query(
-            "update crawl_rules set name = $2, seed_url = $3, pattern = $3, interval_minutes = $4, max_depth = $5, enabled = $6, updated_at = $7
+            "update crawl_rules set name = $2, seed_url = $3, pattern = $3, interval_minutes = $4, max_depth = $5, max_pages = $6, discovery_scope = $7, max_discovered_urls_per_page = $8, enabled = $9, updated_at = $10
              where id = $1",
         )
         .bind(rule_id)
@@ -243,6 +307,9 @@ impl CrawlerStore {
         .bind(&new_seed_url)
         .bind(new_interval)
         .bind(new_max_depth)
+        .bind(new_max_pages)
+        .bind(new_discovery_scope.as_str())
+        .bind(new_max_discovered_urls_per_page)
         .bind(new_enabled)
         .bind(now)
         .execute(&self.pg_pool)
@@ -265,6 +332,9 @@ impl CrawlerStore {
             seed_url: new_seed_url,
             interval_minutes: new_interval as u64,
             max_depth: new_max_depth as u32,
+            max_pages: new_max_pages as u32,
+            discovery_scope: new_discovery_scope,
+            max_discovered_urls_per_page: new_max_discovered_urls_per_page as u32,
             enabled: new_enabled,
             created_at: row.created_at,
             updated_at: now,
@@ -274,7 +344,7 @@ impl CrawlerStore {
 
     pub async fn delete_rule(&self, developer_id: &str, rule_id: &str) -> Result<(), ApiError> {
         let row = sqlx::query_as::<_, CrawlRuleRow>(
-            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, enabled, created_at, updated_at, last_enqueued_at
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
              from crawl_rules where id = $1",
         )
         .bind(rule_id)
@@ -335,7 +405,7 @@ impl CrawlerStore {
         .collect();
 
         let rules: Vec<CrawlRule> = sqlx::query_as::<_, CrawlRuleRow>(
-            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, enabled, created_at, updated_at, last_enqueued_at
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
              from crawl_rules where owner_developer_id = $1
              order by created_at desc",
         )
@@ -346,14 +416,17 @@ impl CrawlerStore {
         .into_iter()
         .map(|r| CrawlRule {
             id: r.id,
-            name: r.name,
-            seed_url: r.seed_url,
-            interval_minutes: r.interval_minutes as u64,
-            max_depth: r.max_depth as u32,
-            enabled: r.enabled,
-            created_at: r.created_at,
-            updated_at: r.updated_at,
-            last_enqueued_at: r.last_enqueued_at,
+                name: r.name,
+                seed_url: r.seed_url,
+                interval_minutes: r.interval_minutes as u64,
+                max_depth: r.max_depth as u32,
+                max_pages: r.max_pages as u32,
+                discovery_scope: DiscoveryScope::from_db_value(&r.discovery_scope),
+                max_discovered_urls_per_page: r.max_discovered_urls_per_page as u32,
+                enabled: r.enabled,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                last_enqueued_at: r.last_enqueued_at,
         })
         .collect();
 
@@ -430,6 +503,338 @@ impl CrawlerStore {
         })
     }
 
+    pub async fn domain_insight(
+        &self,
+        domain_input: &str,
+    ) -> Result<DeveloperDomainInsightResponse, ApiError> {
+        #[derive(sqlx::FromRow)]
+        struct DomainDocumentSummaryRow {
+            indexed_documents: i64,
+            duplicate_documents: i64,
+            last_indexed_at: Option<DateTime<Utc>>,
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct DomainFacetRow {
+            label: Option<String>,
+            count: i64,
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct DomainDocumentRow {
+            id: String,
+            title: String,
+            url: String,
+            display_url: String,
+            language: String,
+            last_crawled_at: DateTime<Utc>,
+            word_count: i32,
+            content_type: String,
+            duplicate_of: Option<String>,
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct DomainJobSummaryRow {
+            pending_jobs: i64,
+            successful_jobs: i64,
+            filtered_jobs: i64,
+            failed_jobs: i64,
+            blocked_jobs: i64,
+            last_crawled_at: Option<DateTime<Utc>>,
+        }
+
+        #[derive(sqlx::FromRow)]
+        struct DomainJobRow {
+            id: String,
+            url: String,
+            status: String,
+            http_status: Option<i32>,
+            depth: i32,
+            discovered_at: DateTime<Utc>,
+            finished_at: Option<DateTime<Utc>>,
+            failure_kind: Option<String>,
+            failure_message: Option<String>,
+            accepted_document_id: Option<String>,
+        }
+
+        let domain = normalize_domain_input(domain_input).ok_or_else(|| {
+            ApiError::BadRequest("domain must be a valid host or http(s) url".to_string())
+        })?;
+        let subdomain_pattern = domain_like_pattern(&domain);
+        let job_host_expr = "lower(regexp_replace(split_part(split_part(coalesce(final_url, url), '://', 2), '/', 1), ':[0-9]+$', ''))";
+
+        let document_summary = sqlx::query_as::<_, DomainDocumentSummaryRow>(
+            r#"
+            select
+                count(*) filter (where duplicate_of is null) as indexed_documents,
+                count(*) filter (where duplicate_of is not null) as duplicate_documents,
+                max(last_crawled_at) filter (where duplicate_of is null) as last_indexed_at
+            from documents
+            where lower(host) = $1 or lower(host) like $2
+            "#,
+        )
+        .bind(&domain)
+        .bind(&subdomain_pattern)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        let top_languages = sqlx::query_as::<_, DomainFacetRow>(
+            r#"
+            select nullif(language, '') as label, count(*) as count
+            from documents
+            where duplicate_of is null
+              and (lower(host) = $1 or lower(host) like $2)
+            group by language
+            order by count desc, label asc
+            limit 5
+            "#,
+        )
+        .bind(&domain)
+        .bind(&subdomain_pattern)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .into_iter()
+        .map(|row| DeveloperDomainFacet {
+            label: row.label.unwrap_or_else(|| "unknown".to_string()),
+            count: row.count.max(0) as usize,
+        })
+        .collect();
+
+        let top_content_types = sqlx::query_as::<_, DomainFacetRow>(
+            r#"
+            select nullif(content_type, '') as label, count(*) as count
+            from documents
+            where duplicate_of is null
+              and (lower(host) = $1 or lower(host) like $2)
+            group by content_type
+            order by count desc, label asc
+            limit 5
+            "#,
+        )
+        .bind(&domain)
+        .bind(&subdomain_pattern)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .into_iter()
+        .map(|row| DeveloperDomainFacet {
+            label: row.label.unwrap_or_else(|| "unknown".to_string()),
+            count: row.count.max(0) as usize,
+        })
+        .collect();
+
+        let recent_documents = sqlx::query_as::<_, DomainDocumentRow>(
+            r#"
+            select
+                id,
+                title,
+                canonical_url as url,
+                display_url,
+                language,
+                last_crawled_at,
+                word_count,
+                content_type,
+                duplicate_of
+            from documents
+            where lower(host) = $1 or lower(host) like $2
+            order by last_crawled_at desc
+            limit 8
+            "#,
+        )
+        .bind(&domain)
+        .bind(&subdomain_pattern)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .into_iter()
+        .map(|row| DeveloperDomainDocument {
+            id: row.id,
+            title: row.title,
+            url: row.url,
+            display_url: row.display_url,
+            language: row.language,
+            last_crawled_at: row.last_crawled_at,
+            word_count: row.word_count.max(0) as u32,
+            content_type: row.content_type,
+            duplicate_of: row.duplicate_of,
+        })
+        .collect();
+
+        let job_summary_query = format!(
+            r#"
+            select
+                count(*) filter (where status in ('queued', 'claimed')) as pending_jobs,
+                count(*) filter (where status = 'succeeded' and accepted_document_id is not null) as successful_jobs,
+                count(*) filter (where status = 'succeeded' and accepted_document_id is null) as filtered_jobs,
+                count(*) filter (where status in ('failed', 'dead_letter')) as failed_jobs,
+                count(*) filter (where status = 'blocked') as blocked_jobs,
+                max(coalesce(finished_at, discovered_at)) as last_crawled_at
+            from crawl_jobs
+            where {job_host_expr} = $1 or {job_host_expr} like $2
+            "#,
+        );
+        let job_summary = sqlx::query_as::<_, DomainJobSummaryRow>(&job_summary_query)
+            .bind(&domain)
+            .bind(&subdomain_pattern)
+            .fetch_one(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+        let recent_jobs_query = format!(
+            r#"
+            select
+                id,
+                coalesce(final_url, url) as url,
+                status,
+                http_status,
+                depth,
+                discovered_at,
+                finished_at,
+                failure_kind,
+                failure_message,
+                accepted_document_id
+            from crawl_jobs
+            where {job_host_expr} = $1 or {job_host_expr} like $2
+            order by coalesce(finished_at, discovered_at) desc
+            limit 10
+            "#,
+        );
+        let recent_jobs = sqlx::query_as::<_, DomainJobRow>(&recent_jobs_query)
+            .bind(&domain)
+            .bind(&subdomain_pattern)
+            .fetch_all(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?
+            .into_iter()
+            .map(|row| DeveloperDomainJob {
+                id: row.id,
+                url: row.url,
+                status: row.status,
+                http_status: row.http_status.map(|value| value as u16),
+                depth: row.depth.max(0) as u32,
+                discovered_at: row.discovered_at,
+                finished_at: row.finished_at,
+                failure_kind: row.failure_kind,
+                failure_message: row.failure_message,
+                accepted_document_id: row.accepted_document_id,
+            })
+            .collect();
+
+        Ok(DeveloperDomainInsightResponse {
+            domain: domain.clone(),
+            property_url: format!("https://{domain}/"),
+            indexed_documents: document_summary.indexed_documents.max(0) as usize,
+            duplicate_documents: document_summary.duplicate_documents.max(0) as usize,
+            pending_jobs: job_summary.pending_jobs.max(0) as usize,
+            successful_jobs: job_summary.successful_jobs.max(0) as usize,
+            filtered_jobs: job_summary.filtered_jobs.max(0) as usize,
+            failed_jobs: job_summary.failed_jobs.max(0) as usize,
+            blocked_jobs: job_summary.blocked_jobs.max(0) as usize,
+            last_indexed_at: document_summary.last_indexed_at,
+            last_crawled_at: job_summary.last_crawled_at,
+            top_languages,
+            top_content_types,
+            recent_documents,
+            recent_jobs,
+        })
+    }
+
+    pub async fn submit_domain_urls(
+        &self,
+        owner_developer_id: &str,
+        submitted_by: &str,
+        request: DeveloperDomainSubmitRequest,
+    ) -> Result<DeveloperDomainSubmitResponse, ApiError> {
+        if request.urls.is_empty() {
+            return Err(ApiError::BadRequest(
+                "at least one property url is required".to_string(),
+            ));
+        }
+
+        let domain = normalize_domain_input(&request.domain).ok_or_else(|| {
+            ApiError::BadRequest("domain must be a valid host or http(s) url".to_string())
+        })?;
+        let mut urls = Vec::new();
+        for raw_url in request.urls {
+            let trimmed = raw_url.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let normalized = normalize_url(trimmed)
+                .ok_or_else(|| ApiError::BadRequest(format!("invalid property url: {trimmed}")))?;
+            let host = extract_host(&normalized)
+                .ok_or_else(|| ApiError::BadRequest(format!("invalid property url: {trimmed}")))?;
+            if !host_matches_scope(&host, &domain, DiscoveryScope::SameDomain) {
+                return Err(ApiError::BadRequest(format!(
+                    "submitted url host must stay within the {domain} property"
+                )));
+            }
+            urls.push(normalized);
+        }
+
+        if urls.is_empty() {
+            return Err(ApiError::BadRequest(
+                "at least one property url is required".to_string(),
+            ));
+        }
+
+        let budget_id = Uuid::now_v7().to_string();
+        let source = format!("developer-property:{submitted_by}:{domain}");
+        let accepted_urls = self
+            .enqueue_urls(
+                owner_developer_id,
+                urls,
+                &source,
+                &budget_id,
+                0,
+                request.max_depth.min(10) as i32,
+                request.max_pages.clamp(1, 10_000) as i32,
+                Some(submitted_by),
+                None,
+                DiscoveryScope::SameDomain,
+                Some(&domain),
+                50,
+                request.allow_revisit,
+            )
+            .await?;
+
+        self.push_event(
+            owner_developer_id,
+            "developer-property-seeded",
+            "ok",
+            format!("developer {submitted_by} queued {accepted_urls} urls for {domain}"),
+            Some(format!("https://{domain}/")),
+            None,
+        )
+        .await?;
+
+        let subdomain_pattern = domain_like_pattern(&domain);
+        let job_host_expr = "lower(regexp_replace(split_part(split_part(coalesce(final_url, url), '://', 2), '/', 1), ':[0-9]+$', ''))";
+        let counts_query = format!(
+            r#"
+            select
+                count(*) filter (where status in ('queued', 'claimed')) as queued_domain_jobs,
+                count(*) as known_domain_urls
+            from crawl_jobs
+            where {job_host_expr} = $1 or {job_host_expr} like $2
+            "#,
+        );
+        let (queued_domain_jobs, known_domain_urls): (i64, i64) = sqlx::query_as(&counts_query)
+            .bind(&domain)
+            .bind(&subdomain_pattern)
+            .fetch_one(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+        Ok(DeveloperDomainSubmitResponse {
+            accepted_urls,
+            queued_domain_jobs: queued_domain_jobs.max(0) as usize,
+            known_domain_urls: known_domain_urls.max(0) as usize,
+        })
+    }
+
     pub async fn seed_frontier(
         &self,
         developer_id: &str,
@@ -445,16 +850,22 @@ impl CrawlerStore {
             .source
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| format!("manual:{developer_id}"));
+        let budget_id = Uuid::now_v7().to_string();
 
         let accepted_urls = self
             .enqueue_urls(
                 developer_id,
                 request.urls,
                 &source,
+                &budget_id,
                 0,
                 request.max_depth.min(10) as i32,
+                request.max_pages.clamp(1, 10_000) as i32,
                 Some(developer_id),
                 None,
+                request.discovery_scope,
+                None,
+                request.max_discovered_urls_per_page.clamp(1, 200) as i32,
                 request.allow_revisit,
             )
             .await?;
@@ -511,25 +922,60 @@ impl CrawlerStore {
             .await
             .map_err(|e| ApiError::Internal(e.into()))?;
 
-        // Claim jobs using FOR UPDATE SKIP LOCKED with priority
         let lease_expires = now + chrono::Duration::minutes(30);
         let claimed_rows = sqlx::query_as::<_, ClaimedJobRow>(
-            "update crawl_jobs
-             set status = 'claimed',
-                 claimed_by = $1,
-                 claimed_at = $2,
-                 lease_expires_at = $3,
-                 attempt_count = attempt_count + 1
-             where id in (
-                 select id from crawl_jobs
-                 where owner_developer_id = $4
-                   and status = 'queued'
-                   and (next_retry_at is null or next_retry_at <= $2)
-                 order by priority desc, discovered_at asc
+            "with candidate_jobs as (
+                 select j.id, j.origin_key
+                 from crawl_jobs j
+                 join crawl_origins o
+                   on o.owner_developer_id = j.owner_developer_id
+                  and o.origin_key = j.origin_key
+                 where j.owner_developer_id = $4
+                   and j.status = 'queued'
+                   and (j.next_retry_at is null or j.next_retry_at <= $2)
+                   and o.next_allowed_at <= $2
+                   and o.in_flight_count = 0
+                   and not exists (
+                       select 1 from crawl_jobs active
+                       where active.owner_developer_id = j.owner_developer_id
+                         and active.origin_key = j.origin_key
+                         and active.status = 'claimed'
+                   )
+                   and not exists (
+                       select 1 from crawl_jobs better
+                       where better.owner_developer_id = j.owner_developer_id
+                         and better.origin_key = j.origin_key
+                         and better.status = 'queued'
+                         and (better.next_retry_at is null or better.next_retry_at <= $2)
+                         and (
+                             better.priority > j.priority
+                             or (better.priority = j.priority and better.discovered_at < j.discovered_at)
+                         )
+                   )
+                 order by o.next_allowed_at asc, j.priority desc, j.discovered_at asc
                  limit $5
-                 for update skip locked
+                 for update of j skip locked
+             ),
+             claimed as (
+                 update crawl_jobs
+                 set status = 'claimed',
+                     claimed_by = $1,
+                     claimed_at = $2,
+                     lease_expires_at = $3,
+                     attempt_count = attempt_count + 1
+                 where id in (select id from candidate_jobs)
+                 returning id, url, origin_key, source, depth, max_depth, attempt_count, discovered_at, network
+             ),
+             touched_origins as (
+                 update crawl_origins origin
+                 set in_flight_count = origin.in_flight_count + 1,
+                     updated_at = $2
+                 from (select distinct origin_key from claimed) touched
+                 where origin.owner_developer_id = $4
+                   and origin.origin_key = touched.origin_key
              )
-             returning id, url, source, depth, max_depth, attempt_count, discovered_at",
+             select id, url, origin_key, source, depth, max_depth, attempt_count, discovered_at, network
+             from claimed",
         )
         .bind(crawler_id)
         .bind(now)
@@ -540,18 +986,36 @@ impl CrawlerStore {
         .await
         .map_err(|e| ApiError::Internal(e.into()))?;
 
-        let jobs: Vec<CrawlJob> = claimed_rows
+        let mut jobs: Vec<CrawlJob> = claimed_rows
             .iter()
             .map(|r| CrawlJob {
                 job_id: r.id.clone(),
                 url: r.url.clone(),
+                origin_key: r.origin_key.clone(),
                 source: r.source.clone(),
                 depth: r.depth as u32,
                 max_depth: r.max_depth as u32,
                 attempt_count: r.attempt_count as u32,
                 discovered_at: r.discovered_at,
+                network: r.network.clone(),
+                etag: None,
+                last_modified: None,
             })
             .collect();
+
+        // Enrich jobs with conditional request headers from existing documents
+        for job in &mut jobs {
+            if let Ok(Some(row)) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+                "SELECT http_etag, http_last_modified FROM documents WHERE canonical_url = $1",
+            )
+            .bind(&job.url)
+            .fetch_optional(&self.pg_pool)
+            .await
+            {
+                job.etag = row.0;
+                job.last_modified = row.1;
+            }
+        }
 
         // Update jobs_claimed counter
         if !jobs.is_empty() {
@@ -613,7 +1077,7 @@ impl CrawlerStore {
 
         for result in request.results {
             let in_flight = sqlx::query_as::<_, InFlightJobRow>(
-                "select id, url, depth, max_depth, rule_id, attempt_count, max_attempts from crawl_jobs
+                "select id, url, origin_key, depth, max_depth, max_pages, budget_id, rule_id, attempt_count, max_attempts, discovery_scope, discovery_host, max_discovered_urls_per_page from crawl_jobs
                  where id = $1 and claimed_by = $2 and status = 'claimed'",
             )
             .bind(&result.job_id)
@@ -637,9 +1101,19 @@ impl CrawlerStore {
                 .final_url
                 .clone()
                 .unwrap_or_else(|| result.url.clone());
-            let discovered_count = result.discovered_urls.len() as i32;
+            let discovery_scope = DiscoveryScope::from_db_value(&in_flight.discovery_scope);
+            let scoped_discovered_urls = filter_discovered_urls(
+                result.discovered_urls.clone(),
+                discovery_scope,
+                in_flight.discovery_host.as_deref(),
+                in_flight.max_discovered_urls_per_page.max(1) as usize,
+            );
+            let discovered_count = scoped_discovered_urls.len() as i32;
             let http_status = result.status_code as i32;
             let content_type = result.content_type.clone();
+            let llm_decision = summarize_llm_decision(&result);
+            let redirect_chain_json = serde_json::to_value(&result.redirect_chain)
+                .map_err(|e| ApiError::Internal(e.into()))?;
 
             match classify_job_outcome(&result, &in_flight) {
                 JobOutcome::Succeeded(document) => {
@@ -654,7 +1128,13 @@ impl CrawlerStore {
                              content_type = $4,
                              http_status = $5,
                              discovered_urls_count = $6,
-                             accepted_document_id = $7
+                             accepted_document_id = $7,
+                             llm_decision = $8,
+                             llm_reason = $9,
+                             llm_relevance_score = $10,
+                             canonical_hint = $11,
+                             canonical_source = $12,
+                             redirect_chain_json = $13
                          where id = $1",
                     )
                     .bind(&result.job_id)
@@ -664,13 +1144,19 @@ impl CrawlerStore {
                     .bind(http_status)
                     .bind(discovered_count)
                     .bind(&document.id)
+                    .bind(llm_decision.as_deref())
+                    .bind(result.llm_reason.as_deref())
+                    .bind(result.llm_relevance_score)
+                    .bind(result.canonical_hint.as_deref())
+                    .bind(result.canonical_source.as_deref())
+                    .bind(&redirect_chain_json)
                     .execute(&self.pg_pool)
                     .await
                     .map_err(|e| ApiError::Internal(e.into()))?;
 
                     let allowed_discovery = in_flight.depth < in_flight.max_depth;
                     if allowed_discovery {
-                        for discovered_url in &result.discovered_urls {
+                        for discovered_url in &scoped_discovered_urls {
                             let _ = sqlx::query(
                                 "update documents set inlink_count = inlink_count + 1
                                  where canonical_url = $1",
@@ -680,18 +1166,84 @@ impl CrawlerStore {
                             .await;
                         }
 
+                        // Store persistent link edges
+                        for discovered_url in &scoped_discovered_urls {
+                            let _ = sqlx::query(
+                                "INSERT INTO link_edges (source_url, target_url, discovered_at)
+                                 VALUES ($1, $2, now())
+                                 ON CONFLICT (source_url, target_url) DO UPDATE SET discovered_at = now()"
+                            )
+                            .bind(&finalized_url)
+                            .bind(discovered_url)
+                            .execute(&self.pg_pool)
+                            .await;
+                        }
+
                         discovered_urls += self
                             .enqueue_urls(
                                 &crawler.owner_developer_id,
-                                result.discovered_urls.clone(),
+                                scoped_discovered_urls.clone(),
                                 &finalized_url,
+                                &in_flight.budget_id,
                                 in_flight.depth + 1,
                                 in_flight.max_depth,
+                                in_flight.max_pages,
                                 Some(&crawler.owner_developer_id),
                                 in_flight.rule_id.as_deref(),
+                                discovery_scope,
+                                in_flight.discovery_host.as_deref(),
+                                in_flight.max_discovered_urls_per_page,
                                 false,
                             )
                             .await?;
+                    }
+
+                    if let Some(ref domain) = extract_host(&finalized_url) {
+                        // Compare content_hash with existing document to detect change
+                        let content_changed = if let Some(ref body) = result.body {
+                            let new_hash = content_hash(body);
+                            let existing_hash: Option<String> = sqlx::query_scalar(
+                                "SELECT content_hash FROM documents WHERE canonical_url = $1",
+                            )
+                            .bind(&finalized_url)
+                            .fetch_optional(&self.pg_pool)
+                            .await
+                            .ok()
+                            .flatten();
+                            existing_hash.as_deref() != Some(&new_hash)
+                        } else {
+                            false
+                        };
+
+                        let _ = sqlx::query(
+                            "INSERT INTO domain_crawl_stats (domain, total_pages_indexed, last_success_at, consecutive_failures, updated_at)
+                             VALUES ($1, 1, now(), 0, now())
+                             ON CONFLICT (domain) DO UPDATE SET
+                                 total_pages_indexed = domain_crawl_stats.total_pages_indexed + 1,
+                                 last_success_at = now(),
+                                 consecutive_failures = 0,
+                                 health_status = 'healthy',
+                                 updated_at = now()"
+                        ).bind(domain).execute(&self.pg_pool).await;
+
+                        // Update domain change frequency
+                        let _ = sqlx::query(
+                            "UPDATE domain_crawl_stats SET
+                                content_checks = content_checks + 1,
+                                content_changes = content_changes + CASE WHEN $2 THEN 1 ELSE 0 END,
+                                avg_change_frequency_hours = CASE
+                                    WHEN content_checks > 0 THEN
+                                        (content_changes::real + CASE WHEN $2 THEN 1 ELSE 0 END) /
+                                        (content_checks::real + 1) * 168.0
+                                    ELSE NULL
+                                END,
+                                updated_at = now()
+                             WHERE domain = $1",
+                        )
+                        .bind(domain)
+                        .bind(content_changed)
+                        .execute(&self.pg_pool)
+                        .await;
                     }
 
                     self.push_event(
@@ -708,6 +1260,99 @@ impl CrawlerStore {
                     .await?;
 
                     documents.push(document);
+
+                    // Store conditional request headers for future 304 support
+                    if result.http_etag.is_some() || result.http_last_modified.is_some() {
+                        let doc_url = result.final_url.as_ref().unwrap_or(&result.url);
+                        let doc_id = stable_document_id(doc_url);
+                        let _ = sqlx::query(
+                            "UPDATE documents SET http_etag = $2, http_last_modified = $3 WHERE id = $1"
+                        )
+                        .bind(&doc_id)
+                        .bind(result.http_etag.as_deref())
+                        .bind(result.http_last_modified.as_deref())
+                        .execute(&self.pg_pool).await;
+                    }
+                }
+                JobOutcome::Filtered { reason } => {
+                    sqlx::query(
+                        "update crawl_jobs
+                         set status = 'succeeded',
+                             failure_kind = null,
+                             failure_message = null,
+                             next_retry_at = null,
+                             finished_at = $2,
+                             final_url = $3,
+                             content_type = $4,
+                             http_status = $5,
+                             discovered_urls_count = $6,
+                             accepted_document_id = null,
+                             llm_decision = $7,
+                             llm_reason = $8,
+                             llm_relevance_score = $9,
+                             canonical_hint = $10,
+                             canonical_source = $11,
+                             redirect_chain_json = $12
+                         where id = $1",
+                    )
+                    .bind(&result.job_id)
+                    .bind(now)
+                    .bind(&finalized_url)
+                    .bind(content_type.as_deref())
+                    .bind(http_status)
+                    .bind(discovered_count)
+                    .bind(llm_decision.as_deref())
+                    .bind(result.llm_reason.as_deref())
+                    .bind(result.llm_relevance_score)
+                    .bind(result.canonical_hint.as_deref())
+                    .bind(result.canonical_source.as_deref())
+                    .bind(&redirect_chain_json)
+                    .execute(&self.pg_pool)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    let allowed_discovery = in_flight.depth < in_flight.max_depth;
+                    if allowed_discovery {
+                        discovered_urls += self
+                            .enqueue_urls(
+                                &crawler.owner_developer_id,
+                                scoped_discovered_urls.clone(),
+                                &finalized_url,
+                                &in_flight.budget_id,
+                                in_flight.depth + 1,
+                                in_flight.max_depth,
+                                in_flight.max_pages,
+                                Some(&crawler.owner_developer_id),
+                                in_flight.rule_id.as_deref(),
+                                discovery_scope,
+                                in_flight.discovery_host.as_deref(),
+                                in_flight.max_discovered_urls_per_page,
+                                false,
+                            )
+                            .await?;
+                    }
+
+                    self.push_event(
+                        &crawler.owner_developer_id,
+                        "job-filtered",
+                        "ok",
+                        format!("skipped indexing {finalized_url}: {reason}"),
+                        Some(finalized_url.clone()),
+                        Some(crawler_id.to_string()),
+                    )
+                    .await?;
+
+                    // For 304 responses, update last_crawled_at on the existing document
+                    if result.status_code == 304 {
+                        let doc_url = result.final_url.as_ref().unwrap_or(&result.url);
+                        let doc_id = stable_document_id(doc_url);
+                        let _ =
+                            sqlx::query("UPDATE documents SET last_crawled_at = $2 WHERE id = $1")
+                                .bind(&doc_id)
+                                .bind(now)
+                                .execute(&self.pg_pool)
+                                .await;
+                    }
                 }
                 JobOutcome::Retryable {
                     failure_kind,
@@ -728,7 +1373,13 @@ impl CrawlerStore {
                              content_type = $6,
                              http_status = $7,
                              discovered_urls_count = $8,
-                             accepted_document_id = null
+                             accepted_document_id = null,
+                             llm_decision = $9,
+                             llm_reason = $10,
+                             llm_relevance_score = $11,
+                             canonical_hint = $12,
+                             canonical_source = $13,
+                             redirect_chain_json = $14
                          where id = $1",
                     )
                     .bind(&result.job_id)
@@ -739,6 +1390,12 @@ impl CrawlerStore {
                     .bind(content_type.as_deref())
                     .bind(http_status)
                     .bind(discovered_count)
+                    .bind(llm_decision.as_deref())
+                    .bind(result.llm_reason.as_deref())
+                    .bind(result.llm_relevance_score)
+                    .bind(result.canonical_hint.as_deref())
+                    .bind(result.canonical_source.as_deref())
+                    .bind(&redirect_chain_json)
                     .execute(&self.pg_pool)
                     .await
                     .map_err(|e| ApiError::Internal(e.into()))?;
@@ -772,7 +1429,13 @@ impl CrawlerStore {
                              content_type = $6,
                              http_status = $7,
                              discovered_urls_count = $8,
-                             accepted_document_id = null
+                             accepted_document_id = null,
+                             llm_decision = $9,
+                             llm_reason = $10,
+                             llm_relevance_score = $11,
+                             canonical_hint = $12,
+                             canonical_source = $13,
+                             redirect_chain_json = $14
                          where id = $1",
                     )
                     .bind(&result.job_id)
@@ -783,6 +1446,12 @@ impl CrawlerStore {
                     .bind(content_type.as_deref())
                     .bind(http_status)
                     .bind(discovered_count)
+                    .bind(llm_decision.as_deref())
+                    .bind(result.llm_reason.as_deref())
+                    .bind(result.llm_relevance_score)
+                    .bind(result.canonical_hint.as_deref())
+                    .bind(result.canonical_source.as_deref())
+                    .bind(&redirect_chain_json)
                     .execute(&self.pg_pool)
                     .await
                     .map_err(|e| ApiError::Internal(e.into()))?;
@@ -812,7 +1481,13 @@ impl CrawlerStore {
                              content_type = $6,
                              http_status = $7,
                              discovered_urls_count = $8,
-                             accepted_document_id = null
+                             accepted_document_id = null,
+                             llm_decision = $9,
+                             llm_reason = $10,
+                             llm_relevance_score = $11,
+                             canonical_hint = $12,
+                             canonical_source = $13,
+                             redirect_chain_json = $14
                          where id = $1",
                     )
                     .bind(&result.job_id)
@@ -823,9 +1498,32 @@ impl CrawlerStore {
                     .bind(content_type.as_deref())
                     .bind(http_status)
                     .bind(discovered_count)
+                    .bind(llm_decision.as_deref())
+                    .bind(result.llm_reason.as_deref())
+                    .bind(result.llm_relevance_score)
+                    .bind(result.canonical_hint.as_deref())
+                    .bind(result.canonical_source.as_deref())
+                    .bind(&redirect_chain_json)
                     .execute(&self.pg_pool)
                     .await
                     .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    if let Some(ref domain) = extract_host(&finalized_url) {
+                        let _ = sqlx::query(
+                            "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
+                             VALUES ($1, 1, now(), 1, now())
+                             ON CONFLICT (domain) DO UPDATE SET
+                                 total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
+                                 last_failure_at = now(),
+                                 consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
+                                 health_status = CASE
+                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
+                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
+                                     ELSE domain_crawl_stats.health_status
+                                 END,
+                                 updated_at = now()"
+                        ).bind(domain).execute(&self.pg_pool).await;
+                    }
 
                     self.push_event(
                         &crawler.owner_developer_id,
@@ -852,7 +1550,13 @@ impl CrawlerStore {
                              content_type = $6,
                              http_status = $7,
                              discovered_urls_count = $8,
-                             accepted_document_id = null
+                             accepted_document_id = null,
+                             llm_decision = $9,
+                             llm_reason = $10,
+                             llm_relevance_score = $11,
+                             canonical_hint = $12,
+                             canonical_source = $13,
+                             redirect_chain_json = $14
                          where id = $1",
                     )
                     .bind(&result.job_id)
@@ -863,9 +1567,32 @@ impl CrawlerStore {
                     .bind(content_type.as_deref())
                     .bind(http_status)
                     .bind(discovered_count)
+                    .bind(llm_decision.as_deref())
+                    .bind(result.llm_reason.as_deref())
+                    .bind(result.llm_relevance_score)
+                    .bind(result.canonical_hint.as_deref())
+                    .bind(result.canonical_source.as_deref())
+                    .bind(&redirect_chain_json)
                     .execute(&self.pg_pool)
                     .await
                     .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    if let Some(ref domain) = extract_host(&finalized_url) {
+                        let _ = sqlx::query(
+                            "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
+                             VALUES ($1, 1, now(), 1, now())
+                             ON CONFLICT (domain) DO UPDATE SET
+                                 total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
+                                 last_failure_at = now(),
+                                 consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
+                                 health_status = CASE
+                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
+                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
+                                     ELSE domain_crawl_stats.health_status
+                                 END,
+                                 updated_at = now()"
+                        ).bind(domain).execute(&self.pg_pool).await;
+                    }
 
                     self.push_event(
                         &crawler.owner_developer_id,
@@ -877,7 +1604,97 @@ impl CrawlerStore {
                     )
                     .await?;
                 }
+                JobOutcome::Gone {
+                    failure_kind,
+                    failure_message,
+                } => {
+                    sqlx::query(
+                        "update crawl_jobs
+                         set status = 'failed',
+                             failure_kind = $2,
+                             failure_message = $3,
+                             next_retry_at = null,
+                             finished_at = $4,
+                             final_url = $5,
+                             content_type = $6,
+                             http_status = $7,
+                             discovered_urls_count = $8,
+                             accepted_document_id = null,
+                             llm_decision = $9,
+                             llm_reason = $10,
+                             llm_relevance_score = $11,
+                             canonical_hint = $12,
+                             canonical_source = $13,
+                             redirect_chain_json = $14
+                         where id = $1",
+                    )
+                    .bind(&result.job_id)
+                    .bind(&failure_kind)
+                    .bind(&failure_message)
+                    .bind(now)
+                    .bind(&finalized_url)
+                    .bind(content_type.as_deref())
+                    .bind(http_status)
+                    .bind(discovered_count)
+                    .bind(llm_decision.as_deref())
+                    .bind(result.llm_reason.as_deref())
+                    .bind(result.llm_relevance_score)
+                    .bind(result.canonical_hint.as_deref())
+                    .bind(result.canonical_source.as_deref())
+                    .bind(&redirect_chain_json)
+                    .execute(&self.pg_pool)
+                    .await
+                    .map_err(|e| ApiError::Internal(e.into()))?;
+
+                    // Remove document from search index for 404/410 responses
+                    let doc_id = stable_document_id(&finalized_url);
+                    let _ = search_index.delete_document(&doc_id).await;
+                    if finalized_url != result.url {
+                        let original_doc_id = stable_document_id(&result.url);
+                        let _ = search_index.delete_document(&original_doc_id).await;
+                    }
+                    if let Some(canonical_hint) = result.canonical_hint.as_deref() {
+                        let canonical_doc_id = stable_document_id(canonical_hint);
+                        let _ = search_index.delete_document(&canonical_doc_id).await;
+                    }
+
+                    if let Some(ref domain) = extract_host(&finalized_url) {
+                        let _ = sqlx::query(
+                            "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
+                             VALUES ($1, 1, now(), 1, now())
+                             ON CONFLICT (domain) DO UPDATE SET
+                                 total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
+                                 last_failure_at = now(),
+                                 consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
+                                 health_status = CASE
+                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
+                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
+                                     ELSE domain_crawl_stats.health_status
+                                 END,
+                                 updated_at = now()"
+                        ).bind(domain).execute(&self.pg_pool).await;
+                    }
+
+                    self.push_event(
+                        &crawler.owner_developer_id,
+                        "job-gone",
+                        "error",
+                        format!("removed from index: {failure_message}"),
+                        Some(finalized_url.clone()),
+                        Some(crawler_id.to_string()),
+                    )
+                    .await?;
+                }
             }
+
+            self.update_origin_after_report(
+                &crawler.owner_developer_id,
+                &in_flight.origin_key,
+                &finalized_url,
+                &result,
+                now,
+            )
+            .await?;
         }
 
         if reported > 0 {
@@ -908,11 +1725,53 @@ impl CrawlerStore {
         })
     }
 
+    async fn schedule_adaptive_recrawl(&self, _now: DateTime<Utc>) -> Result<(), ApiError> {
+        let stale_docs = sqlx::query_as::<_, StaleDocRow>(
+            "SELECT d.canonical_url, d.host,
+                    j.owner_developer_id, j.budget_id, j.rule_id, j.discovery_scope
+             FROM documents d
+             LEFT JOIN domain_crawl_stats dcs ON dcs.domain = d.host
+             JOIN crawl_jobs j ON j.id = d.source_job_id
+             WHERE d.duplicate_of IS NULL
+               AND d.source_job_id IS NOT NULL
+               AND d.last_crawled_at < now() - make_interval(hours => LEAST(GREATEST(COALESCE(dcs.avg_change_frequency_hours, 168), 24), 720)::int)
+             ORDER BY d.last_crawled_at ASC
+             LIMIT 100"
+        )
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        for doc in stale_docs {
+            let scope = DiscoveryScope::from_db_value(&doc.discovery_scope);
+            let _ = self
+                .enqueue_urls(
+                    &doc.owner_developer_id,
+                    vec![doc.canonical_url.clone()],
+                    &doc.canonical_url,
+                    &doc.budget_id,
+                    0, // depth 0 for recrawl
+                    10,
+                    1, // max_pages 1 for individual recrawl
+                    Some(&doc.owner_developer_id),
+                    doc.rule_id.as_deref(),
+                    scope,
+                    Some(&doc.host),
+                    0,    // max_discovered_urls_per_page - no discovery needed
+                    true, // allow_revisit
+                )
+                .await;
+        }
+        Ok(())
+    }
+
     pub async fn run_maintenance(&self, claim_timeout: Duration) -> Result<(), ApiError> {
         let now = Utc::now();
         self.apply_due_rules(now).await?;
         self.requeue_stale_jobs(now, claim_timeout).await?;
+        self.prune_stale_crawlers(now, claim_timeout).await?;
         self.trim_events().await?;
+        self.schedule_adaptive_recrawl(now).await?;
         crate::ranking::update_site_authority(&self.pg_pool).await?;
         Ok(())
     }
@@ -949,9 +1808,10 @@ impl CrawlerStore {
         .map_err(|e| ApiError::Internal(e.into()))?;
 
         let rows = sqlx::query_as::<_, JobListRow>(
-            "SELECT id, url, final_url, status, depth, max_depth, attempt_count, max_attempts,
+            "SELECT id, url, origin_key, final_url, status, depth, max_depth, attempt_count, max_attempts,
                     source, rule_id, claimed_by, discovered_at, claimed_at, next_retry_at,
                     content_type, http_status, discovered_urls_count, accepted_document_id,
+                    llm_decision, llm_reason, llm_relevance_score, canonical_hint, canonical_source,
                     failure_kind, failure_message, finished_at
              FROM crawl_jobs
              WHERE owner_developer_id = $1
@@ -972,6 +1832,7 @@ impl CrawlerStore {
             .map(|r| CrawlJobDetail {
                 id: r.id,
                 url: r.url,
+                origin_key: r.origin_key,
                 final_url: r.final_url,
                 status: r.status,
                 depth: r.depth as u32,
@@ -988,6 +1849,11 @@ impl CrawlerStore {
                 http_status: r.http_status.map(|value| value as u16),
                 discovered_urls_count: r.discovered_urls_count.max(0) as usize,
                 accepted_document_id: r.accepted_document_id,
+                llm_decision: r.llm_decision,
+                llm_reason: r.llm_reason,
+                llm_relevance_score: r.llm_relevance_score,
+                canonical_hint: r.canonical_hint,
+                canonical_source: r.canonical_source,
                 failure_kind: r.failure_kind,
                 failure_message: r.failure_message,
                 finished_at: r.finished_at,
@@ -1022,7 +1888,10 @@ impl CrawlerStore {
                  content_type = NULL,
                  http_status = NULL,
                  discovered_urls_count = 0,
-                 accepted_document_id = NULL
+                 accepted_document_id = NULL,
+                 llm_decision = NULL,
+                 llm_reason = NULL,
+                 llm_relevance_score = NULL
              WHERE owner_developer_id = $1 AND status in ('failed', 'dead_letter')",
         )
         .bind(developer_id)
@@ -1073,6 +1942,61 @@ impl CrawlerStore {
         Ok(count)
     }
 
+    pub async fn stop_all_jobs(&self, developer_id: &str) -> Result<(usize, usize), ApiError> {
+        let now = Utc::now();
+        let disabled_rules = sqlx::query(
+            "update crawl_rules
+             set enabled = false,
+                 updated_at = $2
+             where owner_developer_id = $1 and enabled = true",
+        )
+        .bind(developer_id)
+        .bind(now)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .rows_affected() as usize;
+
+        let removed_jobs = sqlx::query(
+            "delete from crawl_jobs
+             where owner_developer_id = $1 and status in ('queued', 'claimed')",
+        )
+        .bind(developer_id)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .rows_affected() as usize;
+
+        sqlx::query(
+            "update crawl_origins
+             set in_flight_count = 0,
+                 next_allowed_at = $2,
+                 updated_at = $2
+             where owner_developer_id = $1",
+        )
+        .bind(developer_id)
+        .bind(now)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        if disabled_rules > 0 || removed_jobs > 0 {
+            self.push_event(
+                developer_id,
+                "crawl-stopped",
+                "ok",
+                format!(
+                    "stopped crawl activity: disabled {disabled_rules} rules and removed {removed_jobs} active jobs"
+                ),
+                None,
+                None,
+            )
+            .await?;
+        }
+
+        Ok((disabled_rules, removed_jobs))
+    }
+
     pub async fn job_stats(&self, developer_id: &str) -> Result<CrawlJobStats, ApiError> {
         let stats = sqlx::query_as::<_, JobStatsRow>(
             "SELECT
@@ -1100,7 +2024,151 @@ impl CrawlerStore {
         })
     }
 
+    pub async fn list_origins(
+        &self,
+        developer_id: &str,
+    ) -> Result<Vec<crate::models::CrawlOriginState>, ApiError> {
+        let rows = sqlx::query_as::<_, CrawlOriginRow>(
+            "select origin_key, robots_status, crawl_delay_secs, next_allowed_at, in_flight_count,
+                    last_fetch_status, consecutive_failures, robots_sitemaps, updated_at
+             from crawl_origins
+             where owner_developer_id = $1
+             order by next_allowed_at asc, updated_at desc
+             limit 200",
+        )
+        .bind(developer_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let robots_sitemaps: Vec<String> = serde_json::from_value(row.robots_sitemaps)
+                    .map_err(|e| ApiError::Internal(e.into()))?;
+                Ok(crate::models::CrawlOriginState {
+                    origin_key: row.origin_key,
+                    robots_status: row.robots_status,
+                    crawl_delay_secs: row.crawl_delay_secs.map(|value| value.max(0) as u32),
+                    next_allowed_at: row.next_allowed_at,
+                    in_flight_count: row.in_flight_count.max(0) as u32,
+                    last_fetch_status: row.last_fetch_status.map(|value| value as u16),
+                    consecutive_failures: row.consecutive_failures.max(0) as u32,
+                    robots_sitemaps,
+                    updated_at: row.updated_at,
+                })
+            })
+            .collect()
+    }
+
     // ---- private helpers ----
+
+    async fn update_origin_after_report(
+        &self,
+        developer_id: &str,
+        requested_origin_key: &str,
+        finalized_url: &str,
+        result: &CrawlResultInput,
+        now: DateTime<Utc>,
+    ) -> Result<(), ApiError> {
+        let next_allowed_at = origin_ready_at(now, result);
+        let robots_status = result
+            .robots_status
+            .as_deref()
+            .unwrap_or("unknown")
+            .to_string();
+        let crawl_delay_secs = result
+            .applied_crawl_delay_secs
+            .map(|value| value.min(i32::MAX as u64) as i32);
+        let robots_sitemaps = serde_json::to_value(&result.robots_sitemaps)
+            .map_err(|e| ApiError::Internal(e.into()))?;
+        let failure_like = matches!(result.status_code, 429 | 500..=599)
+            || matches!(result.error_kind.as_deref(), Some("network_error"));
+
+        sqlx::query(
+            "insert into crawl_origins (
+                owner_developer_id,
+                origin_key,
+                robots_status,
+                crawl_delay_secs,
+                next_allowed_at,
+                in_flight_count,
+                last_fetch_status,
+                consecutive_failures,
+                robots_sitemaps,
+                updated_at
+             )
+             values ($1, $2, $3, $4, $5, 0, $6, CASE WHEN $7 THEN 1 ELSE 0 END, $8, $9)
+             on conflict (owner_developer_id, origin_key) do update set
+                robots_status = excluded.robots_status,
+                crawl_delay_secs = coalesce(excluded.crawl_delay_secs, crawl_origins.crawl_delay_secs),
+                next_allowed_at = greatest(crawl_origins.next_allowed_at, excluded.next_allowed_at),
+                in_flight_count = greatest(crawl_origins.in_flight_count - 1, 0),
+                last_fetch_status = excluded.last_fetch_status,
+                consecutive_failures = CASE
+                    WHEN $7 THEN crawl_origins.consecutive_failures + 1
+                    ELSE 0
+                END,
+                robots_sitemaps = excluded.robots_sitemaps,
+                updated_at = excluded.updated_at",
+        )
+        .bind(developer_id)
+        .bind(requested_origin_key)
+        .bind(&robots_status)
+        .bind(crawl_delay_secs)
+        .bind(next_allowed_at)
+        .bind(result.status_code as i32)
+        .bind(failure_like)
+        .bind(&robots_sitemaps)
+        .bind(now)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        if let Some(final_origin_key) = origin_key(finalized_url)
+            && final_origin_key != requested_origin_key
+        {
+            sqlx::query(
+                "insert into crawl_origins (
+                    owner_developer_id,
+                    origin_key,
+                    robots_status,
+                    crawl_delay_secs,
+                    next_allowed_at,
+                    in_flight_count,
+                    last_fetch_status,
+                    consecutive_failures,
+                    robots_sitemaps,
+                    updated_at
+                 )
+                 values ($1, $2, $3, $4, $5, 0, $6, CASE WHEN $7 THEN 1 ELSE 0 END, $8, $9)
+                 on conflict (owner_developer_id, origin_key) do update set
+                    robots_status = excluded.robots_status,
+                    crawl_delay_secs = coalesce(excluded.crawl_delay_secs, crawl_origins.crawl_delay_secs),
+                    next_allowed_at = greatest(crawl_origins.next_allowed_at, excluded.next_allowed_at),
+                    last_fetch_status = excluded.last_fetch_status,
+                    consecutive_failures = CASE
+                        WHEN $7 THEN crawl_origins.consecutive_failures + 1
+                        ELSE 0
+                    END,
+                    robots_sitemaps = excluded.robots_sitemaps,
+                    updated_at = excluded.updated_at",
+            )
+            .bind(developer_id)
+            .bind(final_origin_key)
+            .bind(&robots_status)
+            .bind(crawl_delay_secs)
+            .bind(next_allowed_at)
+            .bind(result.status_code as i32)
+            .bind(failure_like)
+            .bind(&robots_sitemaps)
+            .bind(now)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+        }
+
+        Ok(())
+    }
 
     async fn push_event(
         &self,
@@ -1155,17 +2223,40 @@ impl CrawlerStore {
         developer_id: &str,
         urls: Vec<String>,
         source: &str,
+        budget_id: &str,
         depth: i32,
         max_depth: i32,
+        max_pages: i32,
         submitted_by: Option<&str>,
         rule_id: Option<&str>,
+        discovery_scope: DiscoveryScope,
+        discovery_host: Option<&str>,
+        max_discovered_urls_per_page: i32,
         allow_revisit: bool,
     ) -> Result<usize, ApiError> {
         let mut accepted = 0usize;
+        let mut budget_used: i64 = sqlx::query_scalar(
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and budget_id = $2",
+        )
+        .bind(developer_id)
+        .bind(budget_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .unwrap_or(0);
+        let max_pages = max_pages.max(1);
         for url in urls {
+            if budget_used >= i64::from(max_pages) {
+                break;
+            }
             let Some(normalized) = normalize_url(&url) else {
                 continue;
             };
+            let Some(origin_key) = origin_key(&normalized) else {
+                continue;
+            };
+            let resolved_discovery_host = discovery_host
+                .map(ToString::to_string)
+                .or_else(|| extract_host(&normalized));
 
             if allow_revisit {
                 // Delete any existing completed job so it can be re-queued
@@ -1190,6 +2281,7 @@ impl CrawlerStore {
             };
 
             let id = Uuid::now_v7().to_string();
+            let network = infer_network(&normalized);
             let result = sqlx::query(
                 "insert into crawl_jobs (
                     id,
@@ -1203,13 +2295,20 @@ impl CrawlerStore {
                     failure_kind,
                     failure_message,
                     source,
+                    budget_id,
                     submitted_by,
                     rule_id,
+                    discovery_scope,
+                    discovery_host,
+                    max_pages,
+                    max_discovered_urls_per_page,
+                    origin_key,
+                    network,
                     status,
                     priority,
                     discovered_at
                  )
-                 values ($1, $2, $3, $4, $5, 0, 3, null, null, null, $6, $7, $8, 'queued', $9, now())
+                 values ($1, $2, $3, $4, $5, 0, 3, null, null, null, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'queued', $16, now())
                  on conflict (owner_developer_id, url) do nothing",
             )
             .bind(&id)
@@ -1218,15 +2317,40 @@ impl CrawlerStore {
             .bind(depth)
             .bind(max_depth)
             .bind(source)
+            .bind(budget_id)
             .bind(submitted_by)
             .bind(rule_id)
+            .bind(discovery_scope.as_str())
+            .bind(resolved_discovery_host.as_deref())
+            .bind(max_pages)
+            .bind(max_discovered_urls_per_page.max(1))
+            .bind(&origin_key)
+            .bind(network)
             .bind(priority)
             .execute(&self.pg_pool)
             .await
             .map_err(|e| ApiError::Internal(e.into()))?;
 
             if result.rows_affected() > 0 {
+                sqlx::query(
+                    "insert into crawl_origins (
+                        owner_developer_id,
+                        origin_key,
+                        robots_status,
+                        next_allowed_at,
+                        in_flight_count,
+                        updated_at
+                     )
+                     values ($1, $2, 'unknown', now(), 0, now())
+                     on conflict (owner_developer_id, origin_key) do nothing",
+                )
+                .bind(developer_id)
+                .bind(&origin_key)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
                 accepted += 1;
+                budget_used += 1;
             }
         }
         Ok(accepted)
@@ -1265,7 +2389,7 @@ impl CrawlerStore {
 
     async fn apply_due_rules(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
         let due_rules = sqlx::query_as::<_, DueRuleRow>(
-            "select id, owner_developer_id, name, seed_url, max_depth
+            "select id, owner_developer_id, name, seed_url, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page
              from crawl_rules
              where enabled = true
                and (last_enqueued_at is null
@@ -1277,6 +2401,7 @@ impl CrawlerStore {
         .map_err(|e| ApiError::Internal(e.into()))?;
 
         for rule in due_rules {
+            let budget_id = Uuid::now_v7().to_string();
             sqlx::query("update crawl_rules set last_enqueued_at = $2 where id = $1")
                 .bind(&rule.id)
                 .bind(now)
@@ -1289,10 +2414,15 @@ impl CrawlerStore {
                     &rule.owner_developer_id,
                     vec![rule.seed_url.clone()],
                     &format!("rule:{}", rule.name),
+                    &budget_id,
                     0,
                     rule.max_depth,
+                    rule.max_pages,
                     Some(&rule.owner_developer_id),
                     Some(&rule.id),
+                    DiscoveryScope::from_db_value(&rule.discovery_scope),
+                    None,
+                    rule.max_discovered_urls_per_page,
                     true,
                 )
                 .await?;
@@ -1322,14 +2452,26 @@ impl CrawlerStore {
         let cutoff = now - chrono::Duration::seconds(timeout_secs);
 
         let stale = sqlx::query_as::<_, StaleJobRow>(
-            "update crawl_jobs
-             set status = 'queued',
-                 claimed_by = null,
-                 claimed_at = null,
-                 lease_expires_at = null,
-                 next_retry_at = $2
-             where status = 'claimed' and claimed_at < $1
-             returning id, owner_developer_id, url, claimed_by",
+            "with stale as (
+                 update crawl_jobs
+                 set status = 'queued',
+                     claimed_by = null,
+                     claimed_at = null,
+                     lease_expires_at = null,
+                     next_retry_at = $2
+                 where status = 'claimed' and claimed_at < $1
+                 returning id, owner_developer_id, origin_key, url, claimed_by
+             ),
+             touched_origins as (
+                 update crawl_origins origin
+                 set in_flight_count = greatest(origin.in_flight_count - 1, 0),
+                     next_allowed_at = greatest(origin.next_allowed_at, $2),
+                     updated_at = $2
+                 from (select distinct owner_developer_id, origin_key from stale) touched
+                 where origin.owner_developer_id = touched.owner_developer_id
+                   and origin.origin_key = touched.origin_key
+             )
+             select id, owner_developer_id, url, claimed_by from stale",
         )
         .bind(cutoff)
         .bind(now + chrono::Duration::seconds(30))
@@ -1352,8 +2494,47 @@ impl CrawlerStore {
         Ok(())
     }
 
+    async fn prune_stale_crawlers(
+        &self,
+        now: DateTime<Utc>,
+        claim_timeout: Duration,
+    ) -> Result<(), ApiError> {
+        let timeout_secs = claim_timeout.as_secs() as i64;
+        let cutoff = now - chrono::Duration::seconds(timeout_secs);
+
+        let stale_crawlers = sqlx::query_as::<_, PrunedCrawlerRow>(
+            "delete from crawlers c
+             where c.last_seen_at < $1
+               and not exists (
+                   select 1
+                   from crawl_jobs j
+                   where j.claimed_by = c.id
+                     and j.status = 'claimed'
+               )
+             returning id, owner_developer_id, name",
+        )
+        .bind(cutoff)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        for crawler in stale_crawlers {
+            self.push_event(
+                &crawler.owner_developer_id,
+                "crawler-pruned",
+                "ok",
+                format!("removed offline crawler {}", crawler.name),
+                None,
+                Some(crawler.id),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
     async fn get_config(&self, key: &str) -> Result<Option<String>, ApiError> {
-        sqlx::query_scalar::<_, String>("select value from crawler_config where key = $1")
+        sqlx::query_scalar::<_, String>("select value from system_config where key = $1")
             .bind(key)
             .fetch_optional(&self.pg_pool)
             .await
@@ -1373,7 +2554,7 @@ impl CrawlerStore {
 
     async fn set_config(&self, key: &str, value: &str) -> Result<(), ApiError> {
         sqlx::query(
-            "insert into crawler_config (key, value, updated_at) values ($1, $2, now())
+            "insert into system_config (key, value, updated_at) values ($1, $2, now())
              on conflict (key) do update set value = excluded.value, updated_at = now()",
         )
         .bind(key)
@@ -1385,7 +2566,7 @@ impl CrawlerStore {
     }
 
     async fn delete_config(&self, key: &str) -> Result<(), ApiError> {
-        sqlx::query("delete from crawler_config where key = $1")
+        sqlx::query("delete from system_config where key = $1")
             .bind(key)
             .execute(&self.pg_pool)
             .await
@@ -1432,6 +2613,9 @@ struct CrawlRuleRow {
     seed_url: String,
     interval_minutes: i64,
     max_depth: i32,
+    max_pages: i32,
+    discovery_scope: String,
+    max_discovered_urls_per_page: i32,
     enabled: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -1453,11 +2637,13 @@ struct CrawlEventRow {
 struct ClaimedJobRow {
     id: String,
     url: String,
+    origin_key: String,
     source: String,
     depth: i32,
     max_depth: i32,
     attempt_count: i32,
     discovered_at: DateTime<Utc>,
+    network: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1465,11 +2651,17 @@ struct InFlightJobRow {
     #[allow(dead_code)]
     id: String,
     url: String,
+    origin_key: String,
     depth: i32,
     max_depth: i32,
+    max_pages: i32,
+    budget_id: String,
     rule_id: Option<String>,
     attempt_count: i32,
     max_attempts: i32,
+    discovery_scope: String,
+    discovery_host: Option<String>,
+    max_discovered_urls_per_page: i32,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1479,6 +2671,9 @@ struct DueRuleRow {
     name: String,
     seed_url: String,
     max_depth: i32,
+    max_pages: i32,
+    discovery_scope: String,
+    max_discovered_urls_per_page: i32,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1490,9 +2685,27 @@ struct StaleJobRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct StaleDocRow {
+    canonical_url: String,
+    host: String,
+    owner_developer_id: String,
+    budget_id: String,
+    rule_id: Option<String>,
+    discovery_scope: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct PrunedCrawlerRow {
+    id: String,
+    owner_developer_id: String,
+    name: String,
+}
+
+#[derive(sqlx::FromRow)]
 struct JobListRow {
     id: String,
     url: String,
+    origin_key: String,
     final_url: Option<String>,
     status: String,
     depth: i32,
@@ -1509,6 +2722,11 @@ struct JobListRow {
     http_status: Option<i32>,
     discovered_urls_count: i32,
     accepted_document_id: Option<String>,
+    llm_decision: Option<String>,
+    llm_reason: Option<String>,
+    llm_relevance_score: Option<f32>,
+    canonical_hint: Option<String>,
+    canonical_source: Option<String>,
     failure_kind: Option<String>,
     failure_message: Option<String>,
     finished_at: Option<DateTime<Utc>>,
@@ -1524,10 +2742,73 @@ struct JobStatsRow {
     dead_letter: Option<i64>,
 }
 
+#[derive(sqlx::FromRow)]
+struct CrawlOriginRow {
+    origin_key: String,
+    robots_status: String,
+    crawl_delay_secs: Option<i32>,
+    next_allowed_at: DateTime<Utc>,
+    in_flight_count: i32,
+    last_fetch_status: Option<i32>,
+    consecutive_failures: i32,
+    robots_sitemaps: serde_json::Value,
+    updated_at: DateTime<Utc>,
+}
+
 // ---- free functions ----
+
+fn infer_network(url: &str) -> &'static str {
+    if url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.ends_with(".onion")))
+        .unwrap_or(false)
+    {
+        "tor"
+    } else {
+        "clearnet"
+    }
+}
+
+fn origin_ready_at(now: DateTime<Utc>, result: &CrawlResultInput) -> DateTime<Utc> {
+    let crawl_delay_secs = result.applied_crawl_delay_secs.unwrap_or(1).max(1);
+    let retry_after_secs = result.retry_after_secs.unwrap_or(0);
+    let extra_backoff_secs = match result.status_code {
+        429 => retry_after_secs.max(30),
+        500..=599 => retry_after_secs.max(60),
+        _ if matches!(result.error_kind.as_deref(), Some("network_error")) => 45,
+        _ if matches!(result.error_kind.as_deref(), Some("robots")) => 300,
+        _ => 0,
+    };
+    let wait_secs = crawl_delay_secs
+        .max(retry_after_secs)
+        .max(extra_backoff_secs);
+    now + chrono::Duration::seconds(wait_secs.min(i64::MAX as u64) as i64)
+}
+
+fn trusted_canonical_url(result: &CrawlResultInput) -> Option<String> {
+    let canonical_hint = result.canonical_hint.as_deref().and_then(normalize_url)?;
+    let final_url = result
+        .final_url
+        .as_deref()
+        .or(Some(result.url.as_str()))
+        .and_then(normalize_url)?;
+    let canonical_host = extract_host(&canonical_hint)?;
+    let final_host = extract_host(&final_url)?;
+
+    if host_matches_scope(&canonical_host, &final_host, DiscoveryScope::SameDomain)
+        || host_matches_scope(&final_host, &canonical_host, DiscoveryScope::SameDomain)
+    {
+        Some(canonical_hint)
+    } else {
+        None
+    }
+}
 
 enum JobOutcome {
     Succeeded(IndexedDocument),
+    Filtered {
+        reason: String,
+    },
     Retryable {
         failure_kind: String,
         failure_message: String,
@@ -1542,6 +2823,10 @@ enum JobOutcome {
         failure_message: String,
     },
     DeadLetter {
+        failure_kind: String,
+        failure_message: String,
+    },
+    Gone {
         failure_kind: String,
         failure_message: String,
     },
@@ -1562,6 +2847,16 @@ fn classify_job_outcome(result: &CrawlResultInput, job: &InFlightJobRow) -> JobO
     let attempt_count = job.attempt_count.max(1) as u32;
     let max_attempts = job.max_attempts.max(1) as u32;
 
+    if result.status_code == 304 {
+        return JobOutcome::Filtered {
+            reason: "304 Not Modified — content unchanged".to_string(),
+        };
+    }
+
+    if let Some(reason) = filtered_reason(result) {
+        return JobOutcome::Filtered { reason };
+    }
+
     if (200..300).contains(&result.status_code) && result.error_kind.is_none() {
         if let Some(document) = build_document(result) {
             return JobOutcome::Succeeded(document);
@@ -1570,6 +2865,13 @@ fn classify_job_outcome(result: &CrawlResultInput, job: &InFlightJobRow) -> JobO
             failure_kind: "unindexable_document".to_string(),
             failure_message: "fetch succeeded but parsing produced no indexable document"
                 .to_string(),
+        };
+    }
+
+    if matches!(result.status_code, 404 | 410) {
+        return JobOutcome::Gone {
+            failure_kind: kind,
+            failure_message: message,
         };
     }
 
@@ -1602,6 +2904,31 @@ fn classify_job_outcome(result: &CrawlResultInput, job: &InFlightJobRow) -> JobO
     }
 }
 
+fn filtered_reason(result: &CrawlResultInput) -> Option<String> {
+    if !(200..300).contains(&result.status_code) {
+        return None;
+    }
+
+    match result.error_kind.as_deref() {
+        Some("page_noindex") => Some(
+            result
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "page filtered by robots directives".to_string()),
+        ),
+        Some(_) => None,
+        None => match result.llm_should_index {
+            Some(false) => Some(
+                result
+                    .llm_reason
+                    .clone()
+                    .unwrap_or_else(|| "page filtered by llm".to_string()),
+            ),
+            _ => None,
+        },
+    }
+}
+
 fn build_document(result: &CrawlResultInput) -> Option<IndexedDocument> {
     if !(200..300).contains(&result.status_code) {
         return None;
@@ -1620,14 +2947,15 @@ fn build_document(result: &CrawlResultInput) -> Option<IndexedDocument> {
         .final_url
         .clone()
         .unwrap_or_else(|| result.url.clone());
-    let host = extract_host(&resolved_url);
+    let canonical_url = trusted_canonical_url(result).unwrap_or_else(|| resolved_url.clone());
+    let host = extract_host(&canonical_url);
     let body_word_count = word_count(&body) as u32;
 
     let document = IndexedDocument {
         id: stable_document_id(&resolved_url),
         title,
         url: resolved_url.clone(),
-        display_url: display_url(&resolved_url),
+        display_url: display_url(&canonical_url),
         snippet: snippet.chars().take(220).collect(),
         body: body.clone(),
         language: result
@@ -1635,7 +2963,7 @@ fn build_document(result: &CrawlResultInput) -> Option<IndexedDocument> {
             .clone()
             .unwrap_or_else(|| "unknown".to_string()),
         last_crawled_at: result.fetched_at,
-        canonical_url: Some(resolved_url),
+        canonical_url: Some(canonical_url),
         host,
         content_hash: Some(content_hash(&body)),
         suggest_terms,
@@ -1645,6 +2973,7 @@ fn build_document(result: &CrawlResultInput) -> Option<IndexedDocument> {
             .clone()
             .unwrap_or_else(|| "text/html".to_string()),
         word_count: body_word_count,
+        network: result.network.clone(),
         source_job_id: Some(result.job_id.clone()),
         parser_version: CURRENT_PARSER_VERSION,
         schema_version: CURRENT_SCHEMA_VERSION,
@@ -1658,6 +2987,47 @@ fn build_document(result: &CrawlResultInput) -> Option<IndexedDocument> {
     }
 
     Some(document)
+}
+
+fn filter_discovered_urls(
+    urls: Vec<String>,
+    scope: DiscoveryScope,
+    anchor_host: Option<&str>,
+    max_urls: usize,
+) -> Vec<String> {
+    if urls.is_empty() {
+        return Vec::new();
+    }
+
+    let mut filtered = Vec::new();
+    for url in urls {
+        let allowed = match (scope, anchor_host) {
+            (DiscoveryScope::Any, _) => true,
+            (_, Some(anchor_host)) => extract_host(&url)
+                .map(|host| host_matches_scope(&host, anchor_host, scope))
+                .unwrap_or(false),
+            _ => false,
+        };
+
+        if allowed {
+            filtered.push(url);
+            if filtered.len() >= max_urls {
+                break;
+            }
+        }
+    }
+
+    filtered
+}
+
+fn summarize_llm_decision(result: &CrawlResultInput) -> Option<String> {
+    match (result.llm_should_index, result.llm_should_discover) {
+        (Some(false), Some(true)) => Some("discover_only".to_string()),
+        (Some(false), _) => Some("filtered".to_string()),
+        (Some(true), Some(false)) => Some("index_only".to_string()),
+        (Some(true), _) => Some("indexed".to_string()),
+        _ => None,
+    }
 }
 
 fn bearer_hash(auth_header: Option<&str>) -> Result<String, ApiError> {
@@ -1675,23 +3045,6 @@ fn bearer_hash(auth_header: Option<&str>) -> Result<String, ApiError> {
     Ok(hash_token(token))
 }
 
-fn hash_token(token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn generate_token(prefix: &str) -> String {
-    use rand::{Rng, distr::Alphanumeric};
-
-    let secret = rand::rng()
-        .sample_iter(&Alphanumeric)
-        .take(40)
-        .map(char::from)
-        .collect::<String>();
-    format!("{prefix}_{secret}")
-}
-
 fn validate_rule_name(input: &str) -> Result<String, ApiError> {
     let clean = input.trim();
     if clean.len() < 2 {
@@ -1700,6 +3053,23 @@ fn validate_rule_name(input: &str) -> Result<String, ApiError> {
         ));
     }
     Ok(clean.to_string())
+}
+
+fn normalize_domain_input(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(host) = extract_host(trimmed) {
+        return Some(host.to_ascii_lowercase());
+    }
+
+    extract_host(&format!("https://{trimmed}")).map(|host| host.to_ascii_lowercase())
+}
+
+fn domain_like_pattern(domain: &str) -> String {
+    format!("%.{}", domain.to_ascii_lowercase())
 }
 
 fn infer_failure_kind(status_code: u16) -> String {
@@ -1743,8 +3113,27 @@ fn backoff_seconds_for_attempt(attempt_count: u32) -> i64 {
 }
 
 #[cfg(test)]
+fn crawler_seen_within_timeout(
+    last_seen_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    timeout: Duration,
+) -> bool {
+    let timeout_secs = timeout.as_secs() as i64;
+    let cutoff = now - chrono::Duration::seconds(timeout_secs);
+    last_seen_at.is_some_and(|last_seen| last_seen >= cutoff)
+}
+
+#[cfg(test)]
 mod tests {
-    use super::normalize_url;
+    use std::time::Duration;
+
+    use chrono::{TimeDelta, Utc};
+
+    use super::{
+        InFlightJobRow, JobOutcome, classify_job_outcome, crawler_seen_within_timeout,
+        normalize_domain_input, normalize_url, origin_ready_at, trusted_canonical_url,
+    };
+    use crate::models::CrawlResultInput;
 
     #[test]
     fn normalize_url_rejects_invalid_schemes_and_fragments() {
@@ -1753,5 +3142,168 @@ mod tests {
             normalize_url("https://example.com/a#fragment"),
             Some("https://example.com/a".to_string())
         );
+    }
+
+    #[test]
+    fn normalize_domain_input_accepts_hosts_and_urls() {
+        assert_eq!(
+            normalize_domain_input("https://Docs.Example.com/path?q=1"),
+            Some("docs.example.com".to_string())
+        );
+        assert_eq!(
+            normalize_domain_input("sub.example.com/docs"),
+            Some("sub.example.com".to_string())
+        );
+        assert_eq!(normalize_domain_input(""), None);
+    }
+
+    #[test]
+    fn classify_job_outcome_filters_page_noindex() {
+        let job = InFlightJobRow {
+            id: "job-1".to_string(),
+            url: "https://example.com".to_string(),
+            origin_key: "https://example.com".to_string(),
+            depth: 0,
+            max_depth: 1,
+            max_pages: 50,
+            budget_id: "budget-1".to_string(),
+            rule_id: None,
+            attempt_count: 1,
+            max_attempts: 3,
+            discovery_scope: "same_domain".to_string(),
+            discovery_host: Some("example.com".to_string()),
+            max_discovered_urls_per_page: 50,
+        };
+        let result = CrawlResultInput {
+            job_id: "job-1".to_string(),
+            url: "https://example.com".to_string(),
+            status_code: 200,
+            fetched_at: Utc::now(),
+            final_url: Some("https://example.com".to_string()),
+            redirect_chain: Vec::new(),
+            content_type: Some("text/html".to_string()),
+            title: Some("Example".to_string()),
+            snippet: Some("Example".to_string()),
+            body: None,
+            canonical_hint: None,
+            canonical_source: None,
+            language: Some("eng".to_string()),
+            discovered_urls: vec!["https://example.com/docs".to_string()],
+            site_authority: Some(0.5),
+            llm_should_index: None,
+            llm_should_discover: None,
+            llm_relevance_score: None,
+            llm_reason: None,
+            retryable: Some(false),
+            error_kind: Some("page_noindex".to_string()),
+            error_message: Some("page requested noindex via robots directives".to_string()),
+            network: "clearnet".to_string(),
+            http_etag: None,
+            http_last_modified: None,
+            applied_crawl_delay_secs: None,
+            retry_after_secs: None,
+            robots_status: None,
+            robots_sitemaps: Vec::new(),
+        };
+
+        match classify_job_outcome(&result, &job) {
+            JobOutcome::Filtered { reason } => {
+                assert_eq!(reason, "page requested noindex via robots directives");
+            }
+            _ => panic!("expected filtered outcome"),
+        }
+    }
+
+    #[test]
+    fn crawler_seen_within_timeout_requires_recent_heartbeat() {
+        let now = Utc::now();
+        let timeout = Duration::from_secs(300);
+
+        assert!(crawler_seen_within_timeout(
+            Some(now - TimeDelta::seconds(299)),
+            now,
+            timeout
+        ));
+        assert!(!crawler_seen_within_timeout(
+            Some(now - TimeDelta::seconds(301)),
+            now,
+            timeout
+        ));
+        assert!(!crawler_seen_within_timeout(None, now, timeout));
+    }
+
+    #[test]
+    fn trusted_canonical_url_rejects_cross_domain_hints() {
+        let result = CrawlResultInput {
+            job_id: "job-1".to_string(),
+            url: "https://example.com/docs".to_string(),
+            status_code: 200,
+            fetched_at: Utc::now(),
+            final_url: Some("https://example.com/docs".to_string()),
+            redirect_chain: Vec::new(),
+            content_type: Some("text/html".to_string()),
+            title: Some("Docs".to_string()),
+            snippet: Some("Docs".to_string()),
+            body: Some("Hello".to_string()),
+            canonical_hint: Some("https://other.example.net/docs".to_string()),
+            canonical_source: Some("rel_canonical".to_string()),
+            language: Some("eng".to_string()),
+            discovered_urls: Vec::new(),
+            site_authority: Some(0.5),
+            llm_should_index: None,
+            llm_should_discover: None,
+            llm_relevance_score: None,
+            llm_reason: None,
+            retryable: Some(false),
+            error_kind: None,
+            error_message: None,
+            network: "clearnet".to_string(),
+            http_etag: None,
+            http_last_modified: None,
+            applied_crawl_delay_secs: Some(5),
+            retry_after_secs: None,
+            robots_status: Some("fetched".to_string()),
+            robots_sitemaps: Vec::new(),
+        };
+
+        assert_eq!(trusted_canonical_url(&result), None);
+    }
+
+    #[test]
+    fn origin_ready_at_prefers_retry_after_for_throttled_hosts() {
+        let now = Utc::now();
+        let result = CrawlResultInput {
+            job_id: "job-1".to_string(),
+            url: "https://example.com/docs".to_string(),
+            status_code: 429,
+            fetched_at: now,
+            final_url: Some("https://example.com/docs".to_string()),
+            redirect_chain: Vec::new(),
+            content_type: Some("text/html".to_string()),
+            title: None,
+            snippet: None,
+            body: None,
+            canonical_hint: None,
+            canonical_source: None,
+            language: None,
+            discovered_urls: Vec::new(),
+            site_authority: None,
+            llm_should_index: None,
+            llm_should_discover: None,
+            llm_relevance_score: None,
+            llm_reason: None,
+            retryable: Some(true),
+            error_kind: Some("http_429".to_string()),
+            error_message: Some("throttled".to_string()),
+            network: "clearnet".to_string(),
+            http_etag: None,
+            http_last_modified: None,
+            applied_crawl_delay_secs: Some(3),
+            retry_after_secs: Some(120),
+            robots_status: Some("fetched".to_string()),
+            robots_sitemaps: Vec::new(),
+        };
+
+        assert!(origin_ready_at(now, &result) >= now + TimeDelta::seconds(120));
     }
 }

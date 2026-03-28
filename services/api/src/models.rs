@@ -1,5 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
-use findverse_common::{CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION};
+use findverse_common::{
+    CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, DiscoveryScope,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +28,8 @@ pub struct IndexedDocument {
     pub content_type: String,
     #[serde(default)]
     pub word_count: u32,
+    #[serde(default = "crate::models::default_network")]
+    pub network: String,
     #[serde(default)]
     pub source_job_id: Option<String>,
     #[serde(default = "default_parser_version")]
@@ -58,6 +62,10 @@ fn default_index_version() -> i32 {
     CURRENT_INDEX_VERSION
 }
 
+pub fn default_network() -> String {
+    "clearnet".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchParams {
     pub q: String,
@@ -67,6 +75,7 @@ pub struct SearchParams {
     pub offset: usize,
     pub lang: Option<String>,
     pub site: Option<String>,
+    pub network: Option<String>,
     #[serde(default)]
     pub freshness: Freshness,
 }
@@ -183,6 +192,82 @@ pub struct DeveloperUsageResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct DeveloperDomainInsightQuery {
+    pub domain: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeveloperDomainSubmitRequest {
+    pub domain: String,
+    pub urls: Vec<String>,
+    #[serde(default = "default_rule_depth")]
+    pub max_depth: u32,
+    #[serde(default = "default_max_pages")]
+    pub max_pages: u32,
+    #[serde(default)]
+    pub allow_revisit: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeveloperDomainFacet {
+    pub label: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeveloperDomainDocument {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub display_url: String,
+    pub language: String,
+    pub last_crawled_at: DateTime<Utc>,
+    pub word_count: u32,
+    pub content_type: String,
+    pub duplicate_of: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeveloperDomainJob {
+    pub id: String,
+    pub url: String,
+    pub status: String,
+    pub http_status: Option<u16>,
+    pub depth: u32,
+    pub discovered_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub failure_kind: Option<String>,
+    pub failure_message: Option<String>,
+    pub accepted_document_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeveloperDomainInsightResponse {
+    pub domain: String,
+    pub property_url: String,
+    pub indexed_documents: usize,
+    pub duplicate_documents: usize,
+    pub pending_jobs: usize,
+    pub successful_jobs: usize,
+    pub filtered_jobs: usize,
+    pub failed_jobs: usize,
+    pub blocked_jobs: usize,
+    pub last_indexed_at: Option<DateTime<Utc>>,
+    pub last_crawled_at: Option<DateTime<Utc>>,
+    pub top_languages: Vec<DeveloperDomainFacet>,
+    pub top_content_types: Vec<DeveloperDomainFacet>,
+    pub recent_documents: Vec<DeveloperDomainDocument>,
+    pub recent_jobs: Vec<DeveloperDomainJob>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeveloperDomainSubmitResponse {
+    pub accepted_urls: usize,
+    pub queued_domain_jobs: usize,
+    pub known_domain_urls: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RenameCrawlerRequest {
     pub name: String,
 }
@@ -207,6 +292,9 @@ pub struct CrawlRule {
     pub seed_url: String,
     pub interval_minutes: u64,
     pub max_depth: u32,
+    pub max_pages: u32,
+    pub discovery_scope: DiscoveryScope,
+    pub max_discovered_urls_per_page: u32,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -221,6 +309,12 @@ pub struct CreateCrawlRuleRequest {
     pub interval_minutes: u64,
     #[serde(default = "default_rule_depth")]
     pub max_depth: u32,
+    #[serde(default = "default_max_pages")]
+    pub max_pages: u32,
+    #[serde(default)]
+    pub discovery_scope: DiscoveryScope,
+    #[serde(default = "default_max_discovered_urls_per_page")]
+    pub max_discovered_urls_per_page: u32,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
@@ -231,6 +325,9 @@ pub struct UpdateCrawlRuleRequest {
     pub seed_url: Option<String>,
     pub interval_minutes: Option<u64>,
     pub max_depth: Option<u32>,
+    pub max_pages: Option<u32>,
+    pub discovery_scope: Option<DiscoveryScope>,
+    pub max_discovered_urls_per_page: Option<u32>,
     pub enabled: Option<bool>,
 }
 
@@ -240,6 +337,14 @@ fn default_interval_minutes() -> u64 {
 
 fn default_rule_depth() -> u32 {
     2
+}
+
+fn default_max_pages() -> u32 {
+    50
+}
+
+fn default_max_discovered_urls_per_page() -> u32 {
+    50
 }
 
 fn default_enabled() -> bool {
@@ -277,6 +382,12 @@ pub struct SeedFrontierRequest {
     pub source: Option<String>,
     #[serde(default = "default_rule_depth")]
     pub max_depth: u32,
+    #[serde(default = "default_max_pages")]
+    pub max_pages: u32,
+    #[serde(default)]
+    pub discovery_scope: DiscoveryScope,
+    #[serde(default = "default_max_discovered_urls_per_page")]
+    pub max_discovered_urls_per_page: u32,
     #[serde(default)]
     pub allow_revisit: bool,
 }
@@ -302,11 +413,18 @@ fn default_claim_max_jobs() -> usize {
 pub struct CrawlJob {
     pub job_id: String,
     pub url: String,
+    pub origin_key: String,
     pub source: String,
     pub depth: u32,
     pub max_depth: u32,
     pub attempt_count: u32,
     pub discovered_at: DateTime<Utc>,
+    #[serde(default = "crate::models::default_network")]
+    pub network: String,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -328,17 +446,41 @@ pub struct CrawlResultInput {
     pub status_code: u16,
     pub fetched_at: DateTime<Utc>,
     pub final_url: Option<String>,
+    #[serde(default)]
+    pub redirect_chain: Vec<String>,
     pub content_type: Option<String>,
     pub title: Option<String>,
     pub snippet: Option<String>,
     pub body: Option<String>,
+    #[serde(default)]
+    pub canonical_hint: Option<String>,
+    #[serde(default)]
+    pub canonical_source: Option<String>,
     pub language: Option<String>,
     #[serde(default)]
     pub discovered_urls: Vec<String>,
     pub site_authority: Option<f32>,
+    pub llm_should_index: Option<bool>,
+    pub llm_should_discover: Option<bool>,
+    pub llm_relevance_score: Option<f32>,
+    pub llm_reason: Option<String>,
     pub retryable: Option<bool>,
     pub error_kind: Option<String>,
     pub error_message: Option<String>,
+    #[serde(default = "crate::models::default_network")]
+    pub network: String,
+    #[serde(default)]
+    pub http_etag: Option<String>,
+    #[serde(default)]
+    pub http_last_modified: Option<String>,
+    #[serde(default)]
+    pub applied_crawl_delay_secs: Option<u64>,
+    #[serde(default)]
+    pub retry_after_secs: Option<u64>,
+    #[serde(default)]
+    pub robots_status: Option<String>,
+    #[serde(default)]
+    pub robots_sitemaps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -387,6 +529,23 @@ pub struct PurgeSiteRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct PurgeSiteResponse {
     pub deleted_documents: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SystemConfigEntry {
+    pub key: String,
+    pub value: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SetSystemConfigRequest {
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SystemConfigResponse {
+    pub entries: Vec<SystemConfigEntry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -440,6 +599,7 @@ pub struct AdminDeveloperRecord {
 pub struct UpdateDeveloperRequest {
     pub daily_limit: Option<u32>,
     pub enabled: Option<bool>,
+    pub password: Option<String>,
 }
 
 // Crawler join key
@@ -466,6 +626,7 @@ pub struct CrawlerJoinKeyResponse {
 pub struct CrawlJobDetail {
     pub id: String,
     pub url: String,
+    pub origin_key: String,
     pub final_url: Option<String>,
     pub status: String,
     pub depth: u32,
@@ -482,6 +643,11 @@ pub struct CrawlJobDetail {
     pub http_status: Option<u16>,
     pub discovered_urls_count: usize,
     pub accepted_document_id: Option<String>,
+    pub llm_decision: Option<String>,
+    pub llm_reason: Option<String>,
+    pub llm_relevance_score: Option<f32>,
+    pub canonical_hint: Option<String>,
+    pub canonical_source: Option<String>,
     pub failure_kind: Option<String>,
     pub failure_message: Option<String>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -502,6 +668,19 @@ pub struct CrawlJobStats {
     pub failed: usize,
     pub blocked: usize,
     pub dead_letter: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CrawlOriginState {
+    pub origin_key: String,
+    pub robots_status: String,
+    pub crawl_delay_secs: Option<u32>,
+    pub next_allowed_at: DateTime<Utc>,
+    pub in_flight_count: u32,
+    pub last_fetch_status: Option<u16>,
+    pub consecutive_failures: u32,
+    pub robots_sitemaps: Vec<String>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -11,6 +11,9 @@ RUN npm ci
 
 COPY apps/web apps/web
 
+ARG FINDVERSE_SITE_NAME=FindVerse
+ENV VITE_FINDVERSE_SITE_NAME=${FINDVERSE_SITE_NAME}
+
 RUN npm run build:web
 
 FROM quay.io/nginx/nginx-unprivileged:stable-alpine AS runner

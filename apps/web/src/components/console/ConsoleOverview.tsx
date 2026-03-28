@@ -1,80 +1,61 @@
 import { useConsole } from "./ConsoleContext";
+import { useTranslation } from "react-i18next";
+import { SectionHeader, StatStrip } from "../common/PanelPrimitives";
 
 export function ConsoleOverview() {
   const { overview, developers } = useConsole();
+  const { t } = useTranslation();
+  const recentEvents = overview?.recent_events ?? [];
+  const activeCrawlerCount =
+    overview?.crawlers.filter((crawler) => {
+      if (!crawler.last_seen_at) return false;
+      return Date.now() - new Date(crawler.last_seen_at).getTime() < 5 * 60 * 1000;
+    }).length ?? 0;
 
   return (
     <>
       <section className="panel panel-wide compact-panel">
-        <div className="section-header">
-          <h2>System overview</h2>
-          <span className="section-meta">{overview?.recent_events.length ?? 0} recent events</span>
-        </div>
-        <div className="dense-grid">
-          <div className="metric-card">
-            <span>Indexed docs</span>
-            <strong>{overview?.indexed_documents ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Duplicates</span>
-            <strong>{overview?.duplicate_documents ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Queued jobs</span>
-            <strong>{overview?.frontier_depth ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Known URLs</span>
-            <strong>{overview?.known_urls ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>In flight</span>
-            <strong>{overview?.in_flight_jobs ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Active rules</span>
-            <strong>{overview?.rules.filter((r) => r.enabled).length ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Workers</span>
-            <strong>{overview?.crawlers.length ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Terminal failures</span>
-            <strong>{overview?.terminal_failures ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Developer accounts</span>
-            <strong>{developers.length}</strong>
-          </div>
-        </div>
+        <SectionHeader
+          title={t("console.overview.title")}
+          meta={t("console.overview.recent_events_count", { count: recentEvents.length })}
+        />
+        <StatStrip
+          items={[
+            { label: t("console.overview.indexed_docs"), value: overview?.indexed_documents ?? 0 },
+            { label: t("console.overview.duplicates"), value: overview?.duplicate_documents ?? 0 },
+            { label: t("console.overview.queued_jobs"), value: overview?.frontier_depth ?? 0 },
+            { label: t("console.overview.known_urls"), value: overview?.known_urls ?? 0 },
+            { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
+            { label: t("console.overview.active_rules"), value: overview?.rules.filter((r) => r.enabled).length ?? 0 },
+            { label: t("console.overview.workers"), value: activeCrawlerCount },
+            { label: t("console.overview.terminal_failures"), value: overview?.terminal_failures ?? 0 },
+            { label: t("console.overview.developer_accounts"), value: developers.length },
+          ]}
+        />
       </section>
 
       <section className="panel panel-wide compact-panel">
-        <div className="section-header">
-          <h2>Recent crawl events</h2>
-          <span className="section-meta">Automation health and worker activity</span>
-        </div>
+        <SectionHeader title={t("console.overview.recent_events")} meta={t("console.overview.recent_events_meta")} />
         <div className="dense-list">
-          {overview?.recent_events.length ? (
-            overview.recent_events.map((event) => (
+          {recentEvents.length ? (
+            recentEvents.map((event) => (
               <div className="compact-row event-row" key={event.id}>
-                <div className="row-primary">
+                <div className="row-meta row-meta-tight">
                   <strong>{event.kind}</strong>
-                  <span>{event.message}</span>
-                </div>
-                <div className="row-meta">
                   <span className={event.status === "ok" ? "status-pill" : "status-pill status-pill-muted"}>
                     {event.status}
                   </span>
                   <span>{event.created_at}</span>
-                  {event.url ? <span>{event.url}</span> : null}
-                  {event.crawler_id ? <span>{event.crawler_id}</span> : null}
+                  {event.crawler_id ? <code>{event.crawler_id}</code> : null}
+                </div>
+                <div className="row-primary">
+                  <span>{event.message}</span>
+                  {event.url ? <code>{event.url}</code> : null}
                 </div>
               </div>
             ))
           ) : (
-            <div className="list-row">No crawl events yet.</div>
+            <div className="list-row">{t("console.overview.no_events")}</div>
           )}
         </div>
       </section>

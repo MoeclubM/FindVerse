@@ -4,6 +4,7 @@ use anyhow::Context;
 use chrono::Utc;
 use redis::AsyncCommands;
 use reqwest::{Client, StatusCode};
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
 use tracing::warn;
@@ -84,7 +85,48 @@ impl SearchIndex {
             .fetch_one(&self.pg_pool)
             .await
             .unwrap_or(0);
-        if existing == 0 {
+        let should_import = if existing == 0 {
+            true
+        } else {
+            let indexed = match self
+                .http_client
+                .get(self.index_endpoint("/_count"))
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => response
+                    .json::<OpenSearchCountResponse>()
+                    .await
+                    .map(|payload| payload.count)
+                    .unwrap_or(0),
+                Ok(response) => {
+                    warn!(
+                        status = %response.status(),
+                        "failed to inspect bootstrap opensearch count, reimporting bootstrap documents"
+                    );
+                    0
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "failed to inspect bootstrap opensearch count, reimporting bootstrap documents"
+                    );
+                    0
+                }
+            };
+
+            if indexed == 0 {
+                warn!(
+                    postgres_documents = existing,
+                    "bootstrap documents exist in postgres but are missing from opensearch, reimporting"
+                );
+                true
+            } else {
+                false
+            }
+        };
+
+        if should_import {
             if let Err(error) = self.upsert_documents(documents).await {
                 warn!(?error, "failed to import bootstrap documents");
             }
@@ -266,13 +308,16 @@ impl SearchIndex {
             .await
             .map_err(|error| ApiError::Internal(error.into()))?;
 
-            self.persist_document(&normalized).await?;
+            let replaced_document_ids = self.persist_document(&normalized).await?;
 
             if normalized.duplicate_of.is_some() {
                 self.delete_index_document(&normalized.id).await;
                 outcome.duplicate_documents += 1;
             } else {
                 self.index_document(&normalized).await?;
+                for document_id in replaced_document_ids {
+                    self.delete_index_document(&document_id).await;
+                }
             }
 
             outcome.accepted_documents += 1;
@@ -433,7 +478,10 @@ impl SearchIndex {
         })
     }
 
-    async fn persist_document(&self, document: &NormalizedDocument) -> Result<(), ApiError> {
+    async fn persist_document(
+        &self,
+        document: &NormalizedDocument,
+    ) -> Result<Vec<String>, ApiError> {
         let suggest_terms = serde_json::to_value(&document.suggest_terms)
             .map_err(|error| ApiError::Internal(error.into()))?;
 
@@ -455,6 +503,7 @@ impl SearchIndex {
                 last_crawled_at,
                 content_type,
                 word_count,
+                network,
                 source_job_id,
                 parser_version,
                 schema_version,
@@ -483,6 +532,7 @@ impl SearchIndex {
                 $18,
                 $19,
                 $20,
+                $21,
                 setweight(to_tsvector('simple', $6), 'A') ||
                 setweight(to_tsvector('simple', $8), 'B') ||
                 setweight(to_tsvector('simple', $9), 'C') ||
@@ -503,6 +553,7 @@ impl SearchIndex {
                 last_crawled_at = excluded.last_crawled_at,
                 content_type = excluded.content_type,
                 word_count = excluded.word_count,
+                network = excluded.network,
                 source_job_id = excluded.source_job_id,
                 parser_version = excluded.parser_version,
                 schema_version = excluded.schema_version,
@@ -526,6 +577,7 @@ impl SearchIndex {
         .bind(document.last_crawled_at)
         .bind(&document.content_type)
         .bind(document.word_count as i32)
+        .bind(&document.network)
         .bind(document.source_job_id.as_deref())
         .bind(document.parser_version)
         .bind(document.schema_version)
@@ -535,16 +587,19 @@ impl SearchIndex {
         .await
         .map_err(|error| ApiError::Internal(error.into()))?;
 
+        let mut replaced_document_ids = Vec::new();
         if document.duplicate_of.is_none() {
-            sqlx::query("delete from documents where canonical_url = $1 and id != $2 and duplicate_of is null")
+            replaced_document_ids = sqlx::query_scalar(
+                "delete from documents where canonical_url = $1 and id != $2 and duplicate_of is null returning id",
+            )
                 .bind(&document.canonical_url)
                 .bind(&document.id)
-                .execute(&self.pg_pool)
+                .fetch_all(&self.pg_pool)
                 .await
                 .map_err(|error| ApiError::Internal(error.into()))?;
         }
 
-        Ok(())
+        Ok(replaced_document_ids)
     }
 
     async fn ensure_index(&self) -> anyhow::Result<()> {
@@ -617,6 +672,7 @@ impl SearchIndex {
             "site_authority": { "type": "float" },
             "content_type": { "type": "keyword" },
             "word_count": { "type": "integer" },
+            "network": { "type": "keyword" },
             "suggest_input": { "type": "completion" }
         })
     }
@@ -690,4 +746,9 @@ struct DocumentSummaryRow {
     index_version: i32,
     source_job_id: Option<String>,
     duplicate_of: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenSearchCountResponse {
+    count: i64,
 }

@@ -17,6 +17,11 @@ param(
     [int]$PollIntervalSecs = 5,
     [string]$AllowedDomains,
     [string]$Proxy,
+    [string]$LlmBaseUrl,
+    [string]$LlmApiKey,
+    [string]$LlmModel,
+    [double]$LlmMinScore = 0.45,
+    [int]$LlmMaxBodyChars = 6000,
     [string]$BinaryPath,
     [string]$EnvFile = ".env.crawler"
 )
@@ -47,6 +52,17 @@ function Start-CrawlerWorker {
     }
     if ($Proxy) {
         $workerArgs += @("--proxy", $Proxy)
+    }
+    if ($LlmBaseUrl -and $LlmModel) {
+        $workerArgs += @(
+            "--llm-base-url", $LlmBaseUrl,
+            "--llm-model", $LlmModel,
+            "--llm-min-score", $LlmMinScore,
+            "--llm-max-body-chars", $LlmMaxBodyChars
+        )
+    }
+    if ($LlmApiKey) {
+        $workerArgs += @("--llm-api-key", $LlmApiKey)
     }
 
     if ($BinaryPath) {
@@ -116,6 +132,8 @@ Write-Host "  Crawler name: $returnedName"
 CRAWLER_ID=$crawlerId
 CRAWLER_KEY=$crawlerKey
 SERVER=$Server
+LLM_BASE_URL=$LlmBaseUrl
+LLM_MODEL=$LlmModel
 "@ | Set-Content $EnvFile -Encoding UTF8
 
 Write-Host "Credentials saved to $EnvFile"

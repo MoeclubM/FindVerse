@@ -7,17 +7,26 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
-use crate::extract::{detect_language, filter_urls_by_domain, parse_html_document};
+use crate::extract::{
+    detect_language, filter_urls_by_domain, parse_html_document, parse_x_robots_tag_values,
+};
 use crate::fetch::{
-    WorkerState, check_robots_allowed, fetch_with_retry, random_user_agent, rate_limit_domain,
+    FINDVERSE_UA, FetchWorkflowError, WorkerState, fetch_with_retry, inspect_robots,
 };
 use crate::js_render::{needs_js_rendering, render_with_js};
+use crate::llm_filter::evaluate_page;
 use crate::models::{
-    ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, SubmitCrawlReportRequest,
-    SubmitCrawlReportResponse, WorkerConfig,
+    ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, LlmFilterConfig,
+    SubmitCrawlReportRequest, SubmitCrawlReportResponse, WorkerConfig,
 };
 use crate::sitemap::fetch_and_parse_sitemap;
 use crate::url_normalize::normalize_url_advanced;
+
+#[derive(Clone)]
+struct NetworkClients {
+    page: reqwest::Client,
+    meta: reqwest::Client,
+}
 
 // ---------------------------------------------------------------------------
 // Registration helpers
@@ -48,27 +57,68 @@ pub async fn crawler_join(
     Ok(response.json().await?)
 }
 
+fn build_fetch_client(
+    proxy_url: Option<&str>,
+    timeout: Duration,
+    follow_redirects: bool,
+) -> anyhow::Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(FINDVERSE_UA)
+        .timeout(timeout);
+
+    if !follow_redirects {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    if let Some(proxy_url) = proxy_url {
+        builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
+    }
+
+    Ok(builder.build()?)
+}
+
 // ---------------------------------------------------------------------------
 // Worker loop
 // ---------------------------------------------------------------------------
 pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::Result<()> {
-    // Build the page-fetching client with cookie jar and rotating UA
-    let mut fetch_client_builder = reqwest::Client::builder()
-        .user_agent(random_user_agent())
-        .cookie_store(true)
-        .timeout(Duration::from_secs(30));
-
-    if let Some(ref proxy_url) = proxy {
-        fetch_client_builder = fetch_client_builder.proxy(reqwest::Proxy::all(proxy_url)?);
+    if config.stealth_ua {
+        warn!("--stealth-ua is ignored; FindVerse now always crawls with the public bot identity");
     }
 
-    let fetch_client = fetch_client_builder.build()?;
+    let clearnet_clients = NetworkClients {
+        page: build_fetch_client(proxy.as_deref(), Duration::from_secs(30), false)?,
+        meta: build_fetch_client(proxy.as_deref(), Duration::from_secs(30), true)?,
+    };
+    let tor_clients: Option<NetworkClients> = config
+        .tor_socks_url
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|socks_url| -> anyhow::Result<NetworkClients> {
+            Ok(NetworkClients {
+                page: build_fetch_client(Some(socks_url), Duration::from_secs(60), false)?,
+                meta: build_fetch_client(Some(socks_url), Duration::from_secs(60), true)?,
+            })
+        })
+        .transpose()?;
 
     // Build the API client (for claim/report)
     let api_client = reqwest::Client::builder()
         .user_agent("FindVerseCrawlerWorker/0.1")
         .timeout(Duration::from_secs(30))
         .build()?;
+    let llm_client = if config
+        .llm_filter
+        .as_ref()
+        .map(LlmFilterConfig::is_enabled)
+        .unwrap_or(false)
+    {
+        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(45));
+        if let Some(ref proxy_url) = proxy {
+            builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
+        }
+        Some(builder.build()?)
+    } else {
+        None
+    };
 
     let state = Arc::new(Mutex::new(WorkerState::new()));
 
@@ -88,20 +138,46 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
 
         let results: Vec<CrawlResultReport> = stream::iter(claim.jobs)
             .map(|job| {
-                let fetch_client = fetch_client.clone();
+                let clearnet_clients = clearnet_clients.clone();
+                let tor_clients = tor_clients.clone();
+                let llm_client = llm_client.clone();
                 let state = Arc::clone(&state);
                 let allowed_domains = config.allowed_domains.clone();
+                let llm_filter = config.llm_filter.clone();
                 async move {
                     info!(
-                        "processing {} from {} depth {}/{} attempt {} discovered {}",
+                        "processing {} ({}) from {} depth {}/{} attempt {} discovered {}",
                         job.url,
+                        job.origin_key,
                         job.source,
                         job.depth,
                         job.max_depth,
                         job.attempt_count,
                         job.discovered_at
                     );
-                    process_job(&fetch_client, &job, &state, &allowed_domains).await
+                    let network = if matches!(job.network.as_str(), "clearnet" | "tor") {
+                        job.network.clone()
+                    } else if is_onion_url(&job.url) {
+                        "tor".to_string()
+                    } else {
+                        "clearnet".to_string()
+                    };
+                    let effective_clients = if network == "tor" {
+                        tor_clients.as_ref().unwrap_or(&clearnet_clients)
+                    } else {
+                        &clearnet_clients
+                    };
+                    process_job(
+                        &effective_clients.page,
+                        &effective_clients.meta,
+                        llm_client.as_ref(),
+                        llm_filter.as_ref(),
+                        &job,
+                        &state,
+                        &allowed_domains,
+                        network,
+                    )
+                    .await
                 }
             })
             .buffer_unordered(config.concurrency)
@@ -126,6 +202,13 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
     }
 
     Ok(())
+}
+
+fn is_onion_url(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.ends_with(".onion")))
+        .unwrap_or(false)
 }
 
 async fn claim_jobs(
@@ -179,200 +262,393 @@ async fn submit_report(
 // Process a single crawl job
 // ---------------------------------------------------------------------------
 async fn process_job(
-    client: &reqwest::Client,
+    page_client: &reqwest::Client,
+    meta_client: &reqwest::Client,
+    llm_client: Option<&reqwest::Client>,
+    llm_filter: Option<&LlmFilterConfig>,
     job: &CrawlJob,
     state: &Arc<Mutex<WorkerState>>,
     allowed_domains: &[String],
+    network: String,
 ) -> CrawlResultReport {
     let fetched_at = Utc::now();
-
-    // Check robots.txt
-    if !check_robots_allowed(client, state, &job.url).await {
-        warn!("robots.txt disallows {}", job.url);
+    let initial_robots = inspect_robots(meta_client, state, &job.url).await;
+    if !initial_robots.allowed {
+        warn!("robots.txt blocks {} ({})", job.url, initial_robots.status);
         return CrawlResultReport {
-            job_id: job.job_id.clone(),
-            url: job.url.clone(),
             status_code: 599,
-            fetched_at,
             final_url: Some(job.url.clone()),
-            content_type: None,
-            title: None,
-            snippet: None,
-            body: None,
-            language: None,
-            discovered_urls: Vec::new(),
-            site_authority: None,
             retryable: Some(false),
             error_kind: Some("robots".to_string()),
-            error_message: Some("blocked by robots.txt".to_string()),
+            error_message: Some(format!("blocked by robots ({})", initial_robots.status)),
+            applied_crawl_delay_secs: initial_robots.crawl_delay_secs,
+            robots_status: Some(initial_robots.status),
+            robots_sitemaps: initial_robots.sitemap_urls,
+            ..base_report(job, fetched_at, &network)
         };
     }
 
-    // Per-domain rate limiting
-    rate_limit_domain(state, &job.url).await;
-
-    let response = match fetch_with_retry(client, &job.url).await {
-        Ok(response) => response,
-        Err(error) => {
+    let fetch = match fetch_with_retry(
+        page_client,
+        meta_client,
+        state,
+        &job.url,
+        job.etag.as_deref(),
+        job.last_modified.as_deref(),
+    )
+    .await
+    {
+        Ok(fetch) => fetch,
+        Err(FetchWorkflowError::BlockedByRobots { url, status }) => {
+            warn!("redirect chain hit robots block for {} ({})", url, status);
+            return CrawlResultReport {
+                status_code: 599,
+                final_url: Some(url),
+                retryable: Some(false),
+                error_kind: Some("robots".to_string()),
+                error_message: Some(format!("blocked by robots ({status})")),
+                robots_status: Some(status),
+                ..base_report(job, fetched_at, &network)
+            };
+        }
+        Err(FetchWorkflowError::TooManyRedirects { chain }) => {
+            warn!("too many redirects while fetching {}: {:?}", job.url, chain);
+            return CrawlResultReport {
+                status_code: 310,
+                final_url: chain.last().cloned().or_else(|| Some(job.url.clone())),
+                redirect_chain: chain,
+                retryable: Some(false),
+                error_kind: Some("redirect_loop".to_string()),
+                error_message: Some("too many redirects".to_string()),
+                ..base_report(job, fetched_at, &network)
+            };
+        }
+        Err(FetchWorkflowError::Request(error)) => {
             warn!("failed to fetch {}: {error}", job.url);
             return CrawlResultReport {
-                job_id: job.job_id.clone(),
-                url: job.url.clone(),
                 status_code: 599,
-                fetched_at,
-                final_url: None,
-                content_type: None,
-                title: None,
-                snippet: None,
-                body: None,
-                language: None,
-                discovered_urls: Vec::new(),
-                site_authority: None,
                 retryable: Some(true),
                 error_kind: Some("network_error".to_string()),
                 error_message: Some(error.to_string()),
+                ..base_report(job, fetched_at, &network)
             };
         }
     };
 
-    let status_code = response.status().as_u16();
-    let final_url = normalize_url_advanced(response.url().as_ref())
-        .unwrap_or_else(|| response.url().to_string());
-    let content_type = response
+    let status_code = fetch.response.status().as_u16();
+    let redirect_chain = fetch.redirect_chain;
+    let retry_after_secs = fetch.retry_after_secs;
+    let final_url = normalize_url_advanced(fetch.response.url().as_ref())
+        .unwrap_or_else(|| fetch.response.url().to_string());
+    let final_robots = inspect_robots(meta_client, state, &final_url).await;
+    let etag = fetch
+        .response
+        .headers()
+        .get("etag")
+        .and_then(|value| value.to_str().ok())
+        .map(String::from);
+    let last_modified_header = fetch
+        .response
+        .headers()
+        .get("last-modified")
+        .and_then(|value| value.to_str().ok())
+        .map(String::from);
+    let content_type = fetch
+        .response
         .headers()
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_string();
+    let x_robots_tag_values: Vec<String> = fetch
+        .response
+        .headers()
+        .get_all("x-robots-tag")
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(ToString::to_string))
+        .collect();
+    let header_robots_directives =
+        parse_x_robots_tag_values(x_robots_tag_values.iter().map(String::as_str));
+
+    if status_code == 304 {
+        return CrawlResultReport {
+            status_code: 304,
+            final_url: Some(final_url),
+            redirect_chain,
+            retryable: Some(false),
+            http_etag: job.etag.clone(),
+            http_last_modified: job.last_modified.clone(),
+            applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+            retry_after_secs,
+            robots_status: Some(final_robots.status),
+            robots_sitemaps: final_robots.sitemap_urls,
+            ..base_report(job, fetched_at, &network)
+        };
+    }
 
     if !(200..300).contains(&status_code) {
         return CrawlResultReport {
-            job_id: job.job_id.clone(),
-            url: job.url.clone(),
             status_code,
-            fetched_at,
             final_url: Some(final_url),
+            redirect_chain,
             content_type: Some(content_type),
-            title: None,
-            snippet: None,
-            body: None,
-            language: None,
-            discovered_urls: Vec::new(),
-            site_authority: None,
             retryable: Some(status_code == 429 || status_code >= 500),
             error_kind: Some(http_failure_kind(status_code)),
             error_message: Some(format!("fetch returned status {status_code}")),
+            retry_after_secs,
+            robots_status: Some(final_robots.status),
+            robots_sitemaps: final_robots.sitemap_urls,
+            ..base_report(job, fetched_at, &network)
         };
     }
 
     if !content_type.contains("text/html") {
         return CrawlResultReport {
-            job_id: job.job_id.clone(),
-            url: job.url.clone(),
             status_code,
-            fetched_at,
             final_url: Some(final_url),
+            redirect_chain,
             content_type: Some(content_type.clone()),
-            title: None,
-            snippet: None,
-            body: None,
-            language: None,
-            discovered_urls: Vec::new(),
-            site_authority: None,
             retryable: Some(false),
             error_kind: Some("unsupported_content_type".to_string()),
             error_message: Some(format!("unsupported content type {content_type}")),
+            applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+            retry_after_secs,
+            robots_status: Some(final_robots.status),
+            robots_sitemaps: final_robots.sitemap_urls,
+            ..base_report(job, fetched_at, &network)
         };
     }
 
-    let body = response.text().await.unwrap_or_default();
+    let body = fetch.response.text().await.unwrap_or_default();
     let mut parsed = parse_html_document(&final_url, &body);
-
-    // Check if JS rendering is needed
     if needs_js_rendering(&body, parsed.body.as_deref().unwrap_or("")) {
-        if let Ok(rendered_html) = render_with_js(&final_url).await {
-            info!("re-parsing {} with JS rendering", final_url);
-            parsed = parse_html_document(&final_url, &rendered_html);
+        match render_with_js(&final_url).await {
+            Ok(rendered_html) => {
+                info!("re-parsing {} with JS rendering", final_url);
+                parsed = parse_html_document(&final_url, &rendered_html);
+            }
+            Err(error) => {
+                warn!(
+                    ?error,
+                    url = %final_url,
+                    "js rendering failed; falling back to static html fetch"
+                );
+            }
         }
     }
 
-    // Try fetching sitemap.xml for root URLs
-    let mut all_discovered = parsed.discovered_urls;
-    if let Ok(url) = url::Url::parse(&final_url) {
-        if url.path() == "/" || url.path().is_empty() {
-            if let Some(domain) = url.domain() {
-                let sitemap_url = format!("{}://{}/sitemap.xml", url.scheme(), domain);
-                if let Ok(sitemap_urls) = fetch_and_parse_sitemap(client, &sitemap_url).await {
-                    if !sitemap_urls.is_empty() {
-                        info!(
-                            "discovered {} URLs from sitemap at {}",
-                            sitemap_urls.len(),
-                            sitemap_url
-                        );
-                        all_discovered.extend(sitemap_urls);
+    let mut robots_directives = header_robots_directives;
+    robots_directives.merge(parsed.robots_directives);
+
+    let mut all_discovered = if robots_directives.nofollow {
+        Vec::new()
+    } else {
+        parsed.discovered_urls.clone()
+    };
+    if !robots_directives.nofollow {
+        if let Ok(url) = url::Url::parse(&final_url) {
+            if url.path() == "/" || url.path().is_empty() {
+                let sitemap_sources = if final_robots.sitemap_urls.is_empty() {
+                    findverse_common::origin_key(&final_url)
+                        .map(|origin| vec![format!("{origin}/sitemap.xml")])
+                        .unwrap_or_default()
+                } else {
+                    final_robots.sitemap_urls.clone()
+                };
+
+                for sitemap_url in sitemap_sources {
+                    if let Ok(sitemap_entries) =
+                        fetch_and_parse_sitemap(meta_client, &sitemap_url).await
+                    {
+                        let sitemap_urls: Vec<String> = sitemap_entries
+                            .iter()
+                            .map(|entry| entry.url.clone())
+                            .collect();
+                        if !sitemap_urls.is_empty() {
+                            info!(
+                                "discovered {} URLs from sitemap at {}",
+                                sitemap_urls.len(),
+                                sitemap_url
+                            );
+                            all_discovered.extend(sitemap_urls);
+                        }
                     }
                 }
             }
         }
     }
 
-    // Filter discovered URLs by allowed domains
     let normalized_discovered = normalize_discovered_urls(all_discovered);
     let discovered_urls = if allowed_domains.is_empty() {
         normalized_discovered
     } else {
         filter_urls_by_domain(normalized_discovered, allowed_domains)
     };
-
-    // Detect language from body text
     let language = parsed
         .body
         .as_deref()
         .and_then(detect_language)
         .or(Some("unknown".to_string()));
-
     let has_body = parsed
         .body
         .as_deref()
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
+    let canonical_hint = parsed.canonical_url.clone();
+    let canonical_source = canonical_hint.as_ref().map(|_| "rel_canonical".to_string());
 
-    if !has_body {
+    if robots_directives.noindex {
         return CrawlResultReport {
-            job_id: job.job_id.clone(),
-            url: job.url.clone(),
             status_code,
-            fetched_at,
             final_url: Some(final_url),
+            redirect_chain,
             content_type: Some(content_type),
             title: parsed.title,
             snippet: parsed.snippet,
             body: None,
+            canonical_hint,
+            canonical_source,
+            language,
+            discovered_urls,
+            site_authority: Some(0.5),
+            retryable: Some(false),
+            error_kind: Some("page_noindex".to_string()),
+            error_message: Some("page requested noindex via robots directives".to_string()),
+            http_etag: etag.clone(),
+            http_last_modified: last_modified_header.clone(),
+            applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+            retry_after_secs,
+            robots_status: Some(final_robots.status),
+            robots_sitemaps: final_robots.sitemap_urls,
+            ..base_report(job, fetched_at, &network)
+        };
+    }
+
+    if !has_body {
+        return CrawlResultReport {
+            status_code,
+            final_url: Some(final_url),
+            redirect_chain,
+            content_type: Some(content_type),
+            title: parsed.title,
+            snippet: parsed.snippet,
+            body: None,
+            canonical_hint,
+            canonical_source,
             language,
             discovered_urls,
             site_authority: Some(0.5),
             retryable: Some(false),
             error_kind: Some("empty_document".to_string()),
             error_message: Some("parsed page had no indexable body".to_string()),
+            http_etag: etag.clone(),
+            http_last_modified: last_modified_header.clone(),
+            applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+            retry_after_secs,
+            robots_status: Some(final_robots.status),
+            robots_sitemaps: final_robots.sitemap_urls,
+            ..base_report(job, fetched_at, &network)
         };
     }
 
+    let llm_decision = match (llm_client, llm_filter, parsed.body.as_deref()) {
+        (Some(llm_client), Some(llm_filter), Some(body)) => match evaluate_page(
+            llm_client,
+            llm_filter,
+            &final_url,
+            parsed.title.as_deref(),
+            parsed.snippet.as_deref(),
+            body,
+        )
+        .await
+        {
+            Ok(decision) => Some(decision),
+            Err(error) => {
+                warn!(?error, url = %final_url, "llm page filter failed; falling back to default indexing");
+                None
+            }
+        },
+        _ => None,
+    };
+
+    let discovered_urls = match llm_decision.as_ref() {
+        Some(decision) if !decision.should_discover => Vec::new(),
+        _ => discovered_urls,
+    };
+    let body = match llm_decision.as_ref() {
+        Some(decision) if !decision.should_index => None,
+        _ => parsed.body,
+    };
+
     CrawlResultReport {
-        job_id: job.job_id.clone(),
-        url: job.url.clone(),
         status_code,
-        fetched_at,
         final_url: Some(final_url),
+        redirect_chain,
         content_type: Some(content_type),
         title: parsed.title,
         snippet: parsed.snippet,
-        body: parsed.body,
+        body,
+        canonical_hint,
+        canonical_source,
         language,
         discovered_urls,
         site_authority: Some(0.5),
+        llm_should_index: llm_decision.as_ref().map(|decision| decision.should_index),
+        llm_should_discover: llm_decision
+            .as_ref()
+            .map(|decision| decision.should_discover),
+        llm_relevance_score: llm_decision
+            .as_ref()
+            .map(|decision| decision.relevance_score),
+        llm_reason: llm_decision
+            .as_ref()
+            .map(|decision| decision.reason.clone()),
         retryable: Some(false),
+        http_etag: etag,
+        http_last_modified: last_modified_header,
+        applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+        retry_after_secs,
+        robots_status: Some(final_robots.status),
+        robots_sitemaps: final_robots.sitemap_urls,
+        ..base_report(job, fetched_at, &network)
+    }
+}
+
+fn base_report(
+    job: &CrawlJob,
+    fetched_at: chrono::DateTime<Utc>,
+    network: &str,
+) -> CrawlResultReport {
+    CrawlResultReport {
+        job_id: job.job_id.clone(),
+        url: job.url.clone(),
+        status_code: 0,
+        fetched_at,
+        final_url: None,
+        redirect_chain: Vec::new(),
+        content_type: None,
+        title: None,
+        snippet: None,
+        body: None,
+        canonical_hint: None,
+        canonical_source: None,
+        language: None,
+        discovered_urls: Vec::new(),
+        site_authority: None,
+        llm_should_index: None,
+        llm_should_discover: None,
+        llm_relevance_score: None,
+        llm_reason: None,
+        retryable: None,
         error_kind: None,
         error_message: None,
+        network: network.to_string(),
+        http_etag: None,
+        http_last_modified: None,
+        applied_crawl_delay_secs: None,
+        retry_after_secs: None,
+        robots_status: None,
+        robots_sitemaps: Vec::new(),
     }
 }
 

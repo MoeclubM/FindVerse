@@ -33,6 +33,7 @@ pub struct NormalizedDocument {
     pub site_authority: f32,
     pub content_type: String,
     pub word_count: u32,
+    pub network: String,
     pub source_job_id: Option<String>,
     pub parser_version: i32,
     pub schema_version: i32,
@@ -55,6 +56,7 @@ pub struct IndexedDocumentPayload {
     pub site_authority: f32,
     pub content_type: String,
     pub word_count: u32,
+    pub network: String,
     pub suggest_input: Vec<String>,
 }
 
@@ -74,6 +76,7 @@ impl IndexedDocumentPayload {
             site_authority: document.site_authority,
             content_type: document.content_type.clone(),
             word_count: document.word_count,
+            network: document.network.clone(),
             suggest_input: build_suggest_inputs(document),
         }
     }
@@ -138,6 +141,7 @@ pub fn normalize_document(document: IndexedDocument) -> NormalizedDocument {
             document.content_type.trim().to_lowercase()
         },
         word_count: computed_word_count,
+        network: document.network,
         source_job_id: document.source_job_id,
         parser_version: if document.parser_version <= 0 {
             CURRENT_PARSER_VERSION

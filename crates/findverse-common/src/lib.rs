@@ -1,11 +1,41 @@
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
 
 pub const CURRENT_SCHEMA_VERSION: i32 = 1;
 pub const CURRENT_PARSER_VERSION: i32 = 1;
 pub const CURRENT_INDEX_VERSION: i32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DiscoveryScope {
+    #[serde(rename = "same_host")]
+    SameHost,
+    #[default]
+    #[serde(rename = "same_domain")]
+    SameDomain,
+    #[serde(rename = "any")]
+    Any,
+}
+
+impl DiscoveryScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SameHost => "same_host",
+            Self::SameDomain => "same_domain",
+            Self::Any => "any",
+        }
+    }
+
+    pub fn from_db_value(value: &str) -> Self {
+        match value {
+            "same_host" => Self::SameHost,
+            "any" => Self::Any,
+            _ => Self::SameDomain,
+        }
+    }
+}
 
 const TRACKING_PARAMS: &[&str] = &[
     "utm_source",
@@ -91,16 +121,63 @@ pub fn extract_host(input: &str) -> Option<String> {
         .and_then(|url| url.host_str().map(|host| host.to_lowercase()))
 }
 
+pub fn origin_key(input: &str) -> Option<String> {
+    let mut url = Url::parse(input).ok()?;
+
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+
+    if (url.scheme() == "https" && url.port() == Some(443))
+        || (url.scheme() == "http" && url.port() == Some(80))
+    {
+        let _ = url.set_port(None);
+    }
+
+    let host = url.host_str()?.to_lowercase();
+    let origin = match url.port() {
+        Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
+        None => format!("{}://{}", url.scheme(), host),
+    };
+
+    Some(origin)
+}
+
+pub fn host_matches_scope(candidate_host: &str, anchor_host: &str, scope: DiscoveryScope) -> bool {
+    match scope {
+        DiscoveryScope::Any => true,
+        DiscoveryScope::SameHost => candidate_host.eq_ignore_ascii_case(anchor_host),
+        DiscoveryScope::SameDomain => {
+            candidate_host.eq_ignore_ascii_case(anchor_host)
+                || candidate_host
+                    .to_lowercase()
+                    .ends_with(&format!(".{}", anchor_host.to_lowercase()))
+        }
+    }
+}
+
 pub fn stable_document_id(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
 }
 
 pub fn content_hash(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
 }
 
 pub fn derive_terms(title: &str, body: &str) -> Vec<String> {
@@ -127,8 +204,8 @@ pub fn word_count(input: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        content_hash, derive_terms, display_url, extract_host, normalize_url, stable_document_id,
-        word_count,
+        DiscoveryScope, content_hash, derive_terms, display_url, extract_host, host_matches_scope,
+        normalize_url, origin_key, stable_document_id, word_count,
     };
 
     #[test]
@@ -153,6 +230,18 @@ mod tests {
     }
 
     #[test]
+    fn origin_key_keeps_non_default_ports() {
+        assert_eq!(
+            origin_key("https://docs.example.com:8443/path?q=1"),
+            Some("https://docs.example.com:8443".to_string())
+        );
+        assert_eq!(
+            origin_key("https://docs.example.com:443/path"),
+            Some("https://docs.example.com".to_string())
+        );
+    }
+
+    #[test]
     fn stable_document_id_is_stable() {
         assert_eq!(
             stable_document_id("https://example.com"),
@@ -166,6 +255,14 @@ mod tests {
     }
 
     #[test]
+    fn content_hash_matches_sha256_hex() {
+        assert_eq!(
+            content_hash("hello"),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    #[test]
     fn derive_terms_limits_output() {
         assert!(
             derive_terms("FindVerse Search Pipeline", "Search pipeline normalization").len() <= 12
@@ -175,5 +272,19 @@ mod tests {
     #[test]
     fn word_count_counts_tokens() {
         assert_eq!(word_count("one two   three"), 3);
+    }
+
+    #[test]
+    fn same_domain_scope_allows_subdomains() {
+        assert!(host_matches_scope(
+            "docs.example.com",
+            "example.com",
+            DiscoveryScope::SameDomain
+        ));
+        assert!(!host_matches_scope(
+            "example.net",
+            "example.com",
+            DiscoveryScope::SameDomain
+        ));
     }
 }

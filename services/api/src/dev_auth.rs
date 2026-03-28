@@ -250,6 +250,56 @@ impl DevAuthStore {
             .map_err(|error| ApiError::Internal(error.into()))?;
         Ok(())
     }
+
+    pub async fn update_password(&self, user_id: &str, password: &str) -> Result<(), ApiError> {
+        if password.len() < 8 {
+            return Err(ApiError::BadRequest(
+                "password must be at least 8 characters".to_string(),
+            ));
+        }
+
+        let user_uuid = sqlx::query_scalar::<_, uuid::Uuid>(
+            "select id from users where external_id = $1 and role = 'developer'",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?
+        .ok_or_else(|| ApiError::NotFound("developer not found".to_string()))?;
+
+        let updated = sqlx::query(
+            "update password_credentials
+             set password_hash = $2, password_scheme = $3, password_salt = null, updated_at = $4
+             where user_id = $1",
+        )
+        .bind(user_uuid)
+        .bind(hash_password(password)?)
+        .bind(PASSWORD_SCHEME_ARGON2ID)
+        .bind(Utc::now())
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?
+        .rows_affected();
+        if updated == 0 {
+            return Err(ApiError::NotFound("developer not found".to_string()));
+        }
+
+        Ok(())
+    }
+
+    pub async fn delete_account(&self, user_id: &str) -> Result<(), ApiError> {
+        let deleted =
+            sqlx::query("delete from users where external_id = $1 and role = 'developer'")
+                .bind(user_id)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|error| ApiError::Internal(error.into()))?
+                .rows_affected();
+        if deleted == 0 {
+            return Err(ApiError::NotFound("developer not found".to_string()));
+        }
+        Ok(())
+    }
 }
 
 #[derive(sqlx::FromRow)]

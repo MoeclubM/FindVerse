@@ -3,9 +3,9 @@ use argon2::{
     Argon2,
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
-use sha2::{Digest, Sha256};
 
 use crate::error::ApiError;
+use crate::store::content_hash;
 
 pub(crate) const PASSWORD_SCHEME_ARGON2ID: &str = "argon2id";
 pub(crate) const PASSWORD_SCHEME_LEGACY_SHA256_SALT_V1: &str = "legacy-sha256-salt-v1";
@@ -60,7 +60,35 @@ pub(crate) fn verify_password(
 }
 
 pub(crate) fn legacy_hash_password(salt: &str, password: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{salt}:{password}").as_bytes());
-    format!("{:x}", hasher.finalize())
+    content_hash(&format!("{salt}:{password}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PASSWORD_SCHEME_LEGACY_SHA256_SALT_V1, legacy_hash_password, verify_password};
+
+    #[test]
+    fn legacy_hash_password_matches_expected_sha256() {
+        assert_eq!(
+            legacy_hash_password("pepper", "secret"),
+            "5ed133c9447f144157b338fdcd0bf71240948ca354cb98010bd60a142b0cbaf8"
+        );
+    }
+
+    #[test]
+    fn verify_password_accepts_legacy_scheme() {
+        let salt = "pepper";
+        let password = "secret";
+        let hash = legacy_hash_password(salt, password);
+
+        let verified = verify_password(
+            password,
+            &hash,
+            PASSWORD_SCHEME_LEGACY_SHA256_SALT_V1,
+            Some(salt),
+        )
+        .expect("legacy password verification should succeed");
+
+        assert!(verified);
+    }
 }

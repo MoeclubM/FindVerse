@@ -4,7 +4,7 @@ use findverse_common::normalize_url;
 use scraper::{Html, Selector};
 use url::Url;
 
-use crate::models::ParsedHtml;
+use crate::models::{ParsedHtml, RobotsDirectives};
 
 // ---------------------------------------------------------------------------
 // HTML parsing
@@ -15,6 +15,8 @@ pub fn parse_html_document(url: &str, html: &str) -> ParsedHtml {
     let meta_selector = Selector::parse("meta[name='description']").ok();
     let og_title_selector = Selector::parse("meta[property='og:title']").ok();
     let og_desc_selector = Selector::parse("meta[property='og:description']").ok();
+    let canonical_selector = Selector::parse("link[rel='canonical']").ok();
+    let robots_directives = extract_meta_robots_directives(&document);
 
     let title = og_title_selector
         .as_ref()
@@ -57,12 +59,51 @@ pub fn parse_html_document(url: &str, html: &str) -> ParsedHtml {
         })
     });
 
+    let canonical_url = canonical_selector
+        .as_ref()
+        .and_then(|selector| document.select(selector).next())
+        .and_then(|node| node.value().attr("href"))
+        .and_then(|href| Url::parse(url).ok().and_then(|base| base.join(href).ok()))
+        .and_then(|resolved| normalize_url(resolved.as_ref()));
+
     ParsedHtml {
         title,
         snippet,
         body,
         discovered_urls: extract_links(url, html),
+        canonical_url,
+        robots_directives,
     }
+}
+
+pub fn parse_x_robots_tag_values<'a>(
+    values: impl IntoIterator<Item = &'a str>,
+) -> RobotsDirectives {
+    let mut directives = RobotsDirectives::default();
+
+    for value in values {
+        let mut scoped_agent: Option<String> = None;
+        for raw_segment in value.split(',') {
+            let segment = raw_segment.trim();
+            if segment.is_empty() {
+                continue;
+            }
+
+            let (agent, directive_value) = if let Some((agent, rest)) = segment.split_once(':') {
+                let agent = agent.trim().to_ascii_lowercase();
+                scoped_agent = Some(agent.clone());
+                (Some(agent), rest.trim())
+            } else {
+                (scoped_agent.clone(), segment)
+            };
+
+            if applies_to_findverse(agent.as_deref()) {
+                directives.merge(parse_robots_directives(directive_value));
+            }
+        }
+    }
+
+    directives
 }
 
 /// Extract body text after stripping script, style, nav, and footer elements.
@@ -148,48 +189,6 @@ pub fn extract_links(base: &str, html: &str) -> Vec<String> {
         }
     }
 
-    // 提取 <link rel="canonical">
-    if let Ok(selector) = Selector::parse("link[rel='canonical']") {
-        for link in document.select(&selector) {
-            if let Some(href) = link.value().attr("href") {
-                if let Ok(resolved) = base_url.join(href) {
-                    if let Some(normalized) = normalize_url(resolved.as_ref()) {
-                        links.insert(normalized);
-                    }
-                }
-            }
-        }
-    }
-
-    // 提取 <link rel="alternate">
-    if let Ok(selector) = Selector::parse("link[rel='alternate']") {
-        for link in document.select(&selector) {
-            if let Some(href) = link.value().attr("href") {
-                if let Ok(resolved) = base_url.join(href) {
-                    if let Some(normalized) = normalize_url(resolved.as_ref()) {
-                        links.insert(normalized);
-                    }
-                }
-            }
-        }
-    }
-
-    // 提取 <meta http-equiv="refresh">
-    if let Ok(selector) = Selector::parse("meta[http-equiv='refresh']") {
-        for meta in document.select(&selector) {
-            if let Some(content) = meta.value().attr("content") {
-                if let Some(url_part) = content.split("url=").nth(1) {
-                    let url = url_part.trim();
-                    if let Ok(resolved) = base_url.join(url) {
-                        if let Some(normalized) = normalize_url(resolved.as_ref()) {
-                            links.insert(normalized);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     links.into_iter().collect()
 }
 
@@ -227,6 +226,54 @@ pub fn detect_language(text: &str) -> Option<String> {
     whatlang::detect(text)
         .map(|info| info.lang().code().to_string())
         .or(Some("unknown".to_string()))
+}
+
+fn extract_meta_robots_directives(document: &Html) -> RobotsDirectives {
+    let mut directives = RobotsDirectives::default();
+    let Ok(meta_selector) = Selector::parse("meta[name][content]") else {
+        return directives;
+    };
+
+    for meta in document.select(&meta_selector) {
+        let Some(name) = meta.value().attr("name") else {
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        if name != "robots" && name != "findverse" && name != "findversebot" {
+            continue;
+        }
+        let Some(content) = meta.value().attr("content") else {
+            continue;
+        };
+        directives.merge(parse_robots_directives(content));
+    }
+
+    directives
+}
+
+fn parse_robots_directives(value: &str) -> RobotsDirectives {
+    let mut directives = RobotsDirectives::default();
+
+    for token in value.split([',', ';']) {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "none" => {
+                directives.noindex = true;
+                directives.nofollow = true;
+            }
+            "noindex" => directives.noindex = true,
+            "nofollow" => directives.nofollow = true,
+            _ => {}
+        }
+    }
+
+    directives
+}
+
+fn applies_to_findverse(agent: Option<&str>) -> bool {
+    matches!(
+        agent,
+        None | Some("*") | Some("findverse") | Some("findversebot")
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +326,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_html_extracts_canonical_and_alternates_without_enqueueing_them() {
+        let html = r#"
+        <html>
+          <head>
+            <title>Docs</title>
+            <link rel="canonical" href="/guide" />
+            <link rel="alternate" hreflang="zh-CN" href="/zh/guide" />
+          </head>
+          <body><a href="/install">Install</a></body>
+        </html>
+        "#;
+
+        let parsed = parse_html_document("https://example.com/docs", html);
+        assert_eq!(
+            parsed.canonical_url.as_deref(),
+            Some("https://example.com/guide")
+        );
+        assert_eq!(
+            parsed.discovered_urls,
+            vec!["https://example.com/install".to_string()]
+        );
+    }
+
+    #[test]
     fn html_parser_extracts_fields() {
         let parsed = parse_html_document(
             "https://example.com",
@@ -292,6 +363,30 @@ mod tests {
             parsed.discovered_urls,
             vec!["https://example.com/docs".to_string()]
         );
+        assert_eq!(parsed.robots_directives, RobotsDirectives::default());
+    }
+
+    #[test]
+    fn html_parser_extracts_meta_robots_directives() {
+        let parsed = parse_html_document(
+            "https://example.com",
+            "<html><head><meta name='robots' content='noindex, nofollow'></head><body>Hello crawler</body></html>",
+        );
+
+        assert!(parsed.robots_directives.noindex);
+        assert!(parsed.robots_directives.nofollow);
+    }
+
+    #[test]
+    fn x_robots_tag_parser_respects_generic_and_findverse_scopes() {
+        let directives = parse_x_robots_tag_values([
+            "noindex",
+            "findversebot: nofollow",
+            "googlebot: noindex, nofollow",
+        ]);
+
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
     }
 
     #[test]

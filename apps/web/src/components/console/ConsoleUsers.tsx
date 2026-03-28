@@ -1,14 +1,15 @@
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   AdminDeveloperRecord,
-  CreatedApiKey,
   DeveloperUsage,
-  createAdminDeveloperKey,
+  deleteDeveloper,
   getAdminDeveloperKeys,
   revokeAdminDeveloperKey,
   updateDeveloper,
 } from "../../api";
+import { FieldShell, SectionHeader, StatStrip } from "../common/PanelPrimitives";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -18,16 +19,13 @@ function getErrorMessage(error: unknown, fallback: string) {
 type KeyPanelState = {
   loading: boolean;
   usage: DeveloperUsage | null;
-  keyName: string;
-  latestKey: CreatedApiKey | null;
 };
-
-const DEFAULT_KEY_NAME = "Search key";
 
 export function ConsoleUsers() {
   const { token, busy, setBusy, setFlash, refreshAll, developers } = useConsole();
+  const { t } = useTranslation();
 
-  const [developerDrafts, setDeveloperDrafts] = useState<Record<string, { daily_limit: string }>>({});
+  const [developerDrafts, setDeveloperDrafts] = useState<Record<string, { daily_limit: string; password: string }>>({});
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [keyPanels, setKeyPanels] = useState<Record<string, KeyPanelState>>({});
 
@@ -37,6 +35,7 @@ export function ConsoleUsers() {
       for (const developer of developers) {
         next[developer.user_id] ??= {
           daily_limit: String(developer.daily_limit),
+          password: "",
         };
       }
       return next;
@@ -57,8 +56,6 @@ export function ConsoleUsers() {
       const existing = current[userId] ?? {
         loading: false,
         usage: null,
-        keyName: DEFAULT_KEY_NAME,
-        latestKey: null,
       };
       return {
         ...current,
@@ -76,13 +73,11 @@ export function ConsoleUsers() {
     setKeyPanelState(user.user_id, (current) => ({
       ...current,
       loading: true,
-      usage: force ? current.usage : current.usage,
     }));
 
     try {
       const usage = await getAdminDeveloperKeys(token, user.user_id);
-      setKeyPanelState(user.user_id, (current) => ({
-        ...current,
+      setKeyPanelState(user.user_id, () => ({
         loading: false,
         usage,
       }));
@@ -91,38 +86,58 @@ export function ConsoleUsers() {
         ...current,
         loading: false,
       }));
-      setFlash(getErrorMessage(error, `Failed to load keys for ${user.username}`));
+      setFlash(getErrorMessage(error, t("console.users.load_keys_failed", { username: user.username })));
     }
   }
 
-  async function handleToggleDeveloperEnabled(user: AdminDeveloperRecord) {
+  async function handleSaveDeveloperQuota(user: AdminDeveloperRecord) {
+    const draft = developerDrafts[user.user_id];
+    if (!draft) {
+      return;
+    }
+
+    const nextLimit = Math.max(1, Number(draft.daily_limit) || 1);
     setBusy(true);
     setFlash(null);
     try {
-      await updateDeveloper(token, user.user_id, { enabled: !user.enabled });
+      await updateDeveloper(token, user.user_id, { daily_limit: nextLimit });
+      setDeveloperDrafts((current) => ({
+        ...current,
+        [user.user_id]: {
+          ...current[user.user_id],
+          daily_limit: String(nextLimit),
+        },
+      }));
       await refreshAll();
+      setFlash(t("console.users.quota_update_success", { username: user.username }));
     } catch (error) {
-      setFlash(getErrorMessage(error, "Developer update failed"));
+      setFlash(getErrorMessage(error, t("console.users.quota_update_failed")));
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleSaveDeveloperQuota(userId: string) {
-    const draft = developerDrafts[userId];
-    if (!draft) {
+  async function handleSaveDeveloperPassword(user: AdminDeveloperRecord) {
+    const password = developerDrafts[user.user_id]?.password.trim() ?? "";
+    if (!password) {
+      setFlash(t("console.users.password_required"));
       return;
     }
 
     setBusy(true);
     setFlash(null);
     try {
-      await updateDeveloper(token, userId, {
-        daily_limit: Math.max(1, Number(draft.daily_limit) || 1),
-      });
-      await refreshAll();
+      await updateDeveloper(token, user.user_id, { password });
+      setDeveloperDrafts((current) => ({
+        ...current,
+        [user.user_id]: {
+          ...current[user.user_id],
+          password: "",
+        },
+      }));
+      setFlash(t("console.users.password_update_success", { username: user.username }));
     } catch (error) {
-      setFlash(getErrorMessage(error, "Quota update failed"));
+      setFlash(getErrorMessage(error, t("console.users.password_update_failed", { username: user.username })));
     } finally {
       setBusy(false);
     }
@@ -139,23 +154,32 @@ export function ConsoleUsers() {
     await loadDeveloperKeys(user);
   }
 
-  async function handleCreateKey(event: FormEvent<HTMLFormElement>, user: AdminDeveloperRecord) {
-    event.preventDefault();
-    const panel = keyPanels[user.user_id];
-    const name = (panel?.keyName ?? DEFAULT_KEY_NAME).trim() || DEFAULT_KEY_NAME;
+  async function handleDeleteDeveloper(user: AdminDeveloperRecord) {
+    if (!window.confirm(t("console.users.delete_confirm", { username: user.username }))) {
+      return;
+    }
 
     setBusy(true);
     setFlash(null);
     try {
-      const created = await createAdminDeveloperKey(token, user.user_id, name);
-      setKeyPanelState(user.user_id, (current) => ({
-        ...current,
-        latestKey: created,
-        keyName: DEFAULT_KEY_NAME,
-      }));
-      await Promise.all([refreshAll(), loadDeveloperKeys(user, true)]);
+      await deleteDeveloper(token, user.user_id);
+      setDeveloperDrafts((current) => {
+        const next = { ...current };
+        delete next[user.user_id];
+        return next;
+      });
+      setKeyPanels((current) => {
+        const next = { ...current };
+        delete next[user.user_id];
+        return next;
+      });
+      if (expandedUserId === user.user_id) {
+        setExpandedUserId(null);
+      }
+      await refreshAll();
+      setFlash(t("console.users.delete_success", { username: user.username }));
     } catch (error) {
-      setFlash(getErrorMessage(error, `Failed to create key for ${user.username}`));
+      setFlash(getErrorMessage(error, t("console.users.delete_failed", { username: user.username })));
     } finally {
       setBusy(false);
     }
@@ -166,159 +190,176 @@ export function ConsoleUsers() {
     setFlash(null);
     try {
       await revokeAdminDeveloperKey(token, user.user_id, keyId);
-      setKeyPanelState(user.user_id, (current) => ({
-        ...current,
-        latestKey: current.latestKey?.id === keyId ? null : current.latestKey,
-      }));
       await Promise.all([refreshAll(), loadDeveloperKeys(user, true)]);
+      setFlash(t("console.users.key_delete_success", { username: user.username }));
     } catch (error) {
-      setFlash(getErrorMessage(error, `Failed to revoke key for ${user.username}`));
+      setFlash(getErrorMessage(error, t("console.users.revoke_key_failed", { username: user.username })));
     } finally {
       setBusy(false);
     }
   }
 
+  const totalIssuedKeys = developers.reduce((sum, developer) => sum + developer.key_count, 0);
+  const totalUsageToday = developers.reduce((sum, developer) => sum + developer.used_today, 0);
+  const totalDailyLimit = developers.reduce((sum, developer) => sum + developer.daily_limit, 0);
+
   return (
     <section className="panel panel-wide compact-panel">
-      <div className="section-header">
-        <h2>Developer users</h2>
-        <span className="section-meta">{developers.length} accounts</span>
-      </div>
-      <div className="table-head developer-table">
-        <span>User</span>
-        <span>Status</span>
-        <span>Daily</span>
-        <span>Used</span>
-        <span>Keys</span>
-        <span>Created</span>
-        <span>Actions</span>
-      </div>
-      <div className="dense-list">
+      <SectionHeader title={t("console.users.title")} meta={t("console.users.accounts", { count: developers.length })} />
+      <StatStrip
+        className="document-summary-strip"
+        items={[
+          { label: t("console.users.accounts_total"), value: developers.length },
+          { label: t("console.users.keys"), value: totalIssuedKeys },
+          { label: t("console.users.usage_today"), value: totalUsageToday },
+          { label: t("console.users.total_daily_limit"), value: totalDailyLimit },
+        ]}
+      />
+      <div className="dense-list compact-list">
         {developers.length ? (
           developers.map((developer) => {
             const draft = developerDrafts[developer.user_id] ?? {
               daily_limit: String(developer.daily_limit),
+              password: "",
             };
             const isExpanded = expandedUserId === developer.user_id;
             const panel = keyPanels[developer.user_id] ?? {
               loading: false,
               usage: null,
-              keyName: DEFAULT_KEY_NAME,
-              latestKey: null,
             };
             const keyTotal = panel.usage?.keys.length ?? developer.key_count;
+            const usageToday = panel.usage?.used_today ?? developer.used_today;
+            const dailyLimit = panel.usage?.daily_limit ?? developer.daily_limit;
+
             return (
-              <div key={developer.user_id} className="developer-card-stack">
-                <div className="table-row developer-table">
-                  <div className="cell cell-primary">
-                    <strong>{developer.username}</strong>
-                    <span>{developer.user_id}</span>
+              <article key={developer.user_id} className="developer-card-stack developer-user-card">
+                <div className="developer-user-shell developer-user-shell-compact">
+                  <div className="developer-user-topline">
+                    <div className="row-primary">
+                      <strong>{developer.username}</strong>
+                      <div className="row-meta row-meta-tight console-users-identity">
+                        <code>{developer.user_id}</code>
+                        <span>{t("console.users.created_at", { createdAt: developer.created_at })}</span>
+                      </div>
+                    </div>
+                    <div className="developer-user-summary">
+                      <div className="developer-user-summary-item">
+                        <span>{t("console.users.daily_limit")}</span>
+                        <strong>{dailyLimit}</strong>
+                      </div>
+                      <div className="developer-user-summary-item">
+                        <span>{t("console.users.usage_today")}</span>
+                        <strong>{usageToday}</strong>
+                      </div>
+                      <div className="developer-user-summary-item">
+                        <span>{t("console.users.keys")}</span>
+                        <strong>{keyTotal}</strong>
+                      </div>
+                    </div>
                   </div>
-                  <div className="cell">
-                    <span className={developer.enabled ? "status-pill" : "status-pill status-pill-muted"}>
-                      {developer.enabled ? "Enabled" : "Disabled"}
-                    </span>
-                  </div>
-                  <div className="cell">
-                    <input
-                      aria-label={`Daily quota for ${developer.username}`}
-                      value={draft.daily_limit}
-                      onChange={(event) =>
-                        setDeveloperDrafts((current) => ({
-                          ...current,
-                          [developer.user_id]: {
-                            ...draft,
-                            daily_limit: event.target.value,
-                          },
-                        }))
-                      }
-                      placeholder="Daily quota"
-                    />
-                  </div>
-                  <div className="cell">
-                    <strong>{panel.usage?.used_today ?? developer.used_today}</strong>
-                  </div>
-                  <div className="cell">
-                    <strong>{keyTotal}</strong>
-                  </div>
-                  <div className="cell">
-                    <span>{developer.created_at}</span>
-                  </div>
-                  <div className="cell cell-actions">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void handleSaveDeveloperQuota(developer.user_id)}
+
+                  <div className="developer-user-forms">
+                    <form
+                      className="inline-form form-fields developer-user-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void handleSaveDeveloperQuota(developer);
+                      }}
                     >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      className="plain-link"
-                      disabled={busy}
-                      onClick={() => void handleToggleDeveloperEnabled(developer)}
+                      <FieldShell
+                        className="compact-field"
+                        label={t("console.users.daily_limit")}
+                        hint={t("console.users.quota_label", { username: developer.username })}
+                      >
+                        <input
+                          aria-label={t("console.users.quota_label", { username: developer.username })}
+                          value={draft.daily_limit}
+                          onChange={(event) =>
+                            setDeveloperDrafts((current) => ({
+                              ...current,
+                              [developer.user_id]: {
+                                ...draft,
+                                daily_limit: event.target.value,
+                              },
+                            }))
+                          }
+                          placeholder={t("console.users.quota_placeholder")}
+                        />
+                      </FieldShell>
+                      <button type="submit" disabled={busy}>
+                        {t("console.users.save")}
+                      </button>
+                    </form>
+
+                    <form
+                      className="inline-form form-fields developer-user-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void handleSaveDeveloperPassword(developer);
+                      }}
                     >
-                      {developer.enabled ? "Disable" : "Enable"}
-                    </button>
-                    <button
-                      type="button"
-                      className="plain-link"
-                      disabled={busy || panel.loading}
-                      onClick={() => void handleToggleKeyPanel(developer)}
-                    >
-                      {isExpanded ? "Hide keys" : "Manage keys"}
-                    </button>
+                      <FieldShell
+                        className="compact-field field-group-wide"
+                        label={t("console.users.password_label")}
+                        hint={t("console.users.password_hint")}
+                      >
+                        <input
+                          type="password"
+                          aria-label={t("console.users.password_label")}
+                          value={draft.password}
+                          onChange={(event) =>
+                            setDeveloperDrafts((current) => ({
+                              ...current,
+                              [developer.user_id]: {
+                                ...draft,
+                                password: event.target.value,
+                              },
+                            }))
+                          }
+                          placeholder={t("console.users.password_placeholder")}
+                        />
+                      </FieldShell>
+                      <button type="submit" disabled={busy}>
+                        {t("console.users.update_password")}
+                      </button>
+                    </form>
+
+                    <div className="row-actions developer-user-actions">
+                      <button
+                        type="button"
+                        className="plain-link console-users-secondary-action"
+                        disabled={busy || panel.loading}
+                        onClick={() => void handleToggleKeyPanel(developer)}
+                      >
+                        {isExpanded ? t("console.users.hide_keys") : t("console.users.manage_keys")}
+                      </button>
+                      <button
+                        type="button"
+                        className="plain-link developer-user-danger"
+                        disabled={busy}
+                        onClick={() => void handleDeleteDeveloper(developer)}
+                      >
+                        {t("console.users.delete_user")}
+                      </button>
+                    </div>
                   </div>
                 </div>
                 {isExpanded ? (
                   <div className="developer-key-panel">
-                    <div className="section-header developer-key-panel-header">
-                      <div>
-                        <h3>{developer.username} API keys</h3>
-                        <span className="section-meta">Create a key here once, then copy it before leaving this panel.</span>
-                      </div>
-                      <div className="row-actions">
-                        <span className="section-meta">{keyTotal} total</span>
-                        <button
-                          type="button"
-                          className="plain-link"
-                          disabled={busy || panel.loading}
-                          onClick={() => void loadDeveloperKeys(developer, true)}
-                        >
-                          Refresh keys
-                        </button>
-                      </div>
-                    </div>
-
-                    {panel.latestKey ? (
-                      <div className="flash inline-flash">
-                        New key for {developer.username}: <code>{panel.latestKey.token}</code>
-                      </div>
-                    ) : null}
-
-                    <form className="inline-form developer-key-form" onSubmit={(event) => void handleCreateKey(event, developer)}>
-                      <input
-                        aria-label={`New key name for ${developer.username}`}
-                        value={panel.keyName}
-                        onChange={(event) =>
-                          setKeyPanelState(developer.user_id, (current) => ({
-                            ...current,
-                            keyName: event.target.value,
-                          }))
-                        }
-                        placeholder="Search key"
-                      />
-                      <button type="submit" disabled={busy || panel.loading}>
-                        Create key
-                      </button>
-                    </form>
+                    <SectionHeader
+                      className="developer-key-panel-header"
+                      heading="h3"
+                      title={t("console.users.key_panel_title", { username: developer.username })}
+                      meta={t("console.users.key_panel_hint")}
+                      actions={<span className="section-meta">{t("console.users.key_total", { count: keyTotal })}</span>}
+                    />
 
                     <div className="developer-key-summary">
-                      <span>Daily limit: <strong>{panel.usage?.daily_limit ?? developer.daily_limit}</strong></span>
-                      <span>Used today: <strong>{panel.usage?.used_today ?? developer.used_today}</strong></span>
+                      <span>{t("console.users.daily_limit_summary")} <strong>{dailyLimit}</strong></span>
+                      <span>{t("console.users.used_today_summary")} <strong>{usageToday}</strong></span>
                     </div>
 
-                    {panel.loading && !panel.usage ? <div className="list-row">Loading keys…</div> : null}
+                    {panel.loading && !panel.usage ? <div className="list-row">{t("console.users.loading_keys")}</div> : null}
 
                     {panel.usage?.keys.length ? (
                       <div className="dense-list compact-list">
@@ -329,9 +370,9 @@ export function ConsoleUsers() {
                               <span>{key.preview}</span>
                             </div>
                             <div className="row-meta">
-                              <span>Created {key.created_at}</span>
+                              <span>{t("console.users.created_at", { createdAt: key.created_at })}</span>
                               <span className={key.revoked_at ? "status-pill status-pill-muted" : "status-pill"}>
-                                {key.revoked_at ? `Revoked ${key.revoked_at}` : "Active"}
+                                {key.revoked_at ? t("console.users.revoked_at", { revokedAt: key.revoked_at }) : t("console.users.active")}
                               </span>
                             </div>
                             <div className="row-actions">
@@ -341,22 +382,22 @@ export function ConsoleUsers() {
                                 disabled={busy || panel.loading || Boolean(key.revoked_at)}
                                 onClick={() => void handleRevokeKey(developer, key.id)}
                               >
-                                Revoke
+                                {t("console.users.revoke")}
                               </button>
                             </div>
                           </div>
                         ))}
                       </div>
                     ) : panel.loading ? null : (
-                      <div className="list-row">No API keys for this developer yet.</div>
+                      <div className="list-row">{t("console.users.no_keys")}</div>
                     )}
                   </div>
                 ) : null}
-              </div>
+              </article>
             );
           })
         ) : (
-          <div className="list-row">No developer accounts yet.</div>
+          <div className="list-row">{t("console.users.no_users")}</div>
         )}
       </div>
     </section>

@@ -13,11 +13,12 @@ use crate::{
     error::ApiError,
     models::{
         AdminDeveloperRecord, AdminLoginRequest, AdminSessionResponse, CrawlJobListParams,
-        CrawlJobListResponse, CrawlJobStats, CrawlOverviewResponse, CrawlRule,
+        CrawlJobListResponse, CrawlJobStats, CrawlOriginState, CrawlOverviewResponse, CrawlRule,
         CrawlerJoinKeyResponse, CreateCrawlRuleRequest, CreateKeyRequest, CreatedKeyResponse,
         DeveloperUsageResponse, DocumentListParams, DocumentListResponse, PurgeSiteRequest,
         PurgeSiteResponse, RenameCrawlerRequest, SeedFrontierRequest, SeedFrontierResponse,
-        UpdateCrawlRuleRequest, UpdateDeveloperRequest,
+        SetSystemConfigRequest, SystemConfigResponse, UpdateCrawlRuleRequest,
+        UpdateDeveloperRequest,
     },
     store::DeveloperStore,
 };
@@ -300,6 +301,40 @@ pub async fn admin_set_join_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn admin_list_system_config(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+) -> Result<Json<SystemConfigResponse>, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    let entries = state.crawler_store.get_all_system_config().await?;
+    Ok(Json(SystemConfigResponse { entries }))
+}
+
+pub async fn admin_set_system_config(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<SetSystemConfigRequest>,
+) -> Result<StatusCode, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    let allowed = matches!(
+        key.as_str(),
+        "join_key"
+            | "crawler.claim_timeout_secs"
+            | "crawler.max_attempts"
+            | "crawler.tor_proxy_url"
+            | "crawler.tor_enabled"
+    );
+    if !allowed {
+        return Err(ApiError::BadRequest(format!("unknown config key: {key}")));
+    }
+    state
+        .crawler_store
+        .set_system_config(&key, body.value)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn admin_list_developers(
     State(state): State<ControlState>,
     headers: HeaderMap,
@@ -350,6 +385,7 @@ pub async fn admin_update_developer(
         let quota_request = UpdateDeveloperRequest {
             daily_limit: request.daily_limit,
             enabled: None,
+            password: None,
         };
         // ensure the developer account exists before applying quota changes
         let _ = state
@@ -363,6 +399,30 @@ pub async fn admin_update_developer(
             .update_developer_quota(&user_id, quota_request)
             .await?;
     }
+    if let Some(password) = request.password.as_deref() {
+        state.dev_auth.update_password(&user_id, password).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_delete_developer(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    state.dev_auth.delete_account(&user_id).await?;
+    state
+        .crawler_store
+        .record_admin_event(
+            &state.default_crawler_owner_id,
+            "developer-deleted",
+            "ok",
+            format!("deleted developer {user_id}"),
+            None,
+            None,
+        )
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -400,6 +460,19 @@ pub async fn admin_job_stats(
     ))
 }
 
+pub async fn admin_list_origins(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<CrawlOriginState>>, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    Ok(Json(
+        state
+            .crawler_store
+            .list_origins(&state.default_crawler_owner_id)
+            .await?,
+    ))
+}
+
 pub async fn admin_retry_failed_jobs(
     State(state): State<ControlState>,
     headers: HeaderMap,
@@ -422,6 +495,21 @@ pub async fn admin_cleanup_completed_jobs(
         .cleanup_completed_jobs(&state.default_crawler_owner_id)
         .await?;
     Ok(Json(serde_json::json!({ "cleaned": count })))
+}
+
+pub async fn admin_stop_all_jobs(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    let (disabled_rules, removed_jobs) = state
+        .crawler_store
+        .stop_all_jobs(&state.default_crawler_owner_id)
+        .await?;
+    Ok(Json(serde_json::json!({
+        "disabled_rules": disabled_rules,
+        "removed_jobs": removed_jobs
+    })))
 }
 
 async fn authorize_admin(

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
@@ -11,7 +11,8 @@ use crate::{
     error::ApiError,
     models::{
         CreateKeyRequest, DevLoginRequest, DevRegisterRequest, DevSessionResponse,
-        DeveloperUsageResponse,
+        DeveloperDomainInsightQuery, DeveloperDomainInsightResponse, DeveloperDomainSubmitRequest,
+        DeveloperDomainSubmitResponse, DeveloperUsageResponse,
     },
 };
 
@@ -93,6 +94,31 @@ pub async fn dev_revoke_key(
         .revoke_developer_key(&dev.user_id, &id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn dev_domain_insight(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Query(query): Query<DeveloperDomainInsightQuery>,
+) -> Result<Json<DeveloperDomainInsightResponse>, ApiError> {
+    let _ = authorize_dev(&state, &headers).await?;
+    Ok(Json(
+        state.crawler_store.domain_insight(&query.domain).await?,
+    ))
+}
+
+pub async fn dev_submit_domain(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Json(request): Json<DeveloperDomainSubmitRequest>,
+) -> Result<Json<DeveloperDomainSubmitResponse>, ApiError> {
+    let dev = authorize_dev(&state, &headers).await?;
+    Ok(Json(
+        state
+            .crawler_store
+            .submit_domain_urls(&state.default_crawler_owner_id, &dev.user_id, request)
+            .await?,
+    ))
 }
 
 async fn authorize_dev(

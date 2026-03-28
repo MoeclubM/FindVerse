@@ -1,13 +1,16 @@
 import { FormEvent, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { getCrawlerJoinKey, setCrawlerJoinKey } from "../api";
+import { FieldShell } from "./common/PanelPrimitives";
 
-export function JoinKeyManager({ token }: { token: string }) {
+export function JoinKeyManager(props: { token: string; setFlash: (value: string | null) => void }) {
+  const { token, setFlash } = props;
+  const { t } = useTranslation();
   const [joinKey, setJoinKey] = useState<string | null>(null);
   const [newKey, setNewKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
 
   useEffect(() => {
     getCrawlerJoinKey(token)
@@ -15,9 +18,9 @@ export function JoinKeyManager({ token }: { token: string }) {
         setJoinKey(res.join_key);
         setNewKey(res.join_key ?? "");
       })
-      .catch(() => setFlash("Failed to load join key"))
+      .catch(() => setFlash(t("console.settings.join_key_load_error")))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, setFlash, t]);
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
@@ -26,39 +29,41 @@ export function JoinKeyManager({ token }: { token: string }) {
     try {
       await setCrawlerJoinKey(token, newKey.trim() || null);
       setJoinKey(newKey.trim() || null);
-      setFlash("Join key updated");
+      setFlash(t("console.settings.join_key_update_success"));
     } catch {
-      setFlash("Failed to update join key");
+      setFlash(t("console.settings.join_key_update_error"));
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) return <p>Loading...</p>;
+  if (loading) return <p>{t("console.settings.loading")}</p>;
 
   return (
     <div>
-      {flash && <p className="flash">{flash}</p>}
-      <form className="inline-form" onSubmit={handleSave}>
-        <input
-          value={newKey}
-          onChange={(e) => setNewKey(e.target.value)}
-          placeholder="Join key for enrolling new workers"
-          style={{ minWidth: 300 }}
-        />
-        <button type="submit" disabled={saving}>Save key</button>
+      <form className="inline-form form-fields" onSubmit={handleSave}>
+        <FieldShell className="compact-field field-group-wide" label={t("console.settings.join_key_section")}>
+          <input
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            placeholder={t("console.settings.join_key_placeholder")}
+          />
+        </FieldShell>
+        <button type="submit" disabled={saving}>
+          {t("console.settings.save_key")}
+        </button>
       </form>
       {joinKey ? (
         <p className="section-meta" style={{ marginTop: 8 }}>
-          Current join key: <code>{joinKey}</code>
+          {t("console.settings.current_join_key")} <code>{joinKey}</code>
         </p>
       ) : (
         <p className="section-meta" style={{ marginTop: 8 }}>
-          No join key configured. New workers cannot enroll until you set one.
+          {t("console.settings.no_join_key")}
         </p>
       )}
       <details style={{ marginTop: 8 }}>
-        <summary className="section-meta">Worker setup</summary>
+        <summary className="section-meta">{t("console.settings.worker_setup")}</summary>
         <pre style={{ fontSize: "0.85em", marginTop: 4 }}>
 {`Share this key with crawler operators so they can register a worker. The join key is only used during enrollment; after joining, each worker continues with its own crawler credentials.
 

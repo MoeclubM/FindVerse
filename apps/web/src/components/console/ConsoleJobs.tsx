@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   cleanupCompletedJobs,
   getCrawlJobStats,
   listCrawlJobs,
   retryFailedJobs,
+  stopAllCrawlJobs,
   type CrawlJobList,
   type CrawlJobStats,
 } from "../../api";
+import { SectionHeader, StatStrip } from "../common/PanelPrimitives";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -18,6 +21,7 @@ const PAGE_SIZE = 20;
 
 export function ConsoleJobs() {
   const { token, busy, setBusy, setFlash, refreshAll } = useConsole();
+  const { t } = useTranslation();
 
   const [statusFilter, setStatusFilter] = useState("");
   const [offset, setOffset] = useState(0);
@@ -45,7 +49,7 @@ export function ConsoleJobs() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setFlash(getErrorMessage(error, "Failed to load crawl jobs"));
+          setFlash(getErrorMessage(error, t("console.jobs.load_failed")));
         }
       })
       .finally(() => {
@@ -57,14 +61,14 @@ export function ConsoleJobs() {
     return () => {
       cancelled = true;
     };
-  }, [token, statusFilter, offset, setFlash]);
+  }, [token, statusFilter, offset, setFlash, t]);
 
   async function handleRetryFailed() {
     setBusy(true);
     setFlash(null);
     try {
       const response = await retryFailedJobs(token);
-      setFlash(`Re-queued ${response.retried} failed or dead-letter jobs`);
+      setFlash(t("console.jobs.retry_success", { count: response.retried }));
       await refreshAll();
       setOffset(0);
       const [nextStats, nextJobs] = await Promise.all([
@@ -78,7 +82,7 @@ export function ConsoleJobs() {
       setStats(nextStats);
       setJobs(nextJobs);
     } catch (error) {
-      setFlash(getErrorMessage(error, "Retry failed"));
+      setFlash(getErrorMessage(error, t("console.jobs.retry_failed_error")));
     } finally {
       setBusy(false);
     }
@@ -89,7 +93,7 @@ export function ConsoleJobs() {
     setFlash(null);
     try {
       const response = await cleanupCompletedJobs(token);
-      setFlash(`Removed ${response.cleaned} succeeded jobs`);
+      setFlash(t("console.jobs.cleanup_success", { count: response.cleaned }));
       await refreshAll();
       setOffset(0);
       const [nextStats, nextJobs] = await Promise.all([
@@ -103,7 +107,41 @@ export function ConsoleJobs() {
       setStats(nextStats);
       setJobs(nextJobs);
     } catch (error) {
-      setFlash(getErrorMessage(error, "Cleanup failed"));
+      setFlash(getErrorMessage(error, t("console.jobs.cleanup_failed_error")));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleStopAll() {
+    if (!window.confirm(t("console.jobs.stop_all_confirm"))) {
+      return;
+    }
+
+    setBusy(true);
+    setFlash(null);
+    try {
+      const response = await stopAllCrawlJobs(token);
+      setFlash(
+        t("console.jobs.stop_all_success", {
+          rules: response.disabled_rules,
+          jobs: response.removed_jobs,
+        }),
+      );
+      await refreshAll();
+      setOffset(0);
+      const [nextStats, nextJobs] = await Promise.all([
+        getCrawlJobStats(token),
+        listCrawlJobs(token, {
+          status: statusFilter || undefined,
+          offset: 0,
+          limit: PAGE_SIZE,
+        }),
+      ]);
+      setStats(nextStats);
+      setJobs(nextJobs);
+    } catch (error) {
+      setFlash(getErrorMessage(error, t("console.jobs.stop_all_failed")));
     } finally {
       setBusy(false);
     }
@@ -112,43 +150,24 @@ export function ConsoleJobs() {
   return (
     <>
       <section className="panel panel-wide compact-panel">
-        <div className="section-header">
-          <h2>Job status</h2>
-          <span className="section-meta">{jobs?.total ?? 0} visible jobs</span>
-        </div>
-        <div className="dense-grid">
-          <div className="metric-card">
-            <span>Queued</span>
-            <strong>{stats?.queued ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Claimed</span>
-            <strong>{stats?.claimed ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Succeeded</span>
-            <strong>{stats?.succeeded ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Failed</span>
-            <strong>{stats?.failed ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Blocked</span>
-            <strong>{stats?.blocked ?? 0}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Dead letter</span>
-            <strong>{stats?.dead_letter ?? 0}</strong>
-          </div>
-        </div>
+        <SectionHeader
+          title={t("console.jobs.status_title")}
+          meta={t("console.jobs.visible_jobs", { count: jobs?.total ?? 0 })}
+        />
+        <StatStrip
+          items={[
+            { label: t("console.jobs.stats.queued"), value: stats?.queued ?? 0 },
+            { label: t("console.jobs.stats.claimed"), value: stats?.claimed ?? 0 },
+            { label: t("console.jobs.stats.succeeded"), value: stats?.succeeded ?? 0 },
+            { label: t("console.jobs.stats.failed"), value: stats?.failed ?? 0 },
+            { label: t("console.jobs.stats.blocked"), value: stats?.blocked ?? 0 },
+            { label: t("console.jobs.stats.dead_letter"), value: stats?.dead_letter ?? 0 },
+          ]}
+        />
       </section>
 
       <section className="panel panel-wide compact-panel">
-        <div className="section-header">
-          <h2>Job queue</h2>
-          <span className="section-meta">Failures, retries, and terminal states</span>
-        </div>
+        <SectionHeader title={t("console.jobs.queue_title")} meta={t("console.jobs.queue_meta")} />
 
         <div className="inline-form">
           <select
@@ -158,25 +177,28 @@ export function ConsoleJobs() {
               setOffset(0);
             }}
           >
-            <option value="">All statuses</option>
-            <option value="queued">Queued</option>
-            <option value="claimed">Claimed</option>
-            <option value="succeeded">Succeeded</option>
-            <option value="failed">Failed</option>
-            <option value="blocked">Blocked</option>
-            <option value="dead_letter">Dead letter</option>
+            <option value="">{t("console.jobs.all_statuses")}</option>
+            <option value="queued">{t("console.jobs.stats.queued")}</option>
+            <option value="claimed">{t("console.jobs.stats.claimed")}</option>
+            <option value="succeeded">{t("console.jobs.stats.succeeded")}</option>
+            <option value="failed">{t("console.jobs.stats.failed")}</option>
+            <option value="blocked">{t("console.jobs.stats.blocked")}</option>
+            <option value="dead_letter">{t("console.jobs.stats.dead_letter")}</option>
           </select>
           <button type="button" disabled={busy} onClick={() => void handleRetryFailed()}>
-            Retry failed
+            {t("console.jobs.retry_failed")}
           </button>
           <button type="button" disabled={busy} onClick={() => void handleCleanupSucceeded()}>
-            Cleanup succeeded
+            {t("console.jobs.cleanup_succeeded")}
+          </button>
+          <button type="button" disabled={busy} className="danger-button" onClick={() => void handleStopAll()}>
+            {t("console.jobs.stop_all")}
           </button>
         </div>
 
         <div className="dense-list">
           {loading ? (
-            <div className="list-row">Loading jobs…</div>
+            <div className="list-row">{t("console.jobs.loading")}</div>
           ) : jobs?.jobs.length ? (
             jobs.jobs.map((job) => (
               <div className="compact-row worker-row" key={job.id}>
@@ -189,18 +211,27 @@ export function ConsoleJobs() {
                     {job.status}
                   </span>
                   {job.http_status != null ? <span>HTTP {job.http_status}</span> : null}
-                  <span>Attempt {job.attempt_count} / {job.max_attempts}</span>
-                  <span>Depth {job.depth} / {job.max_depth}</span>
-                  <span>{job.discovered_urls_count} discovered</span>
-                  {job.claimed_by ? <span>Worker {job.claimed_by}</span> : null}
-                  {job.next_retry_at ? <span>Retry at {job.next_retry_at}</span> : null}
-                  {job.finished_at ? <span>Finished {job.finished_at}</span> : null}
+                  <span>{t("console.jobs.attempt_progress", { current: job.attempt_count, max: job.max_attempts })}</span>
+                  <span>{t("console.jobs.depth_progress", { current: job.depth, max: job.max_depth })}</span>
+                  <span>{t("console.jobs.discovered_count", { count: job.discovered_urls_count })}</span>
+                  {job.claimed_by ? <span>{t("console.jobs.worker_id", { id: job.claimed_by })}</span> : null}
+                  {job.next_retry_at ? <span>{t("console.jobs.retry_at", { time: job.next_retry_at })}</span> : null}
+                  {job.finished_at ? <span>{t("console.jobs.finished_at", { time: job.finished_at })}</span> : null}
                 </div>
                 <div className="row-meta">
-                  {job.final_url ? <span>Final {job.final_url}</span> : null}
+                  {job.final_url ? <span>{t("console.jobs.final", { url: job.final_url })}</span> : null}
                   {job.content_type ? <span>{job.content_type}</span> : null}
-                  {job.accepted_document_id ? <span>Doc {job.accepted_document_id}</span> : null}
+                  {job.accepted_document_id ? <span>{t("console.jobs.doc", { id: job.accepted_document_id })}</span> : null}
+                  {job.llm_decision ? <span>{t("console.jobs.llm", { decision: job.llm_decision })}</span> : null}
+                  {job.llm_relevance_score != null ? (
+                    <span>{t("console.jobs.score", { score: job.llm_relevance_score.toFixed(2) })}</span>
+                  ) : null}
                 </div>
+                {job.llm_reason ? (
+                  <div className="row-meta">
+                    <span>{job.llm_reason}</span>
+                  </div>
+                ) : null}
                 {job.failure_kind || job.failure_message ? (
                   <div className="row-meta">
                     {job.failure_kind ? <span>{job.failure_kind}</span> : null}
@@ -210,7 +241,7 @@ export function ConsoleJobs() {
               </div>
             ))
           ) : (
-            <div className="list-row">No crawl jobs match the current filter.</div>
+            <div className="list-row">{t("console.jobs.no_jobs_match")}</div>
           )}
         </div>
 
@@ -220,15 +251,15 @@ export function ConsoleJobs() {
             disabled={offset === 0}
             onClick={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))}
           >
-            Previous
+            {t("search.previous")}
           </button>
-          <span className="section-meta">Offset: {offset}</span>
+          <span className="section-meta">{t("console.jobs.offset", { offset })}</span>
           <button
             type="button"
             disabled={jobs?.next_offset == null}
             onClick={() => setOffset(jobs?.next_offset ?? offset)}
           >
-            Next
+            {t("search.next")}
           </button>
         </div>
       </section>

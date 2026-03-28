@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { renameCrawler } from "../../api";
+import { SectionHeader, StatStrip } from "../common/PanelPrimitives";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -17,6 +19,16 @@ function isWorkerOnline(lastSeenAt: string | null): boolean {
 
 export function ConsoleWorkers() {
   const { token, busy, setBusy, setFlash, refreshAll, overview } = useConsole();
+  const { t } = useTranslation();
+  const crawlers = [...(overview?.crawlers ?? [])]
+    .filter((crawler) => isWorkerOnline(crawler.last_seen_at))
+    .sort((left, right) => {
+      const leftSeen = left.last_seen_at ? new Date(left.last_seen_at).getTime() : 0;
+      const rightSeen = right.last_seen_at ? new Date(right.last_seen_at).getTime() : 0;
+      return rightSeen - leftSeen;
+    });
+  const totalClaimed = crawlers.reduce((sum, crawler) => sum + crawler.jobs_claimed, 0);
+  const totalReported = crawlers.reduce((sum, crawler) => sum + crawler.jobs_reported, 0);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -33,7 +45,7 @@ export function ConsoleWorkers() {
 
   async function handleSaveName(crawlerId: string) {
     if (!editName.trim() || editName.trim().length < 2) {
-      setFlash("Crawler name must be at least 2 characters");
+      setFlash(t("console.workers.name_too_short"));
       return;
     }
     setBusy(true);
@@ -44,7 +56,7 @@ export function ConsoleWorkers() {
       setEditName("");
       await refreshAll();
     } catch (error) {
-      setFlash(getErrorMessage(error, "Rename failed"));
+      setFlash(getErrorMessage(error, t("console.workers.rename_failed")));
     } finally {
       setBusy(false);
     }
@@ -52,16 +64,22 @@ export function ConsoleWorkers() {
 
   return (
     <section className="panel panel-wide compact-panel">
-      <div className="section-header">
-        <h2>Crawler workers</h2>
-        <span className="section-meta">{overview?.crawlers.length ?? 0} registered</span>
-      </div>
+      <SectionHeader title={t("console.workers.title")} meta={t("console.workers.registered", { count: crawlers.length })} />
       <p className="dev-hint">
-        Workers join with the manual join key from Settings, then continue using their own crawler credentials.
+        {t("console.workers.setup_hint")}
       </p>
+      <StatStrip
+        className="worker-density-grid"
+        items={[
+          { label: t("console.overview.workers"), value: crawlers.length },
+          { label: t("console.workers.jobs_claimed"), value: totalClaimed },
+          { label: t("console.workers.jobs_reported"), value: totalReported },
+          { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
+        ]}
+      />
       <div className="dense-list">
-        {overview?.crawlers.length ? (
-          overview.crawlers.map((crawler) => {
+        {crawlers.length ? (
+          crawlers.map((crawler) => {
             const online = isWorkerOnline(crawler.last_seen_at);
             const isEditing = editingId === crawler.id;
             return (
@@ -73,7 +91,7 @@ export function ConsoleWorkers() {
                         <input
                           value={editName}
                           onChange={(event) => setEditName(event.target.value)}
-                          placeholder="Crawler name"
+                          placeholder={t("console.workers.name_placeholder")}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") void handleSaveName(crawler.id);
                             if (event.key === "Escape") cancelEditing();
@@ -85,14 +103,14 @@ export function ConsoleWorkers() {
                           disabled={busy}
                           onClick={() => void handleSaveName(crawler.id)}
                         >
-                          Save
+                          {t("console.workers.save")}
                         </button>
                         <button
                           type="button"
                           className="plain-link"
                           onClick={cancelEditing}
                         >
-                          Cancel
+                          {t("console.workers.cancel")}
                         </button>
                       </div>
                     ) : (
@@ -104,39 +122,39 @@ export function ConsoleWorkers() {
                           disabled={busy}
                           onClick={() => startEditing(crawler.id, crawler.name)}
                         >
-                          Rename
+                          {t("console.workers.rename")}
                         </button>
                       </>
                     )}
                     <span className={online ? "status-pill" : "status-pill status-pill-muted"}>
-                      {online ? "Online" : "Offline"}
+                      {online ? t("console.workers.online") : t("console.workers.offline")}
                     </span>
                   </div>
-                  <span>{crawler.id}</span>
+                  <code>{crawler.id}</code>
                 </div>
-                <div className="metadata-grid compact-metadata">
+                <div className="metadata-grid compact-metadata compact-metadata-wide">
                   <div>
-                    <span>Preview</span>
+                    <span>{t("console.workers.preview")}</span>
                     <strong>{crawler.preview}</strong>
                   </div>
                   <div>
-                    <span>Created</span>
+                    <span>{t("console.workers.created")}</span>
                     <strong>{crawler.created_at}</strong>
                   </div>
                   <div>
-                    <span>Last seen</span>
+                    <span>{t("console.workers.last_seen")}</span>
                     <strong>{crawler.last_seen_at ?? "-"}</strong>
                   </div>
                   <div>
-                    <span>Last claim</span>
+                    <span>{t("console.workers.last_claimed")}</span>
                     <strong>{crawler.last_claimed_at ?? "-"}</strong>
                   </div>
                   <div>
-                    <span>Claimed</span>
+                    <span>{t("console.workers.jobs_claimed")}</span>
                     <strong>{crawler.jobs_claimed}</strong>
                   </div>
                   <div>
-                    <span>Reported</span>
+                    <span>{t("console.workers.jobs_reported")}</span>
                     <strong>{crawler.jobs_reported}</strong>
                   </div>
                 </div>
@@ -144,7 +162,7 @@ export function ConsoleWorkers() {
             );
           })
         ) : (
-          <div className="list-row">No crawler workers yet. Set a join key in Settings, then start a worker to enroll it.</div>
+          <div className="list-row">{t("console.workers.no_workers")}</div>
         )}
       </div>
     </section>

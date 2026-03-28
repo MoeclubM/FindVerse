@@ -6,7 +6,9 @@ FindVerse is a development-stage general search system built for simple deployme
 
 - Public search, suggest, and developer search APIs
 - Admin console for developers, crawl rules, crawl jobs, workers, and indexed documents
-- Independent crawler workers that can be deployed with Docker or local scripts
+- Independent crawler workers that can be deployed as host services or local scripts
+- Recursive crawl controls with per-rule discovery scope and per-page expansion limits
+- Optional OpenAI-compatible LLM page filtering before indexing
 - OpenSearch for search, PostgreSQL for control-plane metadata, and Valkey for short-lived coordination state
 
 ## Runtime modules
@@ -27,3 +29,5 @@ FindVerse is a development-stage general search system built for simple deployme
 
 - Deployment, crawler setup, smoke tests, and release flow: [docs/deployment.md](docs/deployment.md)
 - Architecture and service boundaries: [docs/architecture.md](docs/architecture.md)
+
+The deployment scripts are kept as the main entrypoint for local and containerized environments, and they now support explicit env files plus compose overrides so the default path stays simple while long-lived development and production can share the same deployment shape.

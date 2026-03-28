@@ -1,7 +1,7 @@
 {
   "name": "findverse",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "workspaces": [
     "apps/*"
   ],
@@ -12,11 +12,10 @@
     "lint:web": "npm --workspace @findverse/web run typecheck",
     "typecheck:web": "npm --workspace @findverse/web run typecheck",
     "test:e2e": "playwright test",
-    "test:e2e:podman": "powershell -ExecutionPolicy Bypass -File scripts/e2e-podman.ps1",
     "test": "npm run test --workspaces --if-present && cargo test --workspace",
     "format": "npm run format --workspaces --if-present"
   },
   "devDependencies": {
-    "@playwright/test": "^1.55.0"
+    "@playwright/test": "^1.58.2"
   }
 }

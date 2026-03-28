@@ -2,6 +2,8 @@
 [CmdletBinding()]
 param(
     [string]$ComposeProjectName = "findverse",
+    [string[]]$ComposeFile = @("docker-compose.yml"),
+    [string]$EnvFile = "",
     [int]$WebPort = 3000,
     [int]$ControlApiPort = 8080,
     [int]$QueryApiPort = 8081,
@@ -10,7 +12,7 @@ param(
     [int]$OpenSearchPort = 9200,
     [string]$AdminUsername = "admin",
     [string]$AdminPassword = "change-me",
-    [string]$CrawlerJoinKey = "",
+    [string]$CrawlerJoinKey = "change-me",
     [string]$CrawlerServer = "http://control-api:8080",
     [int]$CrawlerMaxJobs = 10,
     [int]$CrawlerPollIntervalSecs = 5,
@@ -28,6 +30,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 $env:COMPOSE_PROJECT_NAME = $ComposeProjectName
+$env:FINDVERSE_ENV_FILE = $EnvFile
 $env:FINDVERSE_WEB_PORT = "$WebPort"
 $env:FINDVERSE_CONTROL_API_PORT = "$ControlApiPort"
 $env:FINDVERSE_QUERY_API_PORT = "$QueryApiPort"
@@ -43,6 +46,38 @@ $env:FINDVERSE_CRAWLER_POLL_INTERVAL_SECS = "$CrawlerPollIntervalSecs"
 $env:FINDVERSE_CRAWLER_CONCURRENCY = "$CrawlerConcurrency"
 $env:FINDVERSE_CRAWLER_ALLOWED_DOMAINS = $CrawlerAllowedDomains
 $env:FINDVERSE_CRAWLER_PROXY = $CrawlerProxy
+
+function Prune-RebuildArtifacts {
+    $services = @("control-api", "query-api", "web")
+    if ($WithCrawler) {
+        $services += "crawler-worker"
+    }
+
+    $images = $services | ForEach-Object { "$ComposeProjectName-$_" }
+
+    Invoke-Compose stop @services 2>$null | Out-Null
+    Invoke-Compose rm -f @services 2>$null | Out-Null
+    & docker image rm -f @images 2>$null | Out-Null
+    & docker image prune -f 2>$null | Out-Null
+    & docker builder prune -f 2>$null | Out-Null
+}
+
+function Invoke-Compose {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $composeArgs = @("compose")
+    if (-not [string]::IsNullOrWhiteSpace($EnvFile)) {
+        $composeArgs += @("--env-file", $EnvFile)
+    }
+    foreach ($file in $ComposeFile) {
+        $composeArgs += @("-f", $file)
+    }
+    $composeArgs += $Arguments
+    & docker @composeArgs
+}
 
 function Wait-TcpPort {
     param(
@@ -92,14 +127,34 @@ function Wait-Http {
     throw "$Name did not become ready at $Uri"
 }
 
-$infraArgs = @("compose", "up", "-d", "postgres", "valkey", "opensearch")
-$appArgs = @("compose", "up", "-d")
+function Sync-CrawlerJoinKey {
+    $adminSession = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$ControlApiPort/v1/admin/session/login" -ContentType "application/json" -Body (@{
+        username = $AdminUsername
+        password = $AdminPassword
+    } | ConvertTo-Json -Compress) -TimeoutSec 30
+
+    if ([string]::IsNullOrWhiteSpace($adminSession.token)) {
+        throw "failed to obtain admin token while syncing crawler join key"
+    }
+
+    $response = Invoke-WebRequest -Method Put -Uri "http://127.0.0.1:$ControlApiPort/v1/admin/crawler-join-key" -Headers @{
+        Authorization = "Bearer $($adminSession.token)"
+    } -ContentType "application/json" -Body (@{
+        join_key = $CrawlerJoinKey
+    } | ConvertTo-Json -Compress) -TimeoutSec 30
+
+    if ([int]$response.StatusCode -ne 204) {
+        throw "failed to sync crawler join key via control api"
+    }
+}
+
+$appArgs = @("up", "-d")
 if ($Rebuild) {
     $appArgs += "--build"
 }
 $appArgs += @("control-api", "query-api", "web")
 if ($WithCrawler) {
-    $crawlerArgs = @("compose", "--profile", "crawler", "up", "-d")
+    $crawlerArgs = @("--profile", "crawler", "up", "-d")
     if ($Rebuild) {
         $crawlerArgs += "--build"
     }
@@ -108,16 +163,20 @@ if ($WithCrawler) {
 
 Push-Location $repoRoot
 try {
-    & docker @infraArgs
+    if ($Rebuild) {
+        Prune-RebuildArtifacts
+    }
+
+    Invoke-Compose up -d postgres valkey opensearch
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose infra up failed with exit code $LASTEXITCODE"
     }
 
     Wait-TcpPort -Name "PostgreSQL" -Host "127.0.0.1" -Port $PostgresPort
     Wait-TcpPort -Name "Redis" -Host "127.0.0.1" -Port $RedisPort
-    Wait-Http -Name "OpenSearch" -Uri "http://127.0.0.1:$OpenSearchPort"
+    Wait-Http -Name "OpenSearch" -Uri "http://127.0.0.1:$OpenSearchPort/_cluster/health?wait_for_status=yellow&timeout=60s"
 
-    & docker @appArgs
+    Invoke-Compose @appArgs
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose app up failed with exit code $LASTEXITCODE"
     }
@@ -126,13 +185,14 @@ try {
     Wait-Http -Name "Query API" -Uri "http://127.0.0.1:$QueryApiPort/readyz"
 
     if ($WithCrawler) {
-        & docker @crawlerArgs
+        Sync-CrawlerJoinKey
+        Invoke-Compose @crawlerArgs
         if ($LASTEXITCODE -ne 0) {
             throw "docker compose crawler up failed with exit code $LASTEXITCODE"
         }
     }
 
-    & docker compose ps
+    Invoke-Compose ps
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose ps failed with exit code $LASTEXITCODE"
     }
@@ -143,6 +203,10 @@ finally {
 
 Write-Host ""
 Write-Host "Stack is running."
+if (-not [string]::IsNullOrWhiteSpace($EnvFile)) {
+    Write-Host "  Env file:    $EnvFile"
+}
+Write-Host "  Compose:     $($ComposeFile -join ', ')"
 Write-Host "  Web:         http://127.0.0.1:$WebPort"
 Write-Host "  Control API: http://127.0.0.1:$ControlApiPort"
 Write-Host "  Query API:   http://127.0.0.1:$QueryApiPort"

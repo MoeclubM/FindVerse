@@ -9,23 +9,24 @@ anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
 findverse-common = { path = "../../crates/findverse-common" }
-futures = "0.3"
-headless_chrome = { version = "1.0", optional = true }
-hostname = "0.4"
+flate2 = "1"
+futures = "0.3.32"
+headless_chrome = { version = "1.0.21", optional = true }
+hostname = "0.4.2"
+quick-xml = "0.37"
 rand.workspace = true
-reqwest = { workspace = true, features = ["cookies"] }
+reqwest = { workspace = true, features = ["cookies", "socks"] }
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-sha2.workspace = true
-texting_robots = "0.2"
+texting_robots = "0.2.2"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
-whatlang = "0.16"
+whatlang = "0.18.0"
 
 [features]
-default = []
+default = ["js-render"]
 js-render = ["headless_chrome"]

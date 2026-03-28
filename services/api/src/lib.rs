@@ -20,7 +20,7 @@ use admin::AdminAuth;
 use axum::{
     Router,
     extract::FromRef,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use config::{Config, ServiceKind};
 use crawler::CrawlerStore;
@@ -173,9 +173,16 @@ async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState
 
 fn spawn_maintenance_loop(state: ControlState, config: &Config) {
     let maintenance_interval = Duration::from_secs(config.crawler_maintenance_interval_secs.max(1));
-    let claim_timeout = Duration::from_secs(config.crawler_claim_timeout_secs.max(1));
+    let default_claim_timeout_secs = config.crawler_claim_timeout_secs;
 
     tokio::spawn(async move {
+        let timeout_secs = state
+            .crawler_store
+            .get_system_config("crawler.claim_timeout_secs")
+            .await
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(default_claim_timeout_secs);
+        let claim_timeout = Duration::from_secs(timeout_secs.max(1));
         if let Err(error) = state.crawler_store.run_maintenance(claim_timeout).await {
             error!(?error, "initial crawler maintenance pass failed");
         }
@@ -183,6 +190,13 @@ fn spawn_maintenance_loop(state: ControlState, config: &Config) {
         let mut ticker = tokio::time::interval(maintenance_interval);
         loop {
             ticker.tick().await;
+            let timeout_secs = state
+                .crawler_store
+                .get_system_config("crawler.claim_timeout_secs")
+                .await
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(default_claim_timeout_secs);
+            let claim_timeout = Duration::from_secs(timeout_secs.max(1));
             if let Err(error) = state.crawler_store.run_maintenance(claim_timeout).await {
                 error!(?error, "crawler maintenance pass failed");
             }
@@ -268,6 +282,14 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             get(handlers::admin::admin_get_join_key).put(handlers::admin::admin_set_join_key),
         )
         .route(
+            "/v1/admin/system-config",
+            get(handlers::admin::admin_list_system_config),
+        )
+        .route(
+            "/v1/admin/system-config/{key}",
+            put(handlers::admin::admin_set_system_config),
+        )
+        .route(
             "/v1/admin/crawl/jobs",
             get(handlers::admin::admin_list_jobs),
         )
@@ -276,8 +298,16 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             get(handlers::admin::admin_job_stats),
         )
         .route(
+            "/v1/admin/crawl/origins",
+            get(handlers::admin::admin_list_origins),
+        )
+        .route(
             "/v1/admin/crawl/jobs/retry",
             post(handlers::admin::admin_retry_failed_jobs),
+        )
+        .route(
+            "/v1/admin/crawl/jobs/stop",
+            post(handlers::admin::admin_stop_all_jobs),
         )
         .route(
             "/v1/admin/crawl/jobs/completed",
@@ -296,12 +326,21 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             delete(handlers::developer::dev_revoke_key),
         )
         .route(
+            "/v1/dev/domains/inspect",
+            get(handlers::developer::dev_domain_insight),
+        )
+        .route(
+            "/v1/dev/domains/submit",
+            post(handlers::developer::dev_submit_domain),
+        )
+        .route(
             "/v1/admin/developers",
             get(handlers::admin::admin_list_developers),
         )
         .route(
             "/v1/admin/developers/{user_id}",
-            patch(handlers::admin::admin_update_developer),
+            patch(handlers::admin::admin_update_developer)
+                .delete(handlers::admin::admin_delete_developer),
         )
         .route(
             "/internal/crawlers/claim",

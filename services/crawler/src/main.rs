@@ -2,15 +2,16 @@ mod discover;
 mod extract;
 mod fetch;
 mod js_render;
+mod llm_filter;
 mod models;
 mod sitemap;
 mod url_normalize;
 mod worker;
 
 use clap::Parser;
-use tracing::info;
+use tracing::{info, warn};
 
-use models::{Cli, Command, WorkerConfig};
+use models::{Cli, Command, LlmFilterConfig, WorkerConfig};
 
 // ---------------------------------------------------------------------------
 // Main
@@ -47,10 +48,22 @@ async fn main() -> anyhow::Result<()> {
             concurrency,
             allowed_domains,
             proxy,
+            tor_socks_url,
+            llm_base_url,
+            llm_api_key,
+            llm_model,
+            llm_min_score,
+            llm_max_body_chars,
+            stealth_ua,
         } => {
-            let mut client_builder = reqwest::Client::builder()
-                .user_agent("FindVerseCrawlerWorker/0.1")
-                .cookie_store(true);
+            if stealth_ua {
+                warn!(
+                    "--stealth-ua is deprecated and ignored; FindVerse always identifies as a public crawler now"
+                );
+            }
+
+            let mut client_builder =
+                reqwest::Client::builder().user_agent("FindVerseCrawlerWorker/0.1");
 
             if let Some(ref proxy_url) = proxy {
                 client_builder = client_builder.proxy(reqwest::Proxy::all(proxy_url)?);
@@ -89,6 +102,18 @@ async fn main() -> anyhow::Result<()> {
                 once,
                 concurrency,
                 allowed_domains: parsed_domains,
+                tor_socks_url: Some(tor_socks_url),
+                llm_filter: match (llm_base_url, llm_model) {
+                    (Some(base_url), Some(model)) => Some(LlmFilterConfig {
+                        base_url,
+                        api_key: llm_api_key,
+                        model,
+                        min_score: llm_min_score.clamp(0.0, 1.0),
+                        max_body_chars: llm_max_body_chars.clamp(500, 20_000),
+                    }),
+                    _ => None,
+                },
+                stealth_ua,
             };
             worker::run_worker(config, proxy).await?;
         }

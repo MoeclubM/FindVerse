@@ -15,31 +15,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install web dependencies
-        run: npm ci
-
-      - name: Cargo test
-        run: cargo test --workspace
-
-      - name: Typecheck web
-        run: npm run typecheck:web
+    uses: ./.github/workflows/_validate.yml
 
   build-binaries:
     needs: validate

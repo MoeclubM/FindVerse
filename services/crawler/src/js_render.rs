@@ -24,6 +24,7 @@ pub async fn render_with_js(url: &str) -> anyhow::Result<String> {
     tokio::task::spawn_blocking(move || {
         let browser = Browser::new(LaunchOptions {
             headless: true,
+            sandbox: false,
             ..Default::default()
         })?;
 

@@ -64,6 +64,27 @@ pub enum Command {
         /// HTTP proxy URL
         #[arg(long)]
         proxy: Option<String>,
+        /// SOCKS5 proxy URL for Tor (.onion) crawling, e.g. socks5h://127.0.0.1:9050
+        #[arg(long, default_value = "socks5h://127.0.0.1:9050")]
+        tor_socks_url: String,
+        /// OpenAI-compatible base URL, for example https://api.openai.com/v1
+        #[arg(long)]
+        llm_base_url: Option<String>,
+        /// API key for the OpenAI-compatible endpoint
+        #[arg(long)]
+        llm_api_key: Option<String>,
+        /// Model name used for page filtering
+        #[arg(long)]
+        llm_model: Option<String>,
+        /// Minimum relevance score required for indexing
+        #[arg(long, default_value_t = 0.45)]
+        llm_min_score: f32,
+        /// Number of body characters sent to the LLM
+        #[arg(long, default_value_t = 6000)]
+        llm_max_body_chars: usize,
+        /// Deprecated compatibility flag. FindVerse now always uses the public crawler UA.
+        #[arg(long, default_value_t = false)]
+        stealth_ua: bool,
     },
 }
 
@@ -141,6 +162,10 @@ fn default_index_version() -> i32 {
     CURRENT_INDEX_VERSION
 }
 
+pub fn default_network() -> String {
+    "clearnet".to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Data structs — worker API
 // ---------------------------------------------------------------------------
@@ -160,11 +185,18 @@ pub struct ClaimJobsResponse {
 pub struct CrawlJob {
     pub job_id: String,
     pub url: String,
+    pub origin_key: String,
     pub source: String,
     pub depth: u32,
     pub max_depth: u32,
     pub attempt_count: u32,
     pub discovered_at: DateTime<Utc>,
+    #[serde(default = "crate::models::default_network")]
+    pub network: String,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,16 +211,30 @@ pub struct CrawlResultReport {
     pub status_code: u16,
     pub fetched_at: DateTime<Utc>,
     pub final_url: Option<String>,
+    pub redirect_chain: Vec<String>,
     pub content_type: Option<String>,
     pub title: Option<String>,
     pub snippet: Option<String>,
     pub body: Option<String>,
+    pub canonical_hint: Option<String>,
+    pub canonical_source: Option<String>,
     pub language: Option<String>,
     pub discovered_urls: Vec<String>,
     pub site_authority: Option<f32>,
+    pub llm_should_index: Option<bool>,
+    pub llm_should_discover: Option<bool>,
+    pub llm_relevance_score: Option<f32>,
+    pub llm_reason: Option<String>,
     pub retryable: Option<bool>,
     pub error_kind: Option<String>,
     pub error_message: Option<String>,
+    pub network: String,
+    pub http_etag: Option<String>,
+    pub http_last_modified: Option<String>,
+    pub applied_crawl_delay_secs: Option<u64>,
+    pub retry_after_secs: Option<u64>,
+    pub robots_status: Option<String>,
+    pub robots_sitemaps: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +260,19 @@ pub struct WorkerConfig {
     pub once: bool,
     pub concurrency: usize,
     pub allowed_domains: Vec<String>,
+    pub tor_socks_url: Option<String>,
+    pub llm_filter: Option<LlmFilterConfig>,
+    #[allow(dead_code)]
+    pub stealth_ua: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmFilterConfig {
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub model: String,
+    pub min_score: f32,
+    pub max_body_chars: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,4 +290,33 @@ pub struct ParsedHtml {
     pub snippet: Option<String>,
     pub body: Option<String>,
     pub discovered_urls: Vec<String>,
+    pub canonical_url: Option<String>,
+    pub robots_directives: RobotsDirectives,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmPageDecision {
+    pub should_index: bool,
+    pub should_discover: bool,
+    pub relevance_score: f32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RobotsDirectives {
+    pub noindex: bool,
+    pub nofollow: bool,
+}
+
+impl RobotsDirectives {
+    pub fn merge(&mut self, other: Self) {
+        self.noindex |= other.noindex;
+        self.nofollow |= other.nofollow;
+    }
+}
+
+impl LlmFilterConfig {
+    pub fn is_enabled(&self) -> bool {
+        !self.base_url.trim().is_empty() && !self.model.trim().is_empty()
+    }
 }
