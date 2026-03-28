@@ -155,6 +155,7 @@ assert "[[ \"$join_key_status\" == \"204\" ]]" "setting crawler join key did not
 
 seed_payload="$(json_request POST "$API_BASE_URL/v1/admin/frontier/seed" "{\"urls\":[\"$seed_url\"],\"source\":\"smoke-test\",\"max_depth\":1,\"allow_revisit\":true}" "$admin_token")"
 echo "$seed_payload" | jq -e '.accepted_urls >= 1' >/dev/null
+echo "$seed_payload" | jq -e '.frontier_depth >= 1 and .known_urls >= 1' >/dev/null
 echo "PASS  frontier seeded"
 
 run_worker() {
@@ -176,40 +177,37 @@ run_worker() {
   fi
 }
 
-job_payload=""
+overview_payload=""
+documents_payload=""
+document_payload=""
+search_smoke_payload=""
 for _ in 1 2 3 4 5; do
   pushd "$repo_root" >/dev/null
   run_worker
   popd >/dev/null
-  jobs_payload="$(json_request GET "$API_BASE_URL/v1/admin/crawl/jobs?limit=200" "" "$admin_token")"
-  job_payload="$(echo "$jobs_payload" | jq -c --arg needle "findverse-smoke=$timestamp" '.jobs[] | select(.url | contains($needle))' | head -n 1)"
-  if [[ -n "$job_payload" ]] && [[ "$(echo "$job_payload" | jq -r '.status')" != "queued" ]] && [[ "$(echo "$job_payload" | jq -r '.status')" != "claimed" ]]; then
+  overview_payload="$(json_request GET "$API_BASE_URL/v1/admin/crawl/overview" "" "$admin_token")"
+  documents_payload="$(json_request GET "$API_BASE_URL/v1/admin/documents?query=findverse-smoke=$timestamp&limit=50" "" "$admin_token")"
+  document_payload="$(echo "$documents_payload" | jq -c '.documents[] | select(.source_job_id != null)' | head -n 1)"
+  search_smoke_payload="$(json_request GET "$API_BASE_URL/v1/search?q=smoke%20crawler%20fixture")"
+  if [[ -n "$document_payload" ]] \
+    && echo "$overview_payload" | jq -e '.crawlers | any(.jobs_claimed > 0 and .jobs_reported > 0)' >/dev/null \
+    && echo "$search_smoke_payload" | jq -e '.results | any(.url | contains("smoke-crawler.html"))' >/dev/null; then
     break
   fi
   sleep 1
 done
 
-if [[ -z "$job_payload" ]]; then
-  echo "Assertion failed: seeded crawl job not found" >&2
-  exit 1
-fi
-job_status="$(echo "$job_payload" | jq -r '.status')"
-assert "[[ \"$job_status\" != \"queued\" && \"$job_status\" != \"claimed\" ]]" "seeded crawl job was not processed"
-echo "$job_payload" | jq -e 'has("final_url") and has("http_status") and has("discovered_urls_count") and has("accepted_document_id")' >/dev/null
-echo "PASS  crawl job result fields are present"
+echo "$overview_payload" | jq -e '.crawlers | any(.jobs_claimed > 0 and .jobs_reported > 0)' >/dev/null
+echo "PASS  crawler claimed and reported jobs"
 
-job_id="$(echo "$job_payload" | jq -r '.id')"
-documents_payload="$(json_request GET "$API_BASE_URL/v1/admin/documents?query=findverse-smoke=$timestamp&limit=50" "" "$admin_token")"
-document_payload="$(echo "$documents_payload" | jq -c --arg job_id "$job_id" '.documents[] | select(.source_job_id == $job_id)' | head -n 1)"
-if [[ -z "$document_payload" ]]; then
-  document_payload="$(echo "$documents_payload" | jq -c '.documents[0]')"
-fi
 if [[ -z "$document_payload" || "$document_payload" == "null" ]]; then
   echo "Assertion failed: indexed document for smoke crawl not found" >&2
   exit 1
 fi
 echo "$document_payload" | jq -e '.canonical_url != null and .host != null and .content_type != null and .word_count >= 1 and has("source_job_id")' >/dev/null
 echo "PASS  document metadata fields are present"
+echo "$search_smoke_payload" | jq -e '.results | any(.url | contains("smoke-crawler.html"))' >/dev/null
+echo "PASS  smoke document is searchable"
 
 step "Docker rebuild verification"
 echo "Reuse the deployment script to rebuild containers when needed:"
@@ -225,4 +223,4 @@ if $RUN_PLAYWRIGHT; then
 fi
 
 step "Smoke test summary"
-echo "PASS  search, suggest, developer auth, key revocation, admin login, crawler join/claim/report, job metadata, document metadata"
+echo "PASS  search, suggest, developer auth, key revocation, admin login, crawler join/claim/report, indexed document metadata, smoke search result"

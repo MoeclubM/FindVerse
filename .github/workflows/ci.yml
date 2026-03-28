@@ -57,7 +57,9 @@ jobs:
           retention-days: 14
 
   docker-smoke-e2e:
-    needs: validate
+    needs:
+      - validate
+      - build-crawler-dev-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -74,17 +76,27 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Install web dependencies
         run: npm ci
+
+      - name: Download crawler dev artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: findverse-crawler-linux-x86_64-dev
+          path: .ci-artifacts/crawler
+
+      - name: Install crawler dev binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/findverse-crawler"
+          tar -xzf .ci-artifacts/crawler/findverse-crawler-linux-x86_64.tar.gz -C "$RUNNER_TEMP/findverse-crawler"
+          chmod +x "$RUNNER_TEMP/findverse-crawler/findverse-crawler"
+          echo "$RUNNER_TEMP/findverse-crawler" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/findverse-crawler/findverse-crawler" --help >/dev/null
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -118,6 +130,26 @@ jobs:
 
           echo "crawler container did not register with control-api" >&2
           exit 1
+
+      - name: Reset crawl queue for smoke worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose stop crawler-worker
+
+          admin_token="$(curl -fsS -X POST http://127.0.0.1:8080/v1/admin/session/login \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"change-me"}' | jq -r '.token')"
+
+          if [[ -z "$admin_token" || "$admin_token" == "null" ]]; then
+            echo "admin login failed while resetting crawl queue" >&2
+            exit 1
+          fi
+
+          curl -fsS -X POST http://127.0.0.1:8080/v1/admin/crawl/jobs/stop \
+            -H "Authorization: Bearer $admin_token" >/dev/null
+          curl -fsS -X DELETE http://127.0.0.1:8080/v1/admin/crawl/jobs/completed \
+            -H "Authorization: Bearer $admin_token" >/dev/null
 
       - name: Smoke test and Playwright
         run: bash ./scripts/smoke-test.sh --control-api-base-url http://127.0.0.1:8080 --query-api-base-url http://127.0.0.1:8081 --run-playwright
