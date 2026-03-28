@@ -339,7 +339,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=${ENV_FILE}
-ExecStart=/usr/bin/env bash -lc 'set -euo pipefail; args=(worker --server "$SERVER" --crawler-id "$CRAWLER_ID" --crawler-key "$CRAWLER_KEY" --max-jobs "${MAX_JOBS:-10}" --poll-interval-secs "${POLL_INTERVAL_SECS:-5}" --concurrency "${CONCURRENCY:-4}"); if [[ -n "${ALLOWED_DOMAINS:-}" ]]; then args+=(--allowed-domains "$ALLOWED_DOMAINS"); fi; if [[ -n "${PROXY:-}" ]]; then args+=(--proxy "$PROXY"); fi; exec "${INSTALL_DIR}/findverse-crawler" "${args[@]}"'
+ExecStart=/usr/bin/env bash -lc 'set -euo pipefail; args=(worker --server "$$SERVER" --crawler-id "$$CRAWLER_ID" --crawler-key "$$CRAWLER_KEY" --max-jobs "$${MAX_JOBS:-10}" --poll-interval-secs "$${POLL_INTERVAL_SECS:-5}" --concurrency "$${CONCURRENCY:-4}"); if [[ -n "$${ALLOWED_DOMAINS:-}" ]]; then args+=(--allowed-domains "$$ALLOWED_DOMAINS"); fi; if [[ -n "$${PROXY:-}" ]]; then args+=(--proxy "$$PROXY"); fi; exec "${INSTALL_DIR}/findverse-crawler" "$${args[@]}"'
 Restart=always
 RestartSec=5
 WorkingDirectory=${INSTALL_DIR}
