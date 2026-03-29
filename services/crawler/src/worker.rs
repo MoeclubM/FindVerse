@@ -22,6 +22,8 @@ use crate::models::{
 use crate::sitemap::fetch_and_parse_sitemap;
 use crate::url_normalize::normalize_url_advanced;
 
+const MAX_DISCOVERED_URLS_PER_REPORT: usize = 200;
+
 #[derive(Clone)]
 struct NetworkClients {
     page: reqwest::Client,
@@ -479,11 +481,20 @@ async fn process_job(
     }
 
     let normalized_discovered = normalize_discovered_urls(all_discovered);
-    let discovered_urls = if allowed_domains.is_empty() {
+    let mut discovered_urls = if allowed_domains.is_empty() {
         normalized_discovered
     } else {
         filter_urls_by_domain(normalized_discovered, allowed_domains)
     };
+    if discovered_urls.len() > MAX_DISCOVERED_URLS_PER_REPORT {
+        info!(
+            url = %final_url,
+            discovered = discovered_urls.len(),
+            submitted = MAX_DISCOVERED_URLS_PER_REPORT,
+            "truncating discovered urls before report submission"
+        );
+        discovered_urls.truncate(MAX_DISCOVERED_URLS_PER_REPORT);
+    }
     let language = parsed
         .body
         .as_deref()
@@ -669,5 +680,15 @@ fn http_failure_kind(status_code: u16) -> String {
         429 => "http_429".to_string(),
         500..=599 => "http_5xx".to_string(),
         _ => format!("http_{status_code}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_DISCOVERED_URLS_PER_REPORT;
+
+    #[test]
+    fn discovered_urls_report_cap_matches_control_plane_limit() {
+        assert_eq!(MAX_DISCOVERED_URLS_PER_REPORT, 200);
     }
 }
