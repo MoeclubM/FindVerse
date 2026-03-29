@@ -21,6 +21,7 @@ SKIP_BROWSER_INSTALL=false
 
 TMP_DIR=""
 SOURCE_LABEL=""
+DOWNLOADED_ARCHIVE_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -203,7 +204,7 @@ download_release_archive() {
   [[ -n "$asset_url" && "$asset_url" != "null" ]] || fail "release asset findverse-${suffix}.tar.gz not found for ${REPO}"
 
   github_download "$asset_url" "$archive_path"
-  echo "$archive_path"
+  DOWNLOADED_ARCHIVE_PATH="$archive_path"
 }
 
 download_dev_archive() {
@@ -232,7 +233,7 @@ download_dev_archive() {
   archive_path="$(find "$artifact_dir" -maxdepth 2 -type f -name "findverse-crawler-${suffix}.tar.gz" | head -n 1)"
   [[ -n "$archive_path" ]] || fail "downloaded dev artifact did not contain findverse-crawler-${suffix}.tar.gz"
 
-  echo "$archive_path"
+  DOWNLOADED_ARCHIVE_PATH="$archive_path"
 }
 
 extract_crawler_binary() {
@@ -320,11 +321,34 @@ EOF
 
 install_runtime_files() {
   local binary_source="$1"
+  local launcher_tmp="$TMP_DIR/run-crawler.sh"
+
+  cat > "$launcher_tmp" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=(
+  worker
+  --server "\${SERVER}"
+  --crawler-id "\${CRAWLER_ID}"
+  --crawler-key "\${CRAWLER_KEY}"
+  --max-jobs "\${MAX_JOBS:-10}"
+  --poll-interval-secs "\${POLL_INTERVAL_SECS:-5}"
+  --concurrency "\${CONCURRENCY:-4}"
+)
+if [[ -n "\${ALLOWED_DOMAINS:-}" ]]; then
+  args+=(--allowed-domains "\${ALLOWED_DOMAINS}")
+fi
+if [[ -n "\${PROXY:-}" ]]; then
+  args+=(--proxy "\${PROXY}")
+fi
+exec "${INSTALL_DIR}/findverse-crawler" "\${args[@]}"
+EOF
 
   run_as_root mkdir -p "$INSTALL_DIR"
   run_as_root install -m 755 "$binary_source" "$INSTALL_DIR/findverse-crawler.new"
   run_as_root mv "$INSTALL_DIR/findverse-crawler.new" "$INSTALL_DIR/findverse-crawler"
-  run_as_root rm -f "$INSTALL_DIR/run-crawler.sh"
+  run_as_root install -m 755 "$launcher_tmp" "$INSTALL_DIR/run-crawler.sh"
 }
 
 write_service_unit() {
@@ -339,7 +363,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=${ENV_FILE}
-ExecStart=/usr/bin/env bash -lc 'set -euo pipefail; args=(worker --server "$$SERVER" --crawler-id "$$CRAWLER_ID" --crawler-key "$$CRAWLER_KEY" --max-jobs "$${MAX_JOBS:-10}" --poll-interval-secs "$${POLL_INTERVAL_SECS:-5}" --concurrency "$${CONCURRENCY:-4}"); if [[ -n "$${ALLOWED_DOMAINS:-}" ]]; then args+=(--allowed-domains "$$ALLOWED_DOMAINS"); fi; if [[ -n "$${PROXY:-}" ]]; then args+=(--proxy "$$PROXY"); fi; exec "${INSTALL_DIR}/findverse-crawler" "$${args[@]}"'
+ExecStart=${INSTALL_DIR}/run-crawler.sh
 Restart=always
 RestartSec=5
 WorkingDirectory=${INSTALL_DIR}
@@ -360,8 +384,19 @@ main() {
   ensure_browser
 
   case "$CHANNEL" in
-    release) archive_path="$(download_release_archive "$suffix")" ;;
-    dev) archive_path="$(download_dev_archive "$suffix")" ;;
+    release)
+      if [[ -n "$VERSION" ]]; then
+        SOURCE_LABEL="release:${VERSION}"
+      else
+        SOURCE_LABEL="release:latest"
+      fi
+      download_release_archive "$suffix"
+      archive_path="$DOWNLOADED_ARCHIVE_PATH"
+      ;;
+    dev)
+      download_dev_archive "$suffix"
+      archive_path="$DOWNLOADED_ARCHIVE_PATH"
+      ;;
   esac
 
   binary_path="$(extract_crawler_binary "$archive_path")"
