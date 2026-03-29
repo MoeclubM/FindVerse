@@ -3210,6 +3210,7 @@ mod tests {
             max_attempts: 3,
             discovery_scope: "same_domain".to_string(),
             discovery_host: Some("example.com".to_string()),
+            same_origin_concurrency: 1,
             max_discovered_urls_per_page: 50,
         };
         let result = CrawlResultInput {
