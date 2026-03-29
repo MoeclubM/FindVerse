@@ -56,7 +56,7 @@ pub enum Command {
         #[arg(long, default_value_t = false)]
         once: bool,
         /// Number of concurrent page fetches
-        #[arg(long, default_value_t = 4)]
+        #[arg(long, default_value_t = 16)]
         concurrency: usize,
         /// Comma-separated list of allowed domains (subdomains included)
         #[arg(long)]

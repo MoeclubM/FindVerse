@@ -296,7 +296,7 @@ write_env_file() {
   local final_concurrency final_max_jobs final_poll_interval
   local final_allowed_domains final_proxy
 
-  final_concurrency="${CONCURRENCY:-${EXISTING_CONCURRENCY:-4}}"
+  final_concurrency="${CONCURRENCY:-${EXISTING_CONCURRENCY:-16}}"
   final_max_jobs="${MAX_JOBS:-${EXISTING_MAX_JOBS:-10}}"
   final_poll_interval="${POLL_INTERVAL_SECS:-${EXISTING_POLL_INTERVAL_SECS:-5}}"
   final_allowed_domains="${ALLOWED_DOMAINS:-${EXISTING_ALLOWED_DOMAINS:-}}"
@@ -334,7 +334,7 @@ args=(
   --crawler-key "\${CRAWLER_KEY}"
   --max-jobs "\${MAX_JOBS:-10}"
   --poll-interval-secs "\${POLL_INTERVAL_SECS:-5}"
-  --concurrency "\${CONCURRENCY:-4}"
+  --concurrency "\${CONCURRENCY:-16}"
 )
 if [[ -n "\${ALLOWED_DOMAINS:-}" ]]; then
   args+=(--allowed-domains "\${ALLOWED_DOMAINS}")
