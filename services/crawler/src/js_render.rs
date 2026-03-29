@@ -4,30 +4,41 @@ use headless_chrome::{Browser, LaunchOptions};
 use std::time::Duration;
 
 pub fn needs_js_rendering(html: &str, body_text: &str) -> bool {
-    if looks_like_server_rendered_mediawiki(html) {
+    let body_text = body_text.trim();
+    let has_content_root = [
+        "<article",
+        "<main",
+        "role=\"main\"",
+        "itemprop=\"articleBody\"",
+        "class=\"article-content\"",
+        "class=\"entry-content\"",
+        "class=\"post-content\"",
+        "class=\"article-body\"",
+        "id=\"content\"",
+        "id=\"main-content\"",
+    ]
+    .iter()
+    .any(|marker| html.contains(marker));
+    let has_shell_marker = [
+        "data-reactroot",
+        "ng-app",
+        "id=\"app\"",
+        "id=\"root\"",
+        "data-svelte",
+        "data-sveltekit",
+    ]
+    .iter()
+    .any(|marker| html.contains(marker));
+
+    if body_text.len() >= 600 || (has_content_root && body_text.len() >= 120) {
         return false;
     }
 
-    // Heuristic: if body is very short but HTML has script tags, likely needs JS
-    if body_text.len() < 200 && html.contains("<script") {
+    if has_shell_marker {
         return true;
     }
 
-    // Check for common SPA frameworks (client-side rendered only)
-    html.contains("data-reactroot")
-        || html.contains("ng-app")
-        || html.contains("id=\"app\"")
-        || html.contains("id=\"root\"")
-        || html.contains("data-svelte")
-        || html.contains("data-sveltekit")
-}
-
-fn looks_like_server_rendered_mediawiki(html: &str) -> bool {
-    html.contains("content=\"MediaWiki")
-        || html.contains("id=\"mw-content-text\"")
-        || html.contains("class=\"mw-parser-output\"")
-        || html.contains("class=\"mw-page-title-main\"")
-        || html.contains("class=\"mw-body-content\"")
+    body_text.len() < 40 && html.contains("<script") && !has_content_root
 }
 
 #[cfg(feature = "js-render")]
@@ -63,24 +74,42 @@ mod tests {
     use super::needs_js_rendering;
 
     #[test]
-    fn mediawiki_pages_do_not_force_js_rendering() {
+    fn server_rendered_pages_do_not_force_js_rendering() {
         let html = r#"
             <html>
               <head>
-                <meta name="generator" content="MediaWiki 1.43.0">
                 <script src="/load.php"></script>
               </head>
               <body>
-                <main id="mw-content-text">
-                  <div class="mw-parser-output">
+                <main id="content">
+                  <article class="entry-content">
                     <p>Example article body.</p>
-                  </div>
+                  </article>
                 </main>
               </body>
             </html>
         "#;
 
-        assert!(!needs_js_rendering(html, "Example article body."));
+        assert!(!needs_js_rendering(
+            html,
+            "Example article body with enough static content to skip browser rendering."
+        ));
+    }
+
+    #[test]
+    fn short_static_pages_with_content_root_do_not_force_js_rendering() {
+        let html = r#"
+            <html>
+              <head><script src="/assets/main.js"></script></head>
+              <body>
+                <main>
+                  <p>About us.</p>
+                </main>
+              </body>
+            </html>
+        "#;
+
+        assert!(!needs_js_rendering(html, "About us."));
     }
 
     #[test]
