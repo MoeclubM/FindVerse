@@ -75,6 +75,7 @@ create table if not exists crawlers (
     owner_user_id uuid,
     name text not null,
     api_key_hash text,
+    join_key_hash text,
     created_at timestamptz not null default now(),
     last_seen_at timestamptz not null default now(),
     metadata jsonb not null default '{}'::jsonb

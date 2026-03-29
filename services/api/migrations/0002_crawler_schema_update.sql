@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS crawl_jobs_stale_idx
 CREATE INDEX IF NOT EXISTS crawl_events_owner_idx
     ON crawl_events (owner_developer_id, created_at desc);
 
--- Simple key-value table for crawler configuration.
+-- Simple key-value table for crawler configuration (join key, etc.)
 CREATE TABLE IF NOT EXISTS crawler_config (
     key text primary key,
     value text not null,
