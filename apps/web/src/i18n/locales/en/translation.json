@@ -58,8 +58,13 @@
     },
     "title": "FindVerse Console",
     "refresh_failed": "Refresh failed",
+    "live_refresh": "Live refresh · every second",
     "search": "Search",
     "logout": "Logout",
+    "actions": {
+      "details": "Details",
+      "close": "Close"
+    },
     "summary": {
       "console_user": "Console user",
       "indexed_docs": "Indexed docs",
@@ -272,6 +277,7 @@
         "last_claimed": "Last claimed",
         "jobs_claimed": "Jobs claimed",
         "jobs_reported": "Jobs reported",
+        "status": "Status",
         "setup_hint": "Manage one shared crawler key in Settings. First install auto-generates crawler_id and persists it locally.",
         "name_placeholder": "Crawler name",
         "name_too_short": "Crawler name must be at least 2 characters",
@@ -303,6 +309,7 @@
       "host_label": "Host",
       "job_label": "Job",
       "versions_label": "Versions",
+      "summary_label": "Summary",
       "words": "{{count}} words",
       "authority_value": "authority {{value}}",
       "host": "host {{host}}",

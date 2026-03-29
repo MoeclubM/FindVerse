@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -10,11 +10,15 @@ import {
   type CrawlJobList,
   type CrawlJobStats,
 } from "../../api";
-import { SectionHeader, StatStrip } from "../common/PanelPrimitives";
+import { DetailDialog, SectionHeader, StatStrip } from "../common/PanelPrimitives";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function formatTimestamp(value: string | null) {
+  return value ? value.replace("T", " ").replace("Z", "").slice(0, 16) : "-";
 }
 
 const PAGE_SIZE = 20;
@@ -28,32 +32,43 @@ export function ConsoleJobs() {
   const [jobs, setJobs] = useState<CrawlJobList | null>(null);
   const [stats, setStats] = useState<CrawlJobStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+
+  const selectedJob = useMemo(
+    () => jobs?.jobs.find((job) => job.id === selectedJobId) ?? null,
+    [jobs?.jobs, selectedJobId],
+  );
+
+  const refreshJobs = useCallback(
+    async (nextOffset: number, silent = false) => {
+      const [nextStats, nextJobs] = await Promise.all([
+        getCrawlJobStats(token),
+        listCrawlJobs(token, {
+          status: statusFilter || undefined,
+          offset: nextOffset,
+          limit: PAGE_SIZE,
+        }),
+      ]);
+      setStats(nextStats);
+      setJobs(nextJobs);
+      setSelectedJobId((current) =>
+        current && nextJobs.jobs.some((job) => job.id === current) ? current : null,
+      );
+      if (!silent) {
+        setLoading(false);
+      }
+    },
+    [token, statusFilter],
+  );
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
-    Promise.all([
-      getCrawlJobStats(token),
-      listCrawlJobs(token, {
-        status: statusFilter || undefined,
-        offset,
-        limit: PAGE_SIZE,
-      }),
-    ])
-      .then(([nextStats, nextJobs]) => {
-        if (!cancelled) {
-          setStats(nextStats);
-          setJobs(nextJobs);
-        }
-      })
+    refreshJobs(offset)
       .catch((error) => {
         if (!cancelled) {
           setFlash(getErrorMessage(error, t("console.jobs.load_failed")));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
           setLoading(false);
         }
       });
@@ -61,7 +76,14 @@ export function ConsoleJobs() {
     return () => {
       cancelled = true;
     };
-  }, [token, statusFilter, offset, setFlash, t]);
+  }, [offset, refreshJobs, setFlash, t]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshJobs(offset, true).catch(() => undefined);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [offset, refreshJobs]);
 
   async function handleRetryFailed() {
     setBusy(true);
@@ -71,16 +93,7 @@ export function ConsoleJobs() {
       setFlash(t("console.jobs.retry_success", { count: response.retried }));
       await refreshAll();
       setOffset(0);
-      const [nextStats, nextJobs] = await Promise.all([
-        getCrawlJobStats(token),
-        listCrawlJobs(token, {
-          status: statusFilter || undefined,
-          offset: 0,
-          limit: PAGE_SIZE,
-        }),
-      ]);
-      setStats(nextStats);
-      setJobs(nextJobs);
+      await refreshJobs(0, true);
     } catch (error) {
       setFlash(getErrorMessage(error, t("console.jobs.retry_failed_error")));
     } finally {
@@ -96,16 +109,7 @@ export function ConsoleJobs() {
       setFlash(t("console.jobs.cleanup_success", { count: response.cleaned }));
       await refreshAll();
       setOffset(0);
-      const [nextStats, nextJobs] = await Promise.all([
-        getCrawlJobStats(token),
-        listCrawlJobs(token, {
-          status: statusFilter || undefined,
-          offset: 0,
-          limit: PAGE_SIZE,
-        }),
-      ]);
-      setStats(nextStats);
-      setJobs(nextJobs);
+      await refreshJobs(0, true);
     } catch (error) {
       setFlash(getErrorMessage(error, t("console.jobs.cleanup_failed_error")));
     } finally {
@@ -130,16 +134,7 @@ export function ConsoleJobs() {
       );
       await refreshAll();
       setOffset(0);
-      const [nextStats, nextJobs] = await Promise.all([
-        getCrawlJobStats(token),
-        listCrawlJobs(token, {
-          status: statusFilter || undefined,
-          offset: 0,
-          limit: PAGE_SIZE,
-        }),
-      ]);
-      setStats(nextStats);
-      setJobs(nextJobs);
+      await refreshJobs(0, true);
     } catch (error) {
       setFlash(getErrorMessage(error, t("console.jobs.stop_all_failed")));
     } finally {
@@ -201,43 +196,39 @@ export function ConsoleJobs() {
             <div className="list-row">{t("console.jobs.loading")}</div>
           ) : jobs?.jobs.length ? (
             jobs.jobs.map((job) => (
-              <div className="compact-row worker-row" key={job.id}>
-                <div className="row-primary">
-                  <strong>{job.url}</strong>
-                  <span>{job.source}</span>
+              <div className="compact-row job-card" key={job.id}>
+                <div className="job-card-head">
+                  <div className="row-primary">
+                    <strong>{job.final_url ?? job.url}</strong>
+                    <span>{job.source}</span>
+                  </div>
+                  <button type="button" className="plain-link" onClick={() => setSelectedJobId(job.id)}>
+                    {t("console.actions.details")}
+                  </button>
                 </div>
-                <div className="row-meta">
+                <div className="row-meta job-card-meta">
                   <span className={job.status === "succeeded" ? "status-pill" : "status-pill status-pill-muted"}>
                     {job.status}
                   </span>
                   {job.http_status != null ? <span>HTTP {job.http_status}</span> : null}
                   <span>{t("console.jobs.attempt_progress", { current: job.attempt_count, max: job.max_attempts })}</span>
                   <span>{t("console.jobs.depth_progress", { current: job.depth, max: job.max_depth })}</span>
-                  <span>{t("console.jobs.discovered_count", { count: job.discovered_urls_count })}</span>
                   {job.claimed_by ? <span>{t("console.jobs.worker_id", { id: job.claimed_by })}</span> : null}
-                  {job.next_retry_at ? <span>{t("console.jobs.retry_at", { time: job.next_retry_at })}</span> : null}
-                  {job.finished_at ? <span>{t("console.jobs.finished_at", { time: job.finished_at })}</span> : null}
                 </div>
-                <div className="row-meta">
-                  {job.final_url ? <span>{t("console.jobs.final", { url: job.final_url })}</span> : null}
-                  {job.content_type ? <span>{job.content_type}</span> : null}
-                  {job.accepted_document_id ? <span>{t("console.jobs.doc", { id: job.accepted_document_id })}</span> : null}
-                  {job.llm_decision ? <span>{t("console.jobs.llm", { decision: job.llm_decision })}</span> : null}
-                  {job.llm_relevance_score != null ? (
-                    <span>{t("console.jobs.score", { score: job.llm_relevance_score.toFixed(2) })}</span>
-                  ) : null}
+                <div className="job-card-stats">
+                  <div>
+                    <span>{t("console.jobs.discovered")}</span>
+                    <strong>{job.discovered_urls_count}</strong>
+                  </div>
+                  <div>
+                    <span>{t("console.jobs.finished")}</span>
+                    <strong>{formatTimestamp(job.finished_at ?? job.claimed_at)}</strong>
+                  </div>
+                  <div>
+                    <span>{t("console.jobs.status")}</span>
+                    <strong>{job.failure_kind ?? job.llm_decision ?? "-"}</strong>
+                  </div>
                 </div>
-                {job.llm_reason ? (
-                  <div className="row-meta">
-                    <span>{job.llm_reason}</span>
-                  </div>
-                ) : null}
-                {job.failure_kind || job.failure_message ? (
-                  <div className="row-meta">
-                    {job.failure_kind ? <span>{job.failure_kind}</span> : null}
-                    {job.failure_message ? <span>{job.failure_message}</span> : null}
-                  </div>
-                ) : null}
               </div>
             ))
           ) : (
@@ -263,6 +254,97 @@ export function ConsoleJobs() {
           </button>
         </div>
       </section>
+
+      <DetailDialog
+        open={Boolean(selectedJob)}
+        title={selectedJob?.final_url ?? selectedJob?.url ?? t("console.jobs.title")}
+        meta={selectedJob?.source}
+        closeLabel={t("console.actions.close")}
+        onClose={() => setSelectedJobId(null)}
+      >
+        {selectedJob ? (
+          <div className="detail-stack">
+            <div className="metadata-grid compact-metadata-wide detail-grid">
+              <div>
+                <span>{t("console.jobs.status")}</span>
+                <strong>{selectedJob.status}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.http_status")}</span>
+                <strong>{selectedJob.http_status ?? "-"}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.attempts")}</span>
+                <strong>{selectedJob.attempt_count} / {selectedJob.max_attempts}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.depth")}</span>
+                <strong>{selectedJob.depth} / {selectedJob.max_depth}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.worker")}</span>
+                <strong>{selectedJob.claimed_by ?? "-"}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.discovered")}</span>
+                <strong>{selectedJob.discovered_urls_count}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.retry_after")}</span>
+                <strong>{formatTimestamp(selectedJob.next_retry_at)}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.finished")}</span>
+                <strong>{formatTimestamp(selectedJob.finished_at)}</strong>
+              </div>
+            </div>
+            <div className="detail-block">
+              <span className="field-label">{t("console.jobs.url")}</span>
+              <code>{selectedJob.url}</code>
+            </div>
+            {selectedJob.final_url ? (
+              <div className="detail-block">
+                <span className="field-label">{t("console.jobs.final_url")}</span>
+                <code>{selectedJob.final_url}</code>
+              </div>
+            ) : null}
+            <div className="metadata-grid compact-metadata-wide detail-grid">
+              <div>
+                <span>{t("console.jobs.content_type")}</span>
+                <strong>{selectedJob.content_type ?? "-"}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.document_id")}</span>
+                <strong>{selectedJob.accepted_document_id ?? "-"}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.llm_decision")}</span>
+                <strong>{selectedJob.llm_decision ?? "-"}</strong>
+              </div>
+              <div>
+                <span>{t("console.jobs.score")}</span>
+                <strong>
+                  {selectedJob.llm_relevance_score != null ? selectedJob.llm_relevance_score.toFixed(2) : "-"}
+                </strong>
+              </div>
+            </div>
+            {selectedJob.llm_reason ? (
+              <div className="detail-block">
+                <span className="field-label">{t("console.jobs.llm_decision")}</span>
+                <p className="detail-paragraph">{selectedJob.llm_reason}</p>
+              </div>
+            ) : null}
+            {selectedJob.failure_kind || selectedJob.failure_message ? (
+              <div className="detail-block">
+                <span className="field-label">{t("console.jobs.failure")}</span>
+                <p className="detail-paragraph">
+                  {[selectedJob.failure_kind, selectedJob.failure_message].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </DetailDialog>
     </>
   );
 }

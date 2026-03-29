@@ -40,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Worker {
             server,
             crawler_id,
+            crawler_name,
             crawler_key,
             max_jobs,
             poll_interval_secs,
@@ -73,6 +74,9 @@ async fn main() -> anyhow::Result<()> {
             let config = WorkerConfig {
                 server,
                 crawler_id,
+                crawler_name: crawler_name
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
                 auth_token: crawler_key,
                 max_jobs: max_jobs.max(concurrency),
                 poll_interval_secs,

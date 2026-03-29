@@ -52,6 +52,7 @@ Notes:
   - This script is standalone and can be downloaded or piped directly from GitHub onto the target machine.
   - Re-running the script updates the binary in place and restarts the service.
   - On first install the script auto-generates crawler_id and saves it into the env file.
+  - On first install the script uses the local hostname as the default crawler name.
   - Once the env file exists, updates can reuse the saved server, crawler_id, and crawler_key.
   - The same release command can be used for both first install and updates.
   - Release mode downloads the public GitHub release asset without auth.
@@ -262,6 +263,7 @@ extract_crawler_binary() {
 load_existing_config() {
   EXISTING_SERVER=""
   EXISTING_CRAWLER_ID=""
+  EXISTING_CRAWLER_NAME=""
   EXISTING_CRAWLER_KEY=""
   EXISTING_CONCURRENCY=""
   EXISTING_MAX_JOBS=""
@@ -274,6 +276,7 @@ load_existing_config() {
     source "$ENV_FILE"
     EXISTING_SERVER="${SERVER:-}"
     EXISTING_CRAWLER_ID="${CRAWLER_ID:-}"
+    EXISTING_CRAWLER_NAME="${CRAWLER_NAME:-}"
     EXISTING_CRAWLER_KEY="${CRAWLER_KEY:-}"
     EXISTING_CONCURRENCY="${CONCURRENCY:-}"
     EXISTING_MAX_JOBS="${MAX_JOBS:-}"
@@ -283,9 +286,34 @@ load_existing_config() {
   fi
 }
 
+default_crawler_name() {
+  local detected=""
+
+  if command -v hostname >/dev/null 2>&1; then
+    detected="$(hostname 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$detected" && -r /etc/hostname ]]; then
+    detected="$(cat /etc/hostname 2>/dev/null || true)"
+  fi
+
+  detected="${detected//$'\r'/}"
+  detected="${detected//$'\n'/}"
+  detected="${detected#"${detected%%[![:space:]]*}"}"
+  detected="${detected%"${detected##*[![:space:]]}"}"
+
+  if [[ -n "$detected" ]]; then
+    printf '%s' "$detected"
+    return
+  fi
+
+  printf 'crawler'
+}
+
 write_env_file() {
   local final_crawler_id="$1"
-  local final_crawler_key="$2"
+  local final_crawler_name="$2"
+  local final_crawler_key="$3"
   local env_dir
   local env_tmp="$TMP_DIR/crawler.env"
   local final_concurrency final_max_jobs final_poll_interval
@@ -303,6 +331,7 @@ write_env_file() {
   cat > "$env_tmp" <<EOF
 SERVER=$SERVER_URL
 CRAWLER_ID=$final_crawler_id
+CRAWLER_NAME=$final_crawler_name
 CRAWLER_KEY=$final_crawler_key
 CONCURRENCY=$final_concurrency
 MAX_JOBS=$final_max_jobs
@@ -326,6 +355,7 @@ args=(
   worker
   --server "\${SERVER}"
   --crawler-id "\${CRAWLER_ID}"
+  --crawler-name "\${CRAWLER_NAME:-}"
   --crawler-key "\${CRAWLER_KEY}"
   --max-jobs "\${MAX_JOBS:-\${CONCURRENCY:-16}}"
   --poll-interval-secs "\${POLL_INTERVAL_SECS:-5}"
@@ -370,7 +400,7 @@ EOF
 }
 
 main() {
-  local suffix archive_path binary_path final_crawler_id final_crawler_key
+  local suffix archive_path binary_path final_crawler_id final_crawler_name final_crawler_key
 
   TMP_DIR="$(mktemp -d)"
   suffix="$(machine_suffix)"
@@ -398,14 +428,18 @@ main() {
   binary_path="$(extract_crawler_binary "$archive_path")"
 
   final_crawler_id="${EXISTING_CRAWLER_ID:-}"
+  final_crawler_name="${EXISTING_CRAWLER_NAME:-}"
   final_crawler_key="${CRAWLER_KEY_ARG:-${EXISTING_CRAWLER_KEY:-}}"
   if [[ -z "$final_crawler_id" ]]; then
     final_crawler_id="$(generate_crawler_id)"
   fi
+  if [[ -z "$final_crawler_name" ]]; then
+    final_crawler_name="$(default_crawler_name)"
+  fi
   [[ -n "$final_crawler_key" ]] || fail "--crawler-key is required on first install"
 
   install_runtime_files "$binary_path"
-  write_env_file "$final_crawler_id" "$final_crawler_key"
+  write_env_file "$final_crawler_id" "$final_crawler_name" "$final_crawler_key"
   write_service_unit
 
   run_as_root systemctl daemon-reload
@@ -418,6 +452,7 @@ main() {
   echo "  Env file:    ${ENV_FILE}"
   echo "  Server:      ${SERVER_URL}"
   echo "  Crawler ID:  ${final_crawler_id}"
+  echo "  Crawler Name:${final_crawler_name}"
   echo "  Channel:     ${CHANNEL}"
 }
 

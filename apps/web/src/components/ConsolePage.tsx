@@ -14,8 +14,8 @@ import {
   logout,
 } from "../api";
 import { AppTopbar, TopbarActionButton } from "./common/AppTopbar";
-import { StatStrip } from "./common/PanelPrimitives";
-import { ConsoleProvider, ConsoleContextValue } from "./console/ConsoleContext";
+import { SectionHeader, StatStrip } from "./common/PanelPrimitives";
+import { ConsoleProvider, type ConsoleContextValue } from "./console/ConsoleContext";
 import { ConsoleOverview } from "./console/ConsoleOverview";
 import { ConsoleUsers } from "./console/ConsoleUsers";
 import { ConsoleCrawlTasks } from "./console/ConsoleCrawlTasks";
@@ -27,6 +27,9 @@ import type { ThemeMode } from "./ThemeSwitcher";
 
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
+const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+
+type ConsoleTab = "overview" | "users" | "tasks" | "jobs" | "workers" | "documents" | "settings";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -40,6 +43,7 @@ async function refreshConsoleData(
     setFlash: (value: string | null) => void;
   },
   refreshFailedMessage: string,
+  silent = false,
 ) {
   try {
     const [overview, developers] = await Promise.all([
@@ -49,7 +53,9 @@ async function refreshConsoleData(
     actions.setOverview(overview);
     actions.setDevelopers(developers);
   } catch (error) {
-    actions.setFlash(getErrorMessage(error, refreshFailedMessage));
+    if (!silent) {
+      actions.setFlash(getErrorMessage(error, refreshFailedMessage));
+    }
   }
 }
 
@@ -60,13 +66,23 @@ async function refreshDocuments(
     setFlash: (value: string | null) => void;
   },
   refreshFailedMessage: string,
+  silent = false,
 ) {
   try {
     const documents = await listDocuments(token);
     actions.setDocuments(documents);
   } catch (error) {
-    actions.setFlash(getErrorMessage(error, refreshFailedMessage));
+    if (!silent) {
+      actions.setFlash(getErrorMessage(error, refreshFailedMessage));
+    }
   }
+}
+
+function isCrawlerOnline(lastSeenAt: string | null) {
+  if (!lastSeenAt) {
+    return false;
+  }
+  return Date.now() - new Date(lastSeenAt).getTime() < ONLINE_THRESHOLD_MS;
 }
 
 export function ConsolePage(props: {
@@ -76,7 +92,7 @@ export function ConsolePage(props: {
   onNavigateHome: () => void;
 }) {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<"overview" | "users" | "tasks" | "jobs" | "workers" | "documents" | "settings">("overview");
+  const [activeTab, setActiveTab] = useState<ConsoleTab>("overview");
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(CONSOLE_TOKEN_KEY));
   const [session, setSession] = useState<AdminSession | null>(null);
   const [overview, setOverview] = useState<CrawlOverview | null>(null);
@@ -90,14 +106,12 @@ export function ConsolePage(props: {
   const [loginPassword, setLoginPassword] = useState("");
   const toastIdRef = useRef(0);
   const toastTimeoutsRef = useRef<number[]>([]);
+
   const consoleLabel = t("console.title").startsWith(SITE_NAME)
     ? t("console.title").slice(SITE_NAME.length).trim()
     : t("console.title");
   const activeCrawlerCount =
-    overview?.crawlers.filter((crawler) => {
-      if (!crawler.last_seen_at) return false;
-      return Date.now() - new Date(crawler.last_seen_at).getTime() < 5 * 60 * 1000;
-    }).length ?? 0;
+    overview?.crawlers.filter((crawler) => isCrawlerOnline(crawler.last_seen_at)).length ?? 0;
   const enabledRuleCount = overview?.rules.filter((rule) => rule.enabled).length ?? 0;
 
   useEffect(
@@ -133,11 +147,15 @@ export function ConsolePage(props: {
   const refreshAll = useCallback(
     () =>
       token
-        ? refreshConsoleData(token, {
-            setOverview,
-            setDevelopers,
-            setFlash,
-          }, t("console.refresh_failed"))
+        ? refreshConsoleData(
+            token,
+            {
+              setOverview,
+              setDevelopers,
+              setFlash,
+            },
+            t("console.refresh_failed"),
+          )
         : Promise.resolve(),
     [token, setFlash, t],
   );
@@ -145,10 +163,14 @@ export function ConsolePage(props: {
   const refreshDocumentList = useCallback(
     () =>
       token
-        ? refreshDocuments(token, {
-            setDocuments,
-            setFlash,
-          }, t("console.refresh_failed"))
+        ? refreshDocuments(
+            token,
+            {
+              setDocuments,
+              setFlash,
+            },
+            t("console.refresh_failed"),
+          )
         : Promise.resolve(),
     [token, setFlash, t],
   );
@@ -190,18 +212,59 @@ export function ConsolePage(props: {
     if (!token || !session) {
       return;
     }
-    void refreshAll();
-  }, [token, session, refreshAll]);
+
+    let cancelled = false;
+    let running = false;
+
+    const run = async () => {
+      if (cancelled || running) {
+        return;
+      }
+      running = true;
+      try {
+        await refreshConsoleData(
+          token,
+          {
+            setOverview,
+            setDevelopers,
+            setFlash,
+          },
+          t("console.refresh_failed"),
+          true,
+        );
+      } finally {
+        running = false;
+      }
+    };
+
+    void run();
+    const timer = window.setInterval(() => {
+      void run();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [token, session, setFlash, t]);
 
   useEffect(() => {
     if (!token || !session) {
       return;
     }
     const timer = window.setTimeout(() => {
-      void refreshDocumentList();
-    }, 250);
+      void refreshDocuments(
+        token,
+        {
+          setDocuments,
+          setFlash,
+        },
+        t("console.refresh_failed"),
+        true,
+      );
+    }, 150);
     return () => window.clearTimeout(timer);
-  }, [token, session, refreshDocumentList]);
+  }, [token, session, setFlash, t]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -255,6 +318,16 @@ export function ConsolePage(props: {
     }),
     [token, busy, setFlash, refreshAll, refreshDocumentList, overview, developers, documents],
   );
+
+  const tabItems = [
+    { key: "overview" as const, label: t("console.tabs.overview"), badge: overview?.recent_events.length ?? 0 },
+    { key: "users" as const, label: t("console.tabs.users"), badge: developers.length },
+    { key: "tasks" as const, label: t("console.tabs.tasks"), badge: enabledRuleCount },
+    { key: "jobs" as const, label: t("console.tabs.jobs"), badge: overview?.in_flight_jobs ?? 0 },
+    { key: "workers" as const, label: t("console.tabs.workers"), badge: activeCrawlerCount },
+    { key: "documents" as const, label: t("console.tabs.documents"), badge: overview?.indexed_documents ?? 0 },
+    { key: "settings" as const, label: t("console.tabs.settings"), badge: null },
+  ];
 
   if (authLoading) {
     return <div className="console-loading">{t("console.login.checking")}</div>;
@@ -341,41 +414,61 @@ export function ConsolePage(props: {
           </div>
         ) : null}
 
-        <nav className="console-tabs">
-          <button className={activeTab === "overview" ? "active" : ""} onClick={() => setActiveTab("overview")}>{t("console.tabs.overview")}</button>
-          <button className={activeTab === "users" ? "active" : ""} onClick={() => setActiveTab("users")}>{t("console.tabs.users")}</button>
-          <button className={activeTab === "tasks" ? "active" : ""} onClick={() => setActiveTab("tasks")}>{t("console.tabs.tasks")}</button>
-          <button className={activeTab === "jobs" ? "active" : ""} onClick={() => setActiveTab("jobs")}>{t("console.tabs.jobs")}</button>
-          <button className={activeTab === "workers" ? "active" : ""} onClick={() => setActiveTab("workers")}>{t("console.tabs.workers")}</button>
-          <button className={activeTab === "documents" ? "active" : ""} onClick={() => setActiveTab("documents")}>{t("console.tabs.documents")}</button>
-          <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>{t("console.tabs.settings")}</button>
-        </nav>
+        <div className="console-shell">
+          <aside className="console-sidebar">
+            <section className="panel compact-panel console-sidebar-panel">
+              <SectionHeader
+                title={t("console.title")}
+                meta={t("console.live_refresh")}
+                heading="h3"
+              />
+              <div className="console-sidebar-user">
+                <span>{t("console.summary.console_user")}</span>
+                <strong>{session.username}</strong>
+              </div>
+              <nav className="console-tabs">
+                {tabItems.map((item) => (
+                  <button
+                    key={item.key}
+                    className={activeTab === item.key ? "active" : ""}
+                    onClick={() => setActiveTab(item.key)}
+                  >
+                    <span>{item.label}</span>
+                    {item.badge != null ? <strong>{item.badge}</strong> : null}
+                  </button>
+                ))}
+              </nav>
+            </section>
+          </aside>
 
-        <main className="console-grid">
-          <section className="panel panel-wide compact-panel">
-            <StatStrip
-              items={[
-                { label: t("console.summary.console_user"), value: session.username },
-                { label: t("console.summary.indexed_docs"), value: overview?.indexed_documents ?? 0 },
-                { label: t("console.overview.known_urls"), value: overview?.known_urls ?? 0 },
-                { label: t("console.summary.queued_jobs"), value: overview?.frontier_depth ?? 0 },
-                { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
-                { label: t("console.summary.workers"), value: activeCrawlerCount },
-                { label: t("console.overview.active_rules"), value: enabledRuleCount },
-                { label: t("console.summary.duplicates"), value: overview?.duplicate_documents ?? 0 },
-                { label: t("console.summary.failures"), value: overview?.terminal_failures ?? 0 },
-              ]}
-            />
-          </section>
+          <main className="console-content">
+            <section className="panel panel-wide compact-panel">
+              <SectionHeader
+                title={tabItems.find((item) => item.key === activeTab)?.label}
+                meta={t("console.live_refresh")}
+                heading="h3"
+              />
+              <StatStrip
+                items={[
+                  { label: t("console.summary.indexed_docs"), value: overview?.indexed_documents ?? 0 },
+                  { label: t("console.summary.queued_jobs"), value: overview?.frontier_depth ?? 0 },
+                  { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
+                  { label: t("console.summary.workers"), value: activeCrawlerCount },
+                  { label: t("console.overview.active_rules"), value: enabledRuleCount },
+                  { label: t("console.summary.failures"), value: overview?.terminal_failures ?? 0 },
+                ]}
+              />
+            </section>
 
-          {activeTab === "overview" && <ConsoleOverview />}
-          {activeTab === "users" && <ConsoleUsers />}
-          {activeTab === "tasks" && <ConsoleCrawlTasks />}
-          {activeTab === "jobs" && <ConsoleJobs />}
-          {activeTab === "documents" && <ConsoleDocuments />}
-          {activeTab === "workers" && <ConsoleWorkers />}
-          {activeTab === "settings" && <ConsoleSettings />}
-        </main>
+            {activeTab === "overview" && <ConsoleOverview />}
+            {activeTab === "users" && <ConsoleUsers />}
+            {activeTab === "tasks" && <ConsoleCrawlTasks />}
+            {activeTab === "jobs" && <ConsoleJobs />}
+            {activeTab === "documents" && <ConsoleDocuments />}
+            {activeTab === "workers" && <ConsoleWorkers />}
+            {activeTab === "settings" && <ConsoleSettings />}
+          </main>
+        </div>
       </div>
     </ConsoleProvider>
   );

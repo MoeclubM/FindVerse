@@ -900,6 +900,7 @@ impl CrawlerStore {
     pub async fn claim_jobs(
         &self,
         crawler_id: &str,
+        crawler_name: Option<&str>,
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
         request: ClaimJobsRequest,
@@ -909,7 +910,12 @@ impl CrawlerStore {
         let now = Utc::now();
 
         let crawler = self
-            .validate_crawler_auth(crawler_id, &token_hash, default_owner_developer_id)
+            .validate_crawler_auth(
+                crawler_id,
+                crawler_name,
+                &token_hash,
+                default_owner_developer_id,
+            )
             .await?;
 
         // Update last_seen_at and last_claimed_at
@@ -1065,6 +1071,7 @@ impl CrawlerStore {
     pub async fn submit_report(
         &self,
         crawler_id: &str,
+        crawler_name: Option<&str>,
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
         request: SubmitCrawlReportRequest,
@@ -1074,7 +1081,12 @@ impl CrawlerStore {
         let now = Utc::now();
 
         let crawler = self
-            .validate_crawler_auth(crawler_id, &token_hash, default_owner_developer_id)
+            .validate_crawler_auth(
+                crawler_id,
+                crawler_name,
+                &token_hash,
+                default_owner_developer_id,
+            )
             .await?;
 
         sqlx::query("update crawlers set last_seen_at = $2 where id = $1")
@@ -2378,6 +2390,7 @@ impl CrawlerStore {
     async fn validate_crawler_auth(
         &self,
         crawler_id: &str,
+        crawler_name: Option<&str>,
         token_hash: &str,
         default_owner_developer_id: &str,
     ) -> Result<CrawlerAuthInfo, ApiError> {
@@ -2389,8 +2402,13 @@ impl CrawlerStore {
             return Err(ApiError::Unauthorized("invalid crawler key".to_string()));
         }
 
-        self.ensure_crawler_identity(crawler_id, default_owner_developer_id, token_hash)
-            .await
+        self.ensure_crawler_identity(
+            crawler_id,
+            crawler_name,
+            default_owner_developer_id,
+            token_hash,
+        )
+        .await
     }
 
     async fn apply_due_rules(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
@@ -2534,6 +2552,7 @@ impl CrawlerStore {
     async fn ensure_crawler_identity(
         &self,
         crawler_id: &str,
+        crawler_name: Option<&str>,
         default_owner_developer_id: &str,
         token_hash: &str,
     ) -> Result<CrawlerAuthInfo, ApiError> {
@@ -2549,7 +2568,7 @@ impl CrawlerStore {
         )
         .bind(crawler_id)
         .bind(default_owner_developer_id)
-        .bind(default_crawler_name(crawler_id))
+        .bind(default_crawler_name(crawler_id, crawler_name))
         .bind(token_hash)
         .fetch_one(&self.pg_pool)
         .await
@@ -3054,7 +3073,16 @@ fn bearer_hash(auth_header: Option<&str>) -> Result<String, ApiError> {
     Ok(hash_token(token))
 }
 
-fn default_crawler_name(crawler_id: &str) -> String {
+fn default_crawler_name(crawler_id: &str, crawler_name: Option<&str>) -> String {
+    if let Some(name) = crawler_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(120).collect::<String>())
+        .filter(|value| !value.is_empty())
+    {
+        return name;
+    }
+
     let suffix: String = crawler_id.chars().take(8).collect();
     format!("crawler-{suffix}")
 }

@@ -43,6 +43,9 @@ pub enum Command {
         /// Fixed crawler ID
         #[arg(long)]
         crawler_id: String,
+        /// Default crawler display name used when the server first sees this crawler ID
+        #[arg(long)]
+        crawler_name: Option<String>,
         /// Fixed crawler key
         #[arg(long)]
         crawler_key: String,
@@ -252,6 +255,7 @@ pub struct SubmitCrawlReportResponse {
 pub struct WorkerConfig {
     pub server: String,
     pub crawler_id: String,
+    pub crawler_name: Option<String>,
     pub auth_token: String,
     pub max_jobs: usize,
     pub poll_interval_secs: u64,

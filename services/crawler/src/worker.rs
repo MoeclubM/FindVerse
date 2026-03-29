@@ -250,6 +250,10 @@ async fn claim_jobs(
             config.server.trim_end_matches('/')
         ))
         .header("x-crawler-id", &config.crawler_id)
+        .header(
+            "x-crawler-name",
+            config.crawler_name.as_deref().unwrap_or(""),
+        )
         .bearer_auth(&config.auth_token)
         .json(&ClaimJobsRequest {
             max_jobs: config.max_jobs,
@@ -275,6 +279,10 @@ async fn submit_report(
             config.server.trim_end_matches('/')
         ))
         .header("x-crawler-id", &config.crawler_id)
+        .header(
+            "x-crawler-name",
+            config.crawler_name.as_deref().unwrap_or(""),
+        )
         .bearer_auth(&config.auth_token)
         .json(&SubmitCrawlReportRequest { results })
         .send()

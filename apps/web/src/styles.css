@@ -236,7 +236,7 @@ pre {
 }
 
 .portal-main > *,
-.console-grid > *,
+.console-content > *,
 .console-tabs,
 .portal-auth-card,
 .console-login,
@@ -246,22 +246,22 @@ pre {
 }
 
 .portal-main > *:nth-child(2),
-.console-grid > *:nth-child(2) {
+.console-content > *:nth-child(2) {
   animation-delay: 40ms;
 }
 
 .portal-main > *:nth-child(3),
-.console-grid > *:nth-child(3) {
+.console-content > *:nth-child(3) {
   animation-delay: 80ms;
 }
 
 .portal-main > *:nth-child(4),
-.console-grid > *:nth-child(4) {
+.console-content > *:nth-child(4) {
   animation-delay: 120ms;
 }
 
 .portal-main > *:nth-child(5),
-.console-grid > *:nth-child(5) {
+.console-content > *:nth-child(5) {
   animation-delay: 160ms;
 }
 
@@ -436,30 +436,87 @@ pre {
   background: var(--fv-bg);
 }
 
-.console-tabs {
-  display: flex;
-  width: min(1180px, calc(100% - 32px));
+.console-shell {
+  width: min(1280px, calc(100% - 32px));
   margin: 0 auto;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 0 24px;
+}
+
+.console-sidebar {
+  position: sticky;
+  top: 84px;
+  align-self: start;
+}
+
+.console-sidebar-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.console-sidebar-user {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--fv-border-soft);
+  border-radius: 18px;
+  background: var(--fv-panel-soft);
+}
+
+.console-sidebar-user span {
+  color: var(--fv-text-muted);
+  font-size: 12px;
+}
+
+.console-sidebar-user strong {
+  font-size: 15px;
+}
+
+.console-tabs {
+  display: grid;
   gap: 8px;
-  padding: 10px 0 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
   background: transparent;
 }
 
 .console-tabs button {
-  min-height: 40px;
+  min-height: 48px;
+  width: 100%;
   border: 1px solid var(--fv-border);
-  border-radius: 999px;
+  border-radius: 18px;
   background: var(--fv-panel);
-  padding: 0 14px;
+  padding: 10px 14px;
   color: var(--fv-text-muted);
   cursor: pointer;
   font: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
   transition:
     background-color 180ms ease,
     border-color 180ms ease,
     color 180ms ease,
     transform 180ms ease;
+}
+
+.console-tabs button span {
+  font-weight: 600;
+}
+
+.console-tabs button strong {
+  min-width: 34px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--fv-panel-soft);
+  color: var(--fv-text);
+  font-size: 12px;
+  text-align: center;
 }
 
 .console-tabs button:hover {
@@ -471,6 +528,11 @@ pre {
   color: #ffffff;
   border-color: var(--fv-accent);
   background: var(--fv-accent);
+}
+
+.console-tabs button.active strong {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
 }
 
 .topbar-actions {
@@ -607,13 +669,11 @@ pre {
   color: var(--fv-text);
 }
 
-.console-grid {
+.console-content {
+  min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: min(1180px, calc(100% - 32px));
+  grid-template-columns: 1fr;
   gap: 16px;
-  margin: 0 auto;
-  padding: 14px 0 24px;
 }
 
 .panel {
@@ -859,6 +919,126 @@ pre {
 .document-pagination {
   margin-top: 2px;
   margin-bottom: 0;
+}
+
+.worker-card,
+.job-card,
+.document-card {
+  gap: 10px;
+}
+
+.worker-card-head,
+.job-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.worker-card-stats,
+.job-card-stats,
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.worker-card-stats > div,
+.job-card-stats > div,
+.detail-grid > div {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--fv-border-soft);
+  border-radius: 16px;
+  background: var(--fv-panel-soft);
+}
+
+.worker-card-stats span,
+.job-card-stats span,
+.detail-grid span {
+  display: block;
+  color: var(--fv-text-muted);
+  font-size: 12px;
+}
+
+.worker-card-stats strong,
+.job-card-stats strong,
+.detail-grid strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.job-card-meta {
+  gap: 8px;
+}
+
+.detail-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(28, 24, 20, 0.48);
+  backdrop-filter: blur(10px);
+}
+
+.detail-dialog {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--fv-border);
+  border-radius: 24px;
+  background: var(--fv-panel);
+  box-shadow: 0 24px 56px rgba(43, 36, 31, 0.18);
+}
+
+.detail-dialog-header {
+  margin-bottom: 12px;
+}
+
+.detail-dialog-body,
+.detail-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-dialog-close {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--fv-border);
+  border-radius: 999px;
+  background: var(--fv-panel-soft);
+}
+
+.detail-block {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--fv-border-soft);
+  border-radius: 18px;
+  background: var(--fv-panel-soft);
+}
+
+.detail-block code {
+  overflow-wrap: anywhere;
+}
+
+.detail-paragraph {
+  margin: 0;
+  color: var(--fv-text-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .row-primary {
@@ -1307,6 +1487,21 @@ pre {
   background: #d6724b;
 }
 
+:root[data-theme="dark"] .console-tabs button strong,
+:root[data-theme="dark"] .console-sidebar-user,
+:root[data-theme="dark"] .worker-card-stats > div,
+:root[data-theme="dark"] .job-card-stats > div,
+:root[data-theme="dark"] .detail-grid > div,
+:root[data-theme="dark"] .detail-block,
+:root[data-theme="dark"] .detail-dialog-close {
+  border-color: #3a3129;
+  background: #211c18;
+}
+
+:root[data-theme="dark"] .detail-dialog-overlay {
+  background: rgba(12, 10, 8, 0.62);
+}
+
 :root[data-theme="dark"] .developer-user-actions .plain-link,
 :root[data-theme="dark"] .developer-key-row .plain-link {
   border-color: #3a3129;
@@ -1420,7 +1615,6 @@ pre {
 
 @media (max-width: 960px) {
   .portal-main,
-  .console-grid,
   .stats-grid,
   .summary-strip,
   .dense-grid,
@@ -1428,6 +1622,23 @@ pre {
   .compact-metadata-wide,
   .developer-key-summary {
     grid-template-columns: 1fr;
+  }
+
+  .console-shell {
+    width: calc(100% - 24px);
+    grid-template-columns: 1fr;
+    padding: 12px 0 24px;
+  }
+
+  .console-sidebar {
+    position: static;
+  }
+
+  .console-tabs {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(150px, 1fr);
+    overflow-x: auto;
+    padding-bottom: 4px;
   }
 
   .table-head {
@@ -1447,7 +1658,10 @@ pre {
   .property-grid,
   .property-facet-grid,
   .property-submit-grid,
-  .developer-user-summary {
+  .developer-user-summary,
+  .worker-card-stats,
+  .job-card-stats,
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1492,9 +1706,26 @@ pre {
   }
 
   .portal-main,
-  .console-grid {
+  .console-shell {
     padding-left: 12px;
     padding-right: 12px;
+  }
+
+  .worker-card-head,
+  .job-card-head,
+  .document-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .detail-dialog-overlay {
+    padding: 12px;
+  }
+
+  .detail-dialog {
+    max-height: calc(100vh - 24px);
+    padding: 12px;
+    border-radius: 20px;
   }
 
   .portal-flash,

@@ -14,11 +14,13 @@ pub async fn claim_jobs(
     Json(request): Json<ClaimJobsRequest>,
 ) -> Result<Json<ClaimJobsResponse>, ApiError> {
     let crawler_id = crawler_id_from_headers(&headers)?;
+    let crawler_name = crawler_name_from_headers(&headers);
     Ok(Json(
         state
             .crawler_store
             .claim_jobs(
                 &crawler_id,
+                crawler_name.as_deref(),
                 headers
                     .get("authorization")
                     .and_then(|value| value.to_str().ok()),
@@ -35,11 +37,13 @@ pub async fn submit_crawl_report(
     Json(request): Json<SubmitCrawlReportRequest>,
 ) -> Result<Json<SubmitCrawlReportResponse>, ApiError> {
     let crawler_id = crawler_id_from_headers(&headers)?;
+    let crawler_name = crawler_name_from_headers(&headers);
     Ok(Json(
         state
             .crawler_store
             .submit_report(
                 &crawler_id,
+                crawler_name.as_deref(),
                 headers
                     .get("authorization")
                     .and_then(|value| value.to_str().ok()),
@@ -59,4 +63,13 @@ fn crawler_id_from_headers(headers: &HeaderMap) -> Result<String, ApiError> {
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .ok_or_else(|| ApiError::Unauthorized("missing x-crawler-id header".to_string()))
+}
+
+fn crawler_name_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-crawler-name")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }

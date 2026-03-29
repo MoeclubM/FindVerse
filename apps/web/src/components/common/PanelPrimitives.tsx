@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 export function SectionHeader(props: {
   title: ReactNode;
@@ -51,5 +51,66 @@ export function FieldShell(props: {
       {props.children}
       {props.hint ? <span className="field-hint">{props.hint}</span> : null}
     </label>
+  );
+}
+
+export function DetailDialog(props: {
+  open: boolean;
+  title: ReactNode;
+  meta?: ReactNode;
+  actions?: ReactNode;
+  closeLabel: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!props.open) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        props.onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [props.open, props.onClose]);
+
+  if (!props.open) {
+    return null;
+  }
+
+  return (
+    <div
+      className="detail-dialog-overlay"
+      role="presentation"
+      onClick={props.onClose}
+    >
+      <div
+        className="detail-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof props.title === "string" ? props.title : undefined}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="detail-dialog-header">
+          <SectionHeader
+            title={props.title}
+            meta={props.meta}
+            actions={
+              <>
+                {props.actions}
+                <button type="button" className="plain-link detail-dialog-close" onClick={props.onClose}>
+                  {props.closeLabel}
+                </button>
+              </>
+            }
+          />
+        </div>
+        <div className="detail-dialog-body">{props.children}</div>
+      </div>
+    </div>
   );
 }

@@ -1,12 +1,16 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { deleteDocument, listDocuments, purgeSite } from "../../api";
-import { FieldShell, SectionHeader, StatStrip } from "../common/PanelPrimitives";
+import { DetailDialog, FieldShell, SectionHeader, StatStrip } from "../common/PanelPrimitives";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function formatTimestamp(value: string | null) {
+  return value ? value.replace("T", " ").replace("Z", "").slice(0, 16) : "-";
 }
 
 export function ConsoleDocuments() {
@@ -18,38 +22,49 @@ export function ConsoleDocuments() {
   const [documentOffset, setDocumentOffset] = useState(0);
   const [purgeSiteInput, setPurgeSiteInput] = useState("");
   const [localDocuments, setLocalDocuments] = useState<Awaited<ReturnType<typeof listDocuments>> | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
 
-  // Use documents from context as initial data, switch to local when paginating
   const displayDocuments = localDocuments ?? documents;
   const visibleDocuments = displayDocuments?.documents ?? [];
   const duplicateCount = visibleDocuments.filter((document) => document.duplicate_of).length;
   const primaryCount = visibleDocuments.length - duplicateCount;
+  const selectedDocument = useMemo(
+    () => visibleDocuments.find((document) => document.id === selectedDocumentId) ?? null,
+    [selectedDocumentId, visibleDocuments],
+  );
 
   const fetchDocuments = useCallback(
     async (offset: number) => {
-      try {
-        const result = await listDocuments(token, {
-          query: documentQuery.trim() || undefined,
-          site: documentSite.trim() || undefined,
-          offset,
-        });
-        setLocalDocuments(result);
-      } catch (error) {
-        setFlash(getErrorMessage(error, t("console.refresh_failed")));
-      }
+      const result = await listDocuments(token, {
+        query: documentQuery.trim() || undefined,
+        site: documentSite.trim() || undefined,
+        offset,
+      });
+      setLocalDocuments(result);
+      setSelectedDocumentId((current) =>
+        current && result.documents.some((document) => document.id === current) ? current : null,
+      );
     },
-    [token, documentQuery, documentSite, setFlash, t],
+    [token, documentQuery, documentSite],
   );
 
-  // Debounced re-fetch when filters change
   useEffect(() => {
     setDocumentOffset(0);
     setLocalDocuments(null);
     const timer = window.setTimeout(() => {
-      void fetchDocuments(0);
-    }, 250);
+      void fetchDocuments(0).catch((error) => {
+        setFlash(getErrorMessage(error, t("console.refresh_failed")));
+      });
+    }, 180);
     return () => window.clearTimeout(timer);
-  }, [fetchDocuments]);
+  }, [fetchDocuments, setFlash, t]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetchDocuments(documentOffset).catch(() => undefined);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [documentOffset, fetchDocuments]);
 
   async function handleDeleteDocument(documentId: string) {
     setBusy(true);
@@ -57,7 +72,10 @@ export function ConsoleDocuments() {
     try {
       await deleteDocument(token, documentId);
       await refreshAll();
-      void fetchDocuments(documentOffset);
+      await fetchDocuments(documentOffset);
+      if (selectedDocumentId === documentId) {
+        setSelectedDocumentId(null);
+      }
     } catch (error) {
       setFlash(getErrorMessage(error, t("console.documents.delete_failed")));
     } finally {
@@ -73,8 +91,9 @@ export function ConsoleDocuments() {
       const response = await purgeSite(token, purgeSiteInput);
       setFlash(t("console.documents.purge_success", { count: response.deleted_documents }));
       setDocumentOffset(0);
+      setSelectedDocumentId(null);
       await refreshAll();
-      void fetchDocuments(0);
+      await fetchDocuments(0);
     } catch (error) {
       setFlash(getErrorMessage(error, t("console.documents.purge_failed")));
     } finally {
@@ -85,14 +104,18 @@ export function ConsoleDocuments() {
   function handlePrevious() {
     const newOffset = Math.max(0, documentOffset - 20);
     setDocumentOffset(newOffset);
-    void fetchDocuments(newOffset);
+    void fetchDocuments(newOffset).catch((error) => {
+      setFlash(getErrorMessage(error, t("console.refresh_failed")));
+    });
   }
 
   function handleNext() {
     if (displayDocuments?.next_offset != null) {
       const newOffset = displayDocuments.next_offset;
       setDocumentOffset(newOffset);
-      void fetchDocuments(newOffset);
+      void fetchDocuments(newOffset).catch((error) => {
+        setFlash(getErrorMessage(error, t("console.refresh_failed")));
+      });
     }
   }
 
@@ -142,7 +165,7 @@ export function ConsoleDocuments() {
       <div className="dense-list">
         {visibleDocuments.length ? (
           visibleDocuments.map((document) => (
-            <div className="compact-row document-row" key={document.id}>
+            <div className="compact-row document-card" key={document.id}>
               <div className="document-toolbar">
                 <div className="document-title-group">
                   <div className="row-primary">
@@ -150,59 +173,19 @@ export function ConsoleDocuments() {
                     <span>{document.display_url}</span>
                   </div>
                   <div className="row-meta row-meta-tight">
-                    <code>{document.id}</code>
-                    <code>{document.canonical_url}</code>
-                    {document.duplicate_of ? (
-                      <span>{t("console.documents.duplicate_of", { id: document.duplicate_of })}</span>
-                    ) : (
-                      <span>{t("console.documents.primary_document")}</span>
-                    )}
+                    <span>{document.language}</span>
+                    <span>{formatTimestamp(document.last_crawled_at)}</span>
+                    <span>{t("console.documents.authority_value", { value: document.site_authority.toFixed(2) })}</span>
+                    <span>
+                      {document.duplicate_of
+                        ? t("console.documents.duplicate_of", { id: document.duplicate_of })
+                        : t("console.documents.primary_document")}
+                    </span>
                   </div>
                 </div>
-                <div className="row-actions topbar-actions">
-                  <button
-                    type="button"
-                    className="plain-link"
-                    disabled={busy}
-                    onClick={() => void handleDeleteDocument(document.id)}
-                  >
-                    {t("console.documents.delete")}
-                  </button>
-                </div>
-              </div>
-              <div className="metadata-grid compact-metadata-wide document-metadata-grid">
-                <div>
-                  <span>{t("console.documents.language")}</span>
-                  <strong>{document.language}</strong>
-                </div>
-                <div>
-                  <span>{t("console.documents.content_type_label")}</span>
-                  <strong>{document.content_type}</strong>
-                </div>
-                <div>
-                  <span>{t("console.documents.word_count")}</span>
-                  <strong>{document.word_count}</strong>
-                </div>
-                <div>
-                  <span>{t("console.documents.authority")}</span>
-                  <strong>{document.site_authority.toFixed(2)}</strong>
-                </div>
-                <div>
-                  <span>{t("console.documents.last_crawled")}</span>
-                  <strong>{document.last_crawled_at.replace("T", " ").replace("Z", "").slice(0, 16)}</strong>
-                </div>
-                <div>
-                  <span>{t("console.documents.host_label")}</span>
-                  <strong>{document.host}</strong>
-                </div>
-                <div>
-                  <span>{t("console.documents.job_label")}</span>
-                  <strong>{document.source_job_id ?? "-"}</strong>
-                </div>
-                <div>
-                  <span>{t("console.documents.versions_label")}</span>
-                  <strong>{`s${document.schema_version} · p${document.parser_version} · i${document.index_version}`}</strong>
-                </div>
+                <button type="button" className="plain-link" onClick={() => setSelectedDocumentId(document.id)}>
+                  {t("console.actions.details")}
+                </button>
               </div>
               <p className="document-snippet">{document.snippet}</p>
             </div>
@@ -228,6 +211,73 @@ export function ConsoleDocuments() {
           {t("search.next")}
         </button>
       </div>
+
+      <DetailDialog
+        open={Boolean(selectedDocument)}
+        title={selectedDocument?.title ?? t("console.documents.title")}
+        meta={selectedDocument?.display_url}
+        closeLabel={t("console.actions.close")}
+        onClose={() => setSelectedDocumentId(null)}
+        actions={
+          selectedDocument ? (
+            <button
+              type="button"
+              className="plain-link"
+              disabled={busy}
+              onClick={() => void handleDeleteDocument(selectedDocument.id)}
+            >
+              {t("console.documents.delete")}
+            </button>
+          ) : null
+        }
+      >
+        {selectedDocument ? (
+          <div className="detail-stack">
+            <div className="detail-block">
+              <span className="field-label">{t("console.documents.host_label")}</span>
+              <code>{selectedDocument.canonical_url}</code>
+            </div>
+            <div className="metadata-grid compact-metadata-wide detail-grid">
+              <div>
+                <span>{t("console.documents.language")}</span>
+                <strong>{selectedDocument.language}</strong>
+              </div>
+              <div>
+                <span>{t("console.documents.content_type_label")}</span>
+                <strong>{selectedDocument.content_type}</strong>
+              </div>
+              <div>
+                <span>{t("console.documents.word_count")}</span>
+                <strong>{selectedDocument.word_count}</strong>
+              </div>
+              <div>
+                <span>{t("console.documents.authority")}</span>
+                <strong>{selectedDocument.site_authority.toFixed(2)}</strong>
+              </div>
+              <div>
+                <span>{t("console.documents.last_crawled")}</span>
+                <strong>{formatTimestamp(selectedDocument.last_crawled_at)}</strong>
+              </div>
+              <div>
+                <span>{t("console.documents.host_label")}</span>
+                <strong>{selectedDocument.host}</strong>
+              </div>
+              <div>
+                <span>{t("console.documents.job_label")}</span>
+                <strong>{selectedDocument.source_job_id ?? "-"}</strong>
+              </div>
+              <div>
+                <span>{t("console.documents.versions_label")}</span>
+                <strong>{`s${selectedDocument.schema_version} · p${selectedDocument.parser_version} · i${selectedDocument.index_version}`}</strong>
+              </div>
+            </div>
+            <div className="detail-block">
+              <span className="field-label">{t("console.documents.summary_label")}</span>
+              <p className="detail-paragraph">{selectedDocument.snippet}</p>
+            </div>
+          </div>
+        ) : null}
+      </DetailDialog>
     </section>
   );
 }

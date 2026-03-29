@@ -58,8 +58,13 @@
     },
     "title": "FindVerse 控制台",
     "refresh_failed": "刷新失败",
+    "live_refresh": "实时刷新 · 每 1 秒",
     "search": "搜索",
     "logout": "退出登录",
+    "actions": {
+      "details": "详情",
+      "close": "关闭"
+    },
     "summary": {
       "console_user": "控制台用户",
       "indexed_docs": "已索引文档",
@@ -272,6 +277,7 @@
       "last_claimed": "最近认领",
       "jobs_claimed": "已认领任务",
       "jobs_reported": "已上报任务",
+      "status": "状态",
       "setup_hint": "在设置页维护共享 crawler key。节点首次安装会自动生成 crawler_id，并持久化到本地配置文件。",
       "name_placeholder": "节点名称",
       "name_too_short": "节点名称至少需要 2 个字符",
@@ -303,6 +309,7 @@
       "host_label": "主机",
       "job_label": "任务",
       "versions_label": "版本",
+      "summary_label": "摘要",
       "words": "{{count}} 字",
       "authority_value": "权重 {{value}}",
       "host": "主机 {{host}}",
