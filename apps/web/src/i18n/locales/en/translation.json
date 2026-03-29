@@ -155,6 +155,8 @@
       "max_depth_hint": "Seed pages start at 0, and recursion stops after this depth",
       "max_pages_label": "Max pages",
       "max_pages_hint": "Total pages allowed for the whole crawl, not links on one page",
+      "same_origin_concurrency_label": "Same-origin concurrency",
+      "same_origin_concurrency_hint": "Maximum in-flight jobs allowed at once for the same origin",
       "scope_label": "Discovery scope",
       "scope_hint": "Restrict where recursive discovery is allowed to continue",
       "max_links_label": "Max discovered links/page",

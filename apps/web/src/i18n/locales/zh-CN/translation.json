@@ -155,6 +155,8 @@
       "max_depth_hint": "种子页从 0 开始，达到目标层级后停止继续递归",
       "max_pages_label": "最大页面数",
       "max_pages_hint": "整次抓取任务最多抓取多少页，不是单页链接数",
+      "same_origin_concurrency_label": "同源并发",
+      "same_origin_concurrency_hint": "同一个站点来源最多同时跑多少个任务",
       "scope_label": "发现范围",
       "scope_hint": "限制继续递归时允许发现的新链接范围",
       "max_links_label": "每页最大扩散链接数",

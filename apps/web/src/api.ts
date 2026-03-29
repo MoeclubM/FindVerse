@@ -132,6 +132,7 @@ export type CrawlRule = {
   interval_minutes: number;
   max_depth: number;
   max_pages: number;
+  same_origin_concurrency: number;
   discovery_scope: DiscoveryScope;
   max_discovered_urls_per_page: number;
   enabled: boolean;
@@ -282,6 +283,7 @@ export function seedFrontier(
   urls: string[],
   maxDepth: number,
   maxPages: number,
+  sameOriginConcurrency: number,
   discoveryScope: DiscoveryScope,
   maxDiscoveredUrlsPerPage: number,
   allowRevisit: boolean,
@@ -298,6 +300,7 @@ export function seedFrontier(
       source: "admin-panel",
       max_depth: maxDepth,
       max_pages: maxPages,
+      same_origin_concurrency: sameOriginConcurrency,
       discovery_scope: discoveryScope,
       max_discovered_urls_per_page: maxDiscoveredUrlsPerPage,
       allow_revisit: allowRevisit,
@@ -313,6 +316,7 @@ export function createRule(
     interval_minutes: number;
     max_depth: number;
     max_pages: number;
+    same_origin_concurrency: number;
     discovery_scope: DiscoveryScope;
     max_discovered_urls_per_page: number;
     enabled: boolean;
@@ -334,6 +338,7 @@ export function updateRule(
     interval_minutes: number;
     max_depth: number;
     max_pages: number;
+    same_origin_concurrency: number;
     discovery_scope: DiscoveryScope;
     max_discovered_urls_per_page: number;
     enabled: boolean;
@@ -442,6 +447,7 @@ export function submitDeveloperDomain(
     urls: string[];
     max_depth: number;
     max_pages: number;
+    same_origin_concurrency: number;
     allow_revisit: boolean;
   },
 ) {

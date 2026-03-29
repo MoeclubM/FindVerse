@@ -80,6 +80,7 @@ export function DevPortalPage(props: {
   const [submitUrls, setSubmitUrls] = useState("");
   const [submitDepth, setSubmitDepth] = useState("2");
   const [submitMaxPages, setSubmitMaxPages] = useState("50");
+  const [submitSameOriginConcurrency, setSubmitSameOriginConcurrency] = useState("1");
   const [submitRevisit, setSubmitRevisit] = useState(true);
 
   useEffect(() => {
@@ -129,6 +130,7 @@ export function DevPortalPage(props: {
     setSubmitUrls(buildSeedSuggestions(propertyInsight.domain));
     setSubmitDepth("2");
     setSubmitMaxPages("50");
+    setSubmitSameOriginConcurrency("1");
     setSubmitRevisit(true);
   }, [propertyInsight, submitDomain]);
 
@@ -275,6 +277,7 @@ export function DevPortalPage(props: {
         urls,
         max_depth: Math.max(0, Number(submitDepth) || 0),
         max_pages: Math.max(1, Number(submitMaxPages) || 1),
+        same_origin_concurrency: Math.max(1, Number(submitSameOriginConcurrency) || 1),
         allow_revisit: submitRevisit,
       });
       const insight = await loadPropertyInsight(sessionToken, domain);
@@ -622,6 +625,16 @@ export function DevPortalPage(props: {
                           max={10000}
                           value={submitMaxPages}
                           onChange={(event) => setSubmitMaxPages(event.target.value)}
+                        />
+                      </FieldShell>
+                      <FieldShell label="Same-origin concurrency">
+                        <input
+                          id="submit-origin-concurrency"
+                          type="number"
+                          min={1}
+                          max={32}
+                          value={submitSameOriginConcurrency}
+                          onChange={(event) => setSubmitSameOriginConcurrency(event.target.value)}
                         />
                       </FieldShell>
                     </div>

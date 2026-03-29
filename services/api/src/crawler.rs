@@ -197,12 +197,13 @@ impl CrawlerStore {
         let interval_minutes = request.interval_minutes.clamp(1, 10_080) as i64;
         let max_depth = request.max_depth.min(10) as i32;
         let max_pages = request.max_pages.clamp(1, 10_000) as i32;
+        let same_origin_concurrency = request.same_origin_concurrency.clamp(1, 32) as i32;
         let max_discovered_urls_per_page =
             request.max_discovered_urls_per_page.clamp(1, 200) as i32;
 
         sqlx::query(
-            "insert into crawl_rules (id, owner_developer_id, owner_user_id, name, seed_url, pattern, status, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at)
-             values ($1, $2, null, $3, $4, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $11)",
+            "insert into crawl_rules (id, owner_developer_id, owner_user_id, name, seed_url, pattern, status, interval_minutes, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at)
+             values ($1, $2, null, $3, $4, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $12)",
         )
         .bind(&id)
         .bind(developer_id)
@@ -211,6 +212,7 @@ impl CrawlerStore {
         .bind(interval_minutes)
         .bind(max_depth)
         .bind(max_pages)
+        .bind(same_origin_concurrency)
         .bind(request.discovery_scope.as_str())
         .bind(max_discovered_urls_per_page)
         .bind(request.enabled)
@@ -236,6 +238,7 @@ impl CrawlerStore {
             interval_minutes: interval_minutes as u64,
             max_depth: max_depth as u32,
             max_pages: max_pages as u32,
+            same_origin_concurrency: same_origin_concurrency as u32,
             discovery_scope: request.discovery_scope,
             max_discovered_urls_per_page: max_discovered_urls_per_page as u32,
             enabled: request.enabled,
@@ -252,7 +255,7 @@ impl CrawlerStore {
         request: UpdateCrawlRuleRequest,
     ) -> Result<CrawlRule, ApiError> {
         let row = sqlx::query_as::<_, CrawlRuleRow>(
-            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
              from crawl_rules where id = $1",
         )
         .bind(rule_id)
@@ -287,6 +290,10 @@ impl CrawlerStore {
             .max_pages
             .map(|value| value.clamp(1, 10_000))
             .unwrap_or(row.max_pages as u32) as i32;
+        let new_same_origin_concurrency = request
+            .same_origin_concurrency
+            .map(|value| value.clamp(1, 32))
+            .unwrap_or(row.same_origin_concurrency as u32) as i32;
         let new_discovery_scope = request
             .discovery_scope
             .unwrap_or_else(|| DiscoveryScope::from_db_value(&row.discovery_scope));
@@ -299,7 +306,7 @@ impl CrawlerStore {
         let now = Utc::now();
 
         sqlx::query(
-            "update crawl_rules set name = $2, seed_url = $3, pattern = $3, interval_minutes = $4, max_depth = $5, max_pages = $6, discovery_scope = $7, max_discovered_urls_per_page = $8, enabled = $9, updated_at = $10
+            "update crawl_rules set name = $2, seed_url = $3, pattern = $3, interval_minutes = $4, max_depth = $5, max_pages = $6, same_origin_concurrency = $7, discovery_scope = $8, max_discovered_urls_per_page = $9, enabled = $10, updated_at = $11
              where id = $1",
         )
         .bind(rule_id)
@@ -308,6 +315,7 @@ impl CrawlerStore {
         .bind(new_interval)
         .bind(new_max_depth)
         .bind(new_max_pages)
+        .bind(new_same_origin_concurrency)
         .bind(new_discovery_scope.as_str())
         .bind(new_max_discovered_urls_per_page)
         .bind(new_enabled)
@@ -333,6 +341,7 @@ impl CrawlerStore {
             interval_minutes: new_interval as u64,
             max_depth: new_max_depth as u32,
             max_pages: new_max_pages as u32,
+            same_origin_concurrency: new_same_origin_concurrency as u32,
             discovery_scope: new_discovery_scope,
             max_discovered_urls_per_page: new_max_discovered_urls_per_page as u32,
             enabled: new_enabled,
@@ -344,7 +353,7 @@ impl CrawlerStore {
 
     pub async fn delete_rule(&self, developer_id: &str, rule_id: &str) -> Result<(), ApiError> {
         let row = sqlx::query_as::<_, CrawlRuleRow>(
-            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
              from crawl_rules where id = $1",
         )
         .bind(rule_id)
@@ -405,7 +414,7 @@ impl CrawlerStore {
         .collect();
 
         let rules: Vec<CrawlRule> = sqlx::query_as::<_, CrawlRuleRow>(
-            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
+            "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
              from crawl_rules where owner_developer_id = $1
              order by created_at desc",
         )
@@ -421,6 +430,7 @@ impl CrawlerStore {
                 interval_minutes: r.interval_minutes as u64,
                 max_depth: r.max_depth as u32,
                 max_pages: r.max_pages as u32,
+                same_origin_concurrency: r.same_origin_concurrency as u32,
                 discovery_scope: DiscoveryScope::from_db_value(&r.discovery_scope),
                 max_discovered_urls_per_page: r.max_discovered_urls_per_page as u32,
                 enabled: r.enabled,
@@ -791,6 +801,7 @@ impl CrawlerStore {
                 0,
                 request.max_depth.min(10) as i32,
                 request.max_pages.clamp(1, 10_000) as i32,
+                request.same_origin_concurrency.clamp(1, 32) as i32,
                 Some(submitted_by),
                 None,
                 DiscoveryScope::SameDomain,
@@ -861,6 +872,7 @@ impl CrawlerStore {
                 0,
                 request.max_depth.min(10) as i32,
                 request.max_pages.clamp(1, 10_000) as i32,
+                request.same_origin_concurrency.clamp(1, 32) as i32,
                 Some(developer_id),
                 None,
                 request.discovery_scope,
@@ -924,35 +936,43 @@ impl CrawlerStore {
 
         let lease_expires = now + chrono::Duration::minutes(30);
         let claimed_rows = sqlx::query_as::<_, ClaimedJobRow>(
-            "with candidate_jobs as (
-                 select j.id, j.origin_key
+            "with active_counts as (
+                 select origin_key, count(*)::integer as active_count
+                 from crawl_jobs
+                 where owner_developer_id = $4
+                   and status = 'claimed'
+                 group by origin_key
+             ),
+             ranked_jobs as (
+                 select
+                     j.id,
+                     j.origin_key,
+                     o.next_allowed_at,
+                     j.priority,
+                     j.discovered_at,
+                     coalesce(active_counts.active_count, 0) as active_count,
+                     greatest(j.same_origin_concurrency, 1) as same_origin_concurrency,
+                     row_number() over (
+                         partition by j.origin_key
+                         order by j.priority desc, j.discovered_at asc
+                     ) as origin_rank
                  from crawl_jobs j
                  join crawl_origins o
                    on o.owner_developer_id = j.owner_developer_id
                   and o.origin_key = j.origin_key
+                 left join active_counts
+                   on active_counts.origin_key = j.origin_key
                  where j.owner_developer_id = $4
                    and j.status = 'queued'
                    and (j.next_retry_at is null or j.next_retry_at <= $2)
                    and o.next_allowed_at <= $2
-                   and o.in_flight_count = 0
-                   and not exists (
-                       select 1 from crawl_jobs active
-                       where active.owner_developer_id = j.owner_developer_id
-                         and active.origin_key = j.origin_key
-                         and active.status = 'claimed'
-                   )
-                   and not exists (
-                       select 1 from crawl_jobs better
-                       where better.owner_developer_id = j.owner_developer_id
-                         and better.origin_key = j.origin_key
-                         and better.status = 'queued'
-                         and (better.next_retry_at is null or better.next_retry_at <= $2)
-                         and (
-                             better.priority > j.priority
-                             or (better.priority = j.priority and better.discovered_at < j.discovered_at)
-                         )
-                   )
-                 order by o.next_allowed_at asc, j.priority desc, j.discovered_at asc
+             ),
+             candidate_jobs as (
+                 select j.id, ranked_jobs.origin_key
+                 from crawl_jobs j
+                 join ranked_jobs on ranked_jobs.id = j.id
+                 where ranked_jobs.active_count + ranked_jobs.origin_rank <= ranked_jobs.same_origin_concurrency
+                 order by ranked_jobs.next_allowed_at asc, ranked_jobs.priority desc, ranked_jobs.discovered_at asc
                  limit $5
                  for update of j skip locked
              ),
@@ -968,9 +988,13 @@ impl CrawlerStore {
              ),
              touched_origins as (
                  update crawl_origins origin
-                 set in_flight_count = origin.in_flight_count + 1,
+                 set in_flight_count = origin.in_flight_count + touched.claimed_count,
                      updated_at = $2
-                 from (select distinct origin_key from claimed) touched
+                 from (
+                     select origin_key, count(*)::integer as claimed_count
+                     from claimed
+                     group by origin_key
+                 ) touched
                  where origin.owner_developer_id = $4
                    and origin.origin_key = touched.origin_key
              )
@@ -1077,7 +1101,7 @@ impl CrawlerStore {
 
         for result in request.results {
             let in_flight = sqlx::query_as::<_, InFlightJobRow>(
-                "select id, url, origin_key, depth, max_depth, max_pages, budget_id, rule_id, attempt_count, max_attempts, discovery_scope, discovery_host, max_discovered_urls_per_page from crawl_jobs
+                "select id, url, origin_key, depth, max_depth, max_pages, budget_id, rule_id, attempt_count, max_attempts, discovery_scope, discovery_host, same_origin_concurrency, max_discovered_urls_per_page from crawl_jobs
                  where id = $1 and claimed_by = $2 and status = 'claimed'",
             )
             .bind(&result.job_id)
@@ -1188,6 +1212,7 @@ impl CrawlerStore {
                                 in_flight.depth + 1,
                                 in_flight.max_depth,
                                 in_flight.max_pages,
+                                in_flight.same_origin_concurrency,
                                 Some(&crawler.owner_developer_id),
                                 in_flight.rule_id.as_deref(),
                                 discovery_scope,
@@ -1322,6 +1347,7 @@ impl CrawlerStore {
                                 in_flight.depth + 1,
                                 in_flight.max_depth,
                                 in_flight.max_pages,
+                                in_flight.same_origin_concurrency,
                                 Some(&crawler.owner_developer_id),
                                 in_flight.rule_id.as_deref(),
                                 discovery_scope,
@@ -1753,6 +1779,7 @@ impl CrawlerStore {
                     0, // depth 0 for recrawl
                     10,
                     1, // max_pages 1 for individual recrawl
+                    1, // same_origin_concurrency
                     Some(&doc.owner_developer_id),
                     doc.rule_id.as_deref(),
                     scope,
@@ -2227,6 +2254,7 @@ impl CrawlerStore {
         depth: i32,
         max_depth: i32,
         max_pages: i32,
+        same_origin_concurrency: i32,
         submitted_by: Option<&str>,
         rule_id: Option<&str>,
         discovery_scope: DiscoveryScope,
@@ -2301,6 +2329,7 @@ impl CrawlerStore {
                     discovery_scope,
                     discovery_host,
                     max_pages,
+                    same_origin_concurrency,
                     max_discovered_urls_per_page,
                     origin_key,
                     network,
@@ -2308,7 +2337,7 @@ impl CrawlerStore {
                     priority,
                     discovered_at
                  )
-                 values ($1, $2, $3, $4, $5, 0, 3, null, null, null, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'queued', $16, now())
+                 values ($1, $2, $3, $4, $5, 0, 3, null, null, null, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'queued', $17, now())
                  on conflict (owner_developer_id, url) do nothing",
             )
             .bind(&id)
@@ -2323,6 +2352,7 @@ impl CrawlerStore {
             .bind(discovery_scope.as_str())
             .bind(resolved_discovery_host.as_deref())
             .bind(max_pages)
+            .bind(same_origin_concurrency.max(1))
             .bind(max_discovered_urls_per_page.max(1))
             .bind(&origin_key)
             .bind(network)
@@ -2389,7 +2419,7 @@ impl CrawlerStore {
 
     async fn apply_due_rules(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
         let due_rules = sqlx::query_as::<_, DueRuleRow>(
-            "select id, owner_developer_id, name, seed_url, max_depth, max_pages, discovery_scope, max_discovered_urls_per_page
+            "select id, owner_developer_id, name, seed_url, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page
              from crawl_rules
              where enabled = true
                and (last_enqueued_at is null
@@ -2418,6 +2448,7 @@ impl CrawlerStore {
                     0,
                     rule.max_depth,
                     rule.max_pages,
+                    rule.same_origin_concurrency,
                     Some(&rule.owner_developer_id),
                     Some(&rule.id),
                     DiscoveryScope::from_db_value(&rule.discovery_scope),
@@ -2464,10 +2495,14 @@ impl CrawlerStore {
              ),
              touched_origins as (
                  update crawl_origins origin
-                 set in_flight_count = greatest(origin.in_flight_count - 1, 0),
+                 set in_flight_count = greatest(origin.in_flight_count - touched.stale_count, 0),
                      next_allowed_at = greatest(origin.next_allowed_at, $2),
                      updated_at = $2
-                 from (select distinct owner_developer_id, origin_key from stale) touched
+                 from (
+                     select owner_developer_id, origin_key, count(*)::integer as stale_count
+                     from stale
+                     group by owner_developer_id, origin_key
+                 ) touched
                  where origin.owner_developer_id = touched.owner_developer_id
                    and origin.origin_key = touched.origin_key
              )
@@ -2614,6 +2649,7 @@ struct CrawlRuleRow {
     interval_minutes: i64,
     max_depth: i32,
     max_pages: i32,
+    same_origin_concurrency: i32,
     discovery_scope: String,
     max_discovered_urls_per_page: i32,
     enabled: bool,
@@ -2661,6 +2697,7 @@ struct InFlightJobRow {
     max_attempts: i32,
     discovery_scope: String,
     discovery_host: Option<String>,
+    same_origin_concurrency: i32,
     max_discovered_urls_per_page: i32,
 }
 
@@ -2672,6 +2709,7 @@ struct DueRuleRow {
     seed_url: String,
     max_depth: i32,
     max_pages: i32,
+    same_origin_concurrency: i32,
     discovery_scope: String,
     max_discovered_urls_per_page: i32,
 }

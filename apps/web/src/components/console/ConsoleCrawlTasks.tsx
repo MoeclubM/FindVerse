@@ -23,6 +23,7 @@ export function ConsoleCrawlTasks() {
   const [seedUrls, setSeedUrls] = useState("");
   const [seedDepth, setSeedDepth] = useState("2");
   const [seedMaxPages, setSeedMaxPages] = useState("50");
+  const [seedSameOriginConcurrency, setSeedSameOriginConcurrency] = useState("1");
   const [seedScope, setSeedScope] = useState<DiscoveryScope>("same_domain");
   const [seedMaxDiscovered, setSeedMaxDiscovered] = useState("50");
   const [seedAllowRevisit, setSeedAllowRevisit] = useState(false);
@@ -31,6 +32,7 @@ export function ConsoleCrawlTasks() {
   const [ruleInterval, setRuleInterval] = useState("60");
   const [ruleDepth, setRuleDepth] = useState("2");
   const [ruleMaxPages, setRuleMaxPages] = useState("50");
+  const [ruleSameOriginConcurrency, setRuleSameOriginConcurrency] = useState("1");
   const [ruleScope, setRuleScope] = useState<DiscoveryScope>("same_domain");
   const [ruleMaxDiscovered, setRuleMaxDiscovered] = useState("50");
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export function ConsoleCrawlTasks() {
   const [editRuleInterval, setEditRuleInterval] = useState("60");
   const [editRuleDepth, setEditRuleDepth] = useState("2");
   const [editRuleMaxPages, setEditRuleMaxPages] = useState("50");
+  const [editRuleSameOriginConcurrency, setEditRuleSameOriginConcurrency] = useState("1");
   const [editRuleScope, setEditRuleScope] = useState<DiscoveryScope>("same_domain");
   const [editRuleMaxDiscovered, setEditRuleMaxDiscovered] = useState("50");
   const [editRuleEnabled, setEditRuleEnabled] = useState(true);
@@ -58,6 +61,7 @@ export function ConsoleCrawlTasks() {
         urls,
         Number(seedDepth) || 2,
         Number(seedMaxPages) || 50,
+        Number(seedSameOriginConcurrency) || 1,
         seedScope,
         Number(seedMaxDiscovered) || 50,
         seedAllowRevisit,
@@ -83,6 +87,7 @@ export function ConsoleCrawlTasks() {
         interval_minutes: Number(ruleInterval) || 60,
         max_depth: Number(ruleDepth) || 2,
         max_pages: Number(ruleMaxPages) || 50,
+        same_origin_concurrency: Number(ruleSameOriginConcurrency) || 1,
         discovery_scope: ruleScope,
         max_discovered_urls_per_page: Number(ruleMaxDiscovered) || 50,
         enabled: true,
@@ -90,6 +95,7 @@ export function ConsoleCrawlTasks() {
       setRuleName("");
       setRuleUrl("");
       setRuleMaxPages("50");
+      setRuleSameOriginConcurrency("1");
       setRuleScope("same_domain");
       setRuleMaxDiscovered("50");
       await refreshAll();
@@ -122,6 +128,7 @@ export function ConsoleCrawlTasks() {
     setEditRuleInterval(String(rule.interval_minutes));
     setEditRuleDepth(String(rule.max_depth));
     setEditRuleMaxPages(String(rule.max_pages));
+    setEditRuleSameOriginConcurrency(String(rule.same_origin_concurrency));
     setEditRuleScope(rule.discovery_scope);
     setEditRuleMaxDiscovered(String(rule.max_discovered_urls_per_page));
     setEditRuleEnabled(rule.enabled);
@@ -141,6 +148,7 @@ export function ConsoleCrawlTasks() {
         interval_minutes: Number(editRuleInterval) || 60,
         max_depth: Number(editRuleDepth) || 2,
         max_pages: Number(editRuleMaxPages) || 50,
+        same_origin_concurrency: Number(editRuleSameOriginConcurrency) || 1,
         discovery_scope: editRuleScope,
         max_discovered_urls_per_page: Number(editRuleMaxDiscovered) || 50,
         enabled: editRuleEnabled,
@@ -192,6 +200,14 @@ export function ConsoleCrawlTasks() {
               <span className="field-label">{t("console.tasks.max_pages_label")}</span>
               <input value={seedMaxPages} onChange={(event) => setSeedMaxPages(event.target.value)} />
               <span className="field-hint">{t("console.tasks.max_pages_hint")}</span>
+            </label>
+            <label className="field-group compact-field">
+              <span className="field-label">{t("console.tasks.same_origin_concurrency_label")}</span>
+              <input
+                value={seedSameOriginConcurrency}
+                onChange={(event) => setSeedSameOriginConcurrency(event.target.value)}
+              />
+              <span className="field-hint">{t("console.tasks.same_origin_concurrency_hint")}</span>
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.scope_label")}</span>
@@ -254,6 +270,14 @@ export function ConsoleCrawlTasks() {
               <span className="field-label">{t("console.tasks.max_pages_label")}</span>
               <input value={ruleMaxPages} onChange={(event) => setRuleMaxPages(event.target.value)} />
               <span className="field-hint">{t("console.tasks.max_pages_hint")}</span>
+            </label>
+            <label className="field-group compact-field">
+              <span className="field-label">{t("console.tasks.same_origin_concurrency_label")}</span>
+              <input
+                value={ruleSameOriginConcurrency}
+                onChange={(event) => setRuleSameOriginConcurrency(event.target.value)}
+              />
+              <span className="field-hint">{t("console.tasks.same_origin_concurrency_hint")}</span>
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.scope_label")}</span>
@@ -330,6 +354,17 @@ export function ConsoleCrawlTasks() {
                         />
                       </label>
                       <label className="field-group compact-field">
+                        <span className="field-label">
+                          {t("console.tasks.same_origin_concurrency_label")}
+                        </span>
+                        <input
+                          value={editRuleSameOriginConcurrency}
+                          onChange={(event) =>
+                            setEditRuleSameOriginConcurrency(event.target.value)
+                          }
+                        />
+                      </label>
+                      <label className="field-group compact-field">
                         <span className="field-label">{t("console.tasks.scope_label")}</span>
                         <select
                           value={editRuleScope}
@@ -379,6 +414,10 @@ export function ConsoleCrawlTasks() {
                       <div>
                         <span>{t("console.tasks.pages_limit")}</span>
                         <strong>{rule.max_pages}</strong>
+                      </div>
+                      <div>
+                        <span>{t("console.tasks.same_origin_concurrency_label")}</span>
+                        <strong>{rule.same_origin_concurrency}</strong>
                       </div>
                       <div>
                         <span>{t("console.tasks.created")}</span>

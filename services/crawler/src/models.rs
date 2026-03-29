@@ -49,7 +49,8 @@ pub enum Command {
         /// Join key — auto-registers via /internal/crawlers/join
         #[arg(long)]
         join_key: Option<String>,
-        #[arg(long, default_value_t = 10)]
+        /// Claim batch size. Values below --concurrency are ignored.
+        #[arg(long, default_value_t = 16)]
         max_jobs: usize,
         #[arg(long, default_value_t = 5)]
         poll_interval_secs: u64,

@@ -43,7 +43,7 @@ Options:
   --install-dir <dir>           Install directory. Default: /opt/findverse-crawler
   --env-file <path>             Config file path. Default: /etc/findverse-crawler/crawler.env
   --concurrency <n>             Worker concurrency. Reuses existing config if omitted
-  --max-jobs <n>                Max jobs per claim. Reuses existing config if omitted
+  --max-jobs <n>                Claim batch size. Defaults to concurrency when omitted
   --poll-interval-secs <n>      Poll interval. Reuses existing config if omitted
   --allowed-domains <csv>       Optional domain allowlist
   --proxy <url>                 Optional outbound proxy
@@ -298,7 +298,7 @@ write_env_file() {
   local final_allowed_domains final_proxy
 
   final_concurrency="${CONCURRENCY:-${EXISTING_CONCURRENCY:-16}}"
-  final_max_jobs="${MAX_JOBS:-${EXISTING_MAX_JOBS:-10}}"
+  final_max_jobs="${MAX_JOBS:-${EXISTING_MAX_JOBS:-$final_concurrency}}"
   final_poll_interval="${POLL_INTERVAL_SECS:-${EXISTING_POLL_INTERVAL_SECS:-5}}"
   final_allowed_domains="${ALLOWED_DOMAINS:-${EXISTING_ALLOWED_DOMAINS:-}}"
   final_proxy="${PROXY:-${EXISTING_PROXY:-}}"
@@ -333,7 +333,7 @@ args=(
   --server "\${SERVER}"
   --crawler-id "\${CRAWLER_ID}"
   --crawler-key "\${CRAWLER_KEY}"
-  --max-jobs "\${MAX_JOBS:-10}"
+  --max-jobs "\${MAX_JOBS:-\${CONCURRENCY:-16}}"
   --poll-interval-secs "\${POLL_INTERVAL_SECS:-5}"
   --concurrency "\${CONCURRENCY:-16}"
 )

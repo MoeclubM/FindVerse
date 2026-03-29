@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
                 server,
                 crawler_id: resolved_id,
                 auth_token,
-                max_jobs,
+                max_jobs: max_jobs.max(concurrency),
                 poll_interval_secs,
                 once,
                 concurrency,

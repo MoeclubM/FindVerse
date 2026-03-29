@@ -204,6 +204,8 @@ pub struct DeveloperDomainSubmitRequest {
     pub max_depth: u32,
     #[serde(default = "default_max_pages")]
     pub max_pages: u32,
+    #[serde(default = "default_same_origin_concurrency")]
+    pub same_origin_concurrency: u32,
     #[serde(default)]
     pub allow_revisit: bool,
 }
@@ -293,6 +295,7 @@ pub struct CrawlRule {
     pub interval_minutes: u64,
     pub max_depth: u32,
     pub max_pages: u32,
+    pub same_origin_concurrency: u32,
     pub discovery_scope: DiscoveryScope,
     pub max_discovered_urls_per_page: u32,
     pub enabled: bool,
@@ -311,6 +314,8 @@ pub struct CreateCrawlRuleRequest {
     pub max_depth: u32,
     #[serde(default = "default_max_pages")]
     pub max_pages: u32,
+    #[serde(default = "default_same_origin_concurrency")]
+    pub same_origin_concurrency: u32,
     #[serde(default)]
     pub discovery_scope: DiscoveryScope,
     #[serde(default = "default_max_discovered_urls_per_page")]
@@ -326,6 +331,7 @@ pub struct UpdateCrawlRuleRequest {
     pub interval_minutes: Option<u64>,
     pub max_depth: Option<u32>,
     pub max_pages: Option<u32>,
+    pub same_origin_concurrency: Option<u32>,
     pub discovery_scope: Option<DiscoveryScope>,
     pub max_discovered_urls_per_page: Option<u32>,
     pub enabled: Option<bool>,
@@ -341,6 +347,10 @@ fn default_rule_depth() -> u32 {
 
 fn default_max_pages() -> u32 {
     50
+}
+
+fn default_same_origin_concurrency() -> u32 {
+    1
 }
 
 fn default_max_discovered_urls_per_page() -> u32 {
@@ -384,6 +394,8 @@ pub struct SeedFrontierRequest {
     pub max_depth: u32,
     #[serde(default = "default_max_pages")]
     pub max_pages: u32,
+    #[serde(default = "default_same_origin_concurrency")]
+    pub same_origin_concurrency: u32,
     #[serde(default)]
     pub discovery_scope: DiscoveryScope,
     #[serde(default = "default_max_discovered_urls_per_page")]
