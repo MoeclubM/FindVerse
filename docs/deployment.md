@@ -283,7 +283,6 @@ It:
 - validates Rust tests and web typecheck
 - builds release binaries for `control-api`, `query-api`, and `crawler`
 - creates a GitHub Release with binary artifacts
-- publishes GHCR images for `control-api`, `query-api`, `crawler`, and `web`
 
 Release example:
 
