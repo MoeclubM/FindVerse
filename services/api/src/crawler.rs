@@ -1752,6 +1752,32 @@ impl CrawlerStore {
         })
     }
 
+    pub async fn heartbeat_crawler(
+        &self,
+        crawler_id: &str,
+        crawler_name: Option<&str>,
+        auth_header: Option<&str>,
+        default_owner_developer_id: &str,
+    ) -> Result<(), ApiError> {
+        let token_hash = bearer_hash(auth_header)?;
+        self.validate_crawler_auth(
+            crawler_id,
+            crawler_name,
+            &token_hash,
+            default_owner_developer_id,
+        )
+        .await?;
+
+        sqlx::query("update crawlers set last_seen_at = $2 where id = $1")
+            .bind(crawler_id)
+            .bind(Utc::now())
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+        Ok(())
+    }
+
     async fn schedule_adaptive_recrawl(&self, _now: DateTime<Utc>) -> Result<(), ApiError> {
         let stale_docs = sqlx::query_as::<_, StaleDocRow>(
             "SELECT d.canonical_url, d.host,

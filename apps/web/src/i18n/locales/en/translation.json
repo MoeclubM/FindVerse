@@ -63,7 +63,8 @@
     "logout": "Logout",
     "actions": {
       "details": "Details",
-      "close": "Close"
+      "close": "Close",
+      "copy": "Copy"
     },
     "summary": {
       "console_user": "Console user",

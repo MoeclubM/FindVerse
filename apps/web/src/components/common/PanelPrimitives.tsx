@@ -1,4 +1,22 @@
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
+
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+} from "../ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import { Label } from "../ui/label";
 
 export function SectionHeader(props: {
   title: ReactNode;
@@ -10,12 +28,12 @@ export function SectionHeader(props: {
   const Heading = props.heading ?? "h2";
 
   return (
-    <div className={props.className ? `section-header ${props.className}` : "section-header"}>
-      <div className="section-heading-stack">
-        <Heading>{props.title}</Heading>
-        {props.meta ? <span className="section-meta">{props.meta}</span> : null}
+    <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", props.className)}>
+      <div className="space-y-1">
+        <Heading className="text-lg font-semibold tracking-tight text-foreground">{props.title}</Heading>
+        {props.meta ? <p className="text-sm text-muted-foreground">{props.meta}</p> : null}
       </div>
-      {props.actions ? <div className="row-actions">{props.actions}</div> : null}
+      {props.actions ? <div className="flex flex-wrap items-center gap-2">{props.actions}</div> : null}
     </div>
   );
 }
@@ -28,11 +46,14 @@ export function StatStrip(props: {
   className?: string;
 }) {
   return (
-    <div className={props.className ? `summary-strip ${props.className}` : "summary-strip"}>
+    <div className={cn("grid gap-3 sm:grid-cols-2 xl:grid-cols-4", props.className)}>
       {props.items.map((item, index) => (
-        <div key={index}>
-          <span>{item.label}</span>
-          <strong>{item.value}</strong>
+        <div
+          key={index}
+          className="rounded-xl border border-border bg-muted/60 px-4 py-3 shadow-sm"
+        >
+          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{item.label}</span>
+          <div className="mt-2 text-2xl font-semibold text-foreground">{item.value}</div>
         </div>
       ))}
     </div>
@@ -46,10 +67,10 @@ export function FieldShell(props: {
   children: ReactNode;
 }) {
   return (
-    <label className={props.className ? `field-group ${props.className}` : "field-group"}>
-      <span className="field-label">{props.label}</span>
+    <label className={cn("grid gap-2", props.className)}>
+      <Label>{props.label}</Label>
       {props.children}
-      {props.hint ? <span className="field-hint">{props.hint}</span> : null}
+      {props.hint ? <span className="text-xs text-muted-foreground">{props.hint}</span> : null}
     </label>
   );
 }
@@ -63,54 +84,41 @@ export function DetailDialog(props: {
   onClose: () => void;
   children: ReactNode;
 }) {
-  useEffect(() => {
-    if (!props.open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        props.onClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [props.open, props.onClose]);
-
-  if (!props.open) {
-    return null;
-  }
-
   return (
-    <div
-      className="detail-dialog-overlay"
-      role="presentation"
-      onClick={props.onClose}
-    >
-      <div
-        className="detail-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={typeof props.title === "string" ? props.title : undefined}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="detail-dialog-header">
-          <SectionHeader
-            title={props.title}
-            meta={props.meta}
-            actions={
-              <>
-                {props.actions}
-                <button type="button" className="plain-link detail-dialog-close" onClick={props.onClose}>
-                  {props.closeLabel}
-                </button>
-              </>
-            }
-          />
-        </div>
-        <div className="detail-dialog-body">{props.children}</div>
-      </div>
-    </div>
+    <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
+      <DialogContent className="max-h-[min(88vh,960px)] overflow-y-auto rounded-2xl p-0">
+        <DialogHeader className="border-b border-border px-6 pb-4 pt-6">
+          <DialogTitle>{props.title}</DialogTitle>
+          {props.meta ? <DialogDescription>{props.meta}</DialogDescription> : null}
+        </DialogHeader>
+        <div className="px-6 py-5">{props.children}</div>
+        <DialogFooter className="border-t border-border px-6 py-4">
+          {props.actions}
+          <DialogClose asChild>
+            <Button variant="outline" onClick={props.onClose}>
+              {props.closeLabel}
+            </Button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function PanelSection(props: {
+  title: ReactNode;
+  meta?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+  contentClassName?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card className={cn("rounded-2xl shadow-sm", props.className)}>
+      <CardHeader className="pb-4">
+        <SectionHeader title={props.title} meta={props.meta} actions={props.actions} />
+      </CardHeader>
+      <CardContent className={cn("pt-0", props.contentClassName)}>{props.children}</CardContent>
+    </Card>
   );
 }

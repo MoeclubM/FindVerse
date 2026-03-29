@@ -1,4 +1,5 @@
 import { ExitIcon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
+import { Menu, Settings, Users, Bot, FileText, ListTodo, LayoutDashboard, Orbit } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -14,7 +15,7 @@ import {
   logout,
 } from "../api";
 import { AppTopbar, TopbarActionButton } from "./common/AppTopbar";
-import { SectionHeader, StatStrip } from "./common/PanelPrimitives";
+import { PanelSection, StatStrip } from "./common/PanelPrimitives";
 import { ConsoleProvider, type ConsoleContextValue } from "./console/ConsoleContext";
 import { ConsoleOverview } from "./console/ConsoleOverview";
 import { ConsoleUsers } from "./console/ConsoleUsers";
@@ -24,10 +25,13 @@ import { ConsoleDocuments } from "./console/ConsoleDocuments";
 import { ConsoleJobs } from "./console/ConsoleJobs";
 import { ConsoleSettings } from "./console/ConsoleSettings";
 import type { ThemeMode } from "./ThemeSwitcher";
+import { Button } from "./ui/button";
+import { Dialog, DialogContent } from "./ui/dialog";
+import { cn } from "../lib/utils";
 
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
-const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+const ONLINE_THRESHOLD_MS = 90 * 1000;
 
 type ConsoleTab = "overview" | "users" | "tasks" | "jobs" | "workers" | "documents" | "settings";
 
@@ -104,6 +108,7 @@ export function ConsolePage(props: {
   const [toasts, setToasts] = useState<Array<{ id: number; message: string }>>([]);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const toastIdRef = useRef(0);
   const toastTimeoutsRef = useRef<number[]>([]);
 
@@ -320,14 +325,62 @@ export function ConsolePage(props: {
   );
 
   const tabItems = [
-    { key: "overview" as const, label: t("console.tabs.overview"), badge: overview?.recent_events.length ?? 0 },
-    { key: "users" as const, label: t("console.tabs.users"), badge: developers.length },
-    { key: "tasks" as const, label: t("console.tabs.tasks"), badge: enabledRuleCount },
-    { key: "jobs" as const, label: t("console.tabs.jobs"), badge: overview?.in_flight_jobs ?? 0 },
-    { key: "workers" as const, label: t("console.tabs.workers"), badge: activeCrawlerCount },
-    { key: "documents" as const, label: t("console.tabs.documents"), badge: overview?.indexed_documents ?? 0 },
-    { key: "settings" as const, label: t("console.tabs.settings"), badge: null },
+    { key: "overview" as const, label: t("console.tabs.overview"), badge: overview?.recent_events.length ?? 0, icon: LayoutDashboard },
+    { key: "users" as const, label: t("console.tabs.users"), badge: developers.length, icon: Users },
+    { key: "tasks" as const, label: t("console.tabs.tasks"), badge: enabledRuleCount, icon: Orbit },
+    { key: "jobs" as const, label: t("console.tabs.jobs"), badge: overview?.in_flight_jobs ?? 0, icon: ListTodo },
+    { key: "workers" as const, label: t("console.tabs.workers"), badge: activeCrawlerCount, icon: Bot },
+    { key: "documents" as const, label: t("console.tabs.documents"), badge: overview?.indexed_documents ?? 0, icon: FileText },
+    { key: "settings" as const, label: t("console.tabs.settings"), badge: null, icon: Settings },
   ];
+
+  const sidebar = (
+    <div className="flex h-full flex-col gap-4">
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{t("console.live_refresh")}</p>
+        <div className="mt-3 space-y-1">
+          <h2 className="text-xl font-semibold text-foreground">{t("console.title")}</h2>
+          <p className="text-sm text-muted-foreground">{session?.username}</p>
+        </div>
+      </div>
+      <nav className="flex flex-col gap-2">
+        {tabItems.map((item) => {
+          const Icon = item.icon;
+          const active = activeTab === item.key;
+          return (
+            <button
+              key={item.key}
+              className={cn(
+                "flex min-h-12 items-center justify-between rounded-xl border px-4 py-3 text-left transition-colors",
+                active
+                  ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+              onClick={() => {
+                setActiveTab(item.key);
+                setSidebarOpen(false);
+              }}
+            >
+              <span className="flex items-center gap-3">
+                <Icon />
+                <span className="font-medium">{item.label}</span>
+              </span>
+              {item.badge != null ? (
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-xs font-semibold",
+                    active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {item.badge}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
 
   if (authLoading) {
     return <div className="console-loading">{t("console.login.checking")}</div>;
@@ -415,60 +468,50 @@ export function ConsolePage(props: {
         ) : null}
 
         <div className="console-shell">
-          <aside className="console-sidebar">
-            <section className="panel compact-panel console-sidebar-panel">
-              <SectionHeader
-                title={t("console.title")}
-                meta={t("console.live_refresh")}
-                heading="h3"
-              />
-              <div className="console-sidebar-user">
-                <span>{t("console.summary.console_user")}</span>
-                <strong>{session.username}</strong>
-              </div>
-              <nav className="console-tabs">
-                {tabItems.map((item) => (
-                  <button
-                    key={item.key}
-                    className={activeTab === item.key ? "active" : ""}
-                    onClick={() => setActiveTab(item.key)}
-                  >
-                    <span>{item.label}</span>
-                    {item.badge != null ? <strong>{item.badge}</strong> : null}
-                  </button>
-                ))}
-              </nav>
-            </section>
-          </aside>
+          <div className="mx-auto flex w-full max-w-7xl gap-4 px-4 pb-8 pt-4 lg:px-6">
+            <aside className="hidden w-72 shrink-0 lg:block">{sidebar}</aside>
 
-          <main className="console-content">
-            <section className="panel panel-wide compact-panel">
-              <SectionHeader
+            <main className="min-w-0 flex-1 space-y-4">
+              <div className="flex items-center justify-between lg:hidden">
+                <Button variant="outline" size="sm" onClick={() => setSidebarOpen(true)}>
+                  <Menu data-icon="inline-start" />
+                  {t("console.title")}
+                </Button>
+              </div>
+
+              <PanelSection
                 title={tabItems.find((item) => item.key === activeTab)?.label}
                 meta={t("console.live_refresh")}
-                heading="h3"
-              />
-              <StatStrip
-                items={[
-                  { label: t("console.summary.indexed_docs"), value: overview?.indexed_documents ?? 0 },
-                  { label: t("console.summary.queued_jobs"), value: overview?.frontier_depth ?? 0 },
-                  { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
-                  { label: t("console.summary.workers"), value: activeCrawlerCount },
-                  { label: t("console.overview.active_rules"), value: enabledRuleCount },
-                  { label: t("console.summary.failures"), value: overview?.terminal_failures ?? 0 },
-                ]}
-              />
-            </section>
+                contentClassName="pt-0"
+              >
+                <StatStrip
+                  items={[
+                    { label: t("console.summary.indexed_docs"), value: overview?.indexed_documents ?? 0 },
+                    { label: t("console.summary.queued_jobs"), value: overview?.frontier_depth ?? 0 },
+                    { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
+                    { label: t("console.summary.workers"), value: activeCrawlerCount },
+                    { label: t("console.overview.active_rules"), value: enabledRuleCount },
+                    { label: t("console.summary.failures"), value: overview?.terminal_failures ?? 0 },
+                  ]}
+                  className="xl:grid-cols-6"
+                />
+              </PanelSection>
 
-            {activeTab === "overview" && <ConsoleOverview />}
-            {activeTab === "users" && <ConsoleUsers />}
-            {activeTab === "tasks" && <ConsoleCrawlTasks />}
-            {activeTab === "jobs" && <ConsoleJobs />}
-            {activeTab === "documents" && <ConsoleDocuments />}
-            {activeTab === "workers" && <ConsoleWorkers />}
-            {activeTab === "settings" && <ConsoleSettings />}
-          </main>
+              {activeTab === "overview" && <ConsoleOverview />}
+              {activeTab === "users" && <ConsoleUsers />}
+              {activeTab === "tasks" && <ConsoleCrawlTasks />}
+              {activeTab === "jobs" && <ConsoleJobs />}
+              {activeTab === "documents" && <ConsoleDocuments />}
+              {activeTab === "workers" && <ConsoleWorkers />}
+              {activeTab === "settings" && <ConsoleSettings />}
+            </main>
+          </div>
         </div>
+        <Dialog open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <DialogContent className="left-0 top-0 h-full max-h-none w-[88vw] max-w-sm translate-x-0 translate-y-0 rounded-none border-r border-border p-4">
+            {sidebar}
+          </DialogContent>
+        </Dialog>
       </div>
     </ConsoleProvider>
   );

@@ -9,7 +9,9 @@ import {
   revokeAdminDeveloperKey,
   updateDeveloper,
 } from "../../api";
-import { FieldShell, SectionHeader, StatStrip } from "../common/PanelPrimitives";
+import { FieldShell, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -204,8 +206,7 @@ export function ConsoleUsers() {
   const totalDailyLimit = developers.reduce((sum, developer) => sum + developer.daily_limit, 0);
 
   return (
-    <section className="panel panel-wide compact-panel">
-      <SectionHeader title={t("console.users.title")} meta={t("console.users.accounts", { count: developers.length })} />
+    <PanelSection title={t("console.users.title")} meta={t("console.users.accounts", { count: developers.length })} contentClassName="space-y-5">
       <StatStrip
         className="document-summary-strip"
         items={[
@@ -271,7 +272,7 @@ export function ConsoleUsers() {
                         label={t("console.users.daily_limit")}
                         hint={t("console.users.quota_label", { username: developer.username })}
                       >
-                        <input
+                        <Input
                           aria-label={t("console.users.quota_label", { username: developer.username })}
                           value={draft.daily_limit}
                           onChange={(event) =>
@@ -286,9 +287,9 @@ export function ConsoleUsers() {
                           placeholder={t("console.users.quota_placeholder")}
                         />
                       </FieldShell>
-                      <button type="submit" disabled={busy}>
+                      <Button type="submit" disabled={busy}>
                         {t("console.users.save")}
-                      </button>
+                      </Button>
                     </form>
 
                     <form
@@ -303,7 +304,7 @@ export function ConsoleUsers() {
                         label={t("console.users.password_label")}
                         hint={t("console.users.password_hint")}
                       >
-                        <input
+                        <Input
                           type="password"
                           aria-label={t("console.users.password_label")}
                           value={draft.password}
@@ -319,40 +320,40 @@ export function ConsoleUsers() {
                           placeholder={t("console.users.password_placeholder")}
                         />
                       </FieldShell>
-                      <button type="submit" disabled={busy}>
+                      <Button type="submit" disabled={busy}>
                         {t("console.users.update_password")}
-                      </button>
+                      </Button>
                     </form>
 
                     <div className="row-actions developer-user-actions">
-                      <button
+                      <Button
                         type="button"
-                        className="plain-link console-users-secondary-action"
+                        variant="ghost"
                         disabled={busy || panel.loading}
                         onClick={() => void handleToggleKeyPanel(developer)}
                       >
                         {isExpanded ? t("console.users.hide_keys") : t("console.users.manage_keys")}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
-                        className="plain-link developer-user-danger"
+                        variant="destructive"
                         disabled={busy}
                         onClick={() => void handleDeleteDeveloper(developer)}
                       >
                         {t("console.users.delete_user")}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </div>
                 {isExpanded ? (
                   <div className="developer-key-panel">
-                    <SectionHeader
-                      className="developer-key-panel-header"
-                      heading="h3"
-                      title={t("console.users.key_panel_title", { username: developer.username })}
-                      meta={t("console.users.key_panel_hint")}
-                      actions={<span className="section-meta">{t("console.users.key_total", { count: keyTotal })}</span>}
-                    />
+                    <div className="flex flex-col gap-2 border-b border-stone-200 pb-3 sm:flex-row sm:items-end sm:justify-between">
+                      <div className="space-y-1">
+                        <h3 className="text-base font-semibold text-stone-950">{t("console.users.key_panel_title", { username: developer.username })}</h3>
+                        <p className="text-sm text-stone-500">{t("console.users.key_panel_hint")}</p>
+                      </div>
+                      <span className="text-sm text-stone-500">{t("console.users.key_total", { count: keyTotal })}</span>
+                    </div>
 
                     <div className="developer-key-summary">
                       <span>{t("console.users.daily_limit_summary")} <strong>{dailyLimit}</strong></span>
@@ -376,14 +377,15 @@ export function ConsoleUsers() {
                               </span>
                             </div>
                             <div className="row-actions">
-                              <button
+                              <Button
                                 type="button"
-                                className="plain-link"
+                                variant="ghost"
+                                size="sm"
                                 disabled={busy || panel.loading || Boolean(key.revoked_at)}
                                 onClick={() => void handleRevokeKey(developer, key.id)}
                               >
                                 {t("console.users.revoke")}
-                              </button>
+                              </Button>
                             </div>
                           </div>
                         ))}
@@ -400,6 +402,6 @@ export function ConsoleUsers() {
           <div className="list-row">{t("console.users.no_users")}</div>
         )}
       </div>
-    </section>
+    </PanelSection>
   );
 }

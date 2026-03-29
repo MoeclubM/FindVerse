@@ -10,7 +10,8 @@ import {
   type CrawlJobList,
   type CrawlJobStats,
 } from "../../api";
-import { DetailDialog, SectionHeader, StatStrip } from "../common/PanelPrimitives";
+import { DetailDialog, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import { Button } from "../ui/button";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -144,11 +145,11 @@ export function ConsoleJobs() {
 
   return (
     <>
-      <section className="panel panel-wide compact-panel">
-        <SectionHeader
+      <PanelSection
           title={t("console.jobs.status_title")}
           meta={t("console.jobs.visible_jobs", { count: jobs?.total ?? 0 })}
-        />
+          contentClassName="space-y-5"
+      >
         <StatStrip
           items={[
             { label: t("console.jobs.stats.queued"), value: stats?.queued ?? 0 },
@@ -158,19 +159,20 @@ export function ConsoleJobs() {
             { label: t("console.jobs.stats.blocked"), value: stats?.blocked ?? 0 },
             { label: t("console.jobs.stats.dead_letter"), value: stats?.dead_letter ?? 0 },
           ]}
+          className="xl:grid-cols-6"
         />
-      </section>
+      </PanelSection>
 
-      <section className="panel panel-wide compact-panel">
-        <SectionHeader title={t("console.jobs.queue_title")} meta={t("console.jobs.queue_meta")} />
+      <PanelSection title={t("console.jobs.queue_title")} meta={t("console.jobs.queue_meta")} contentClassName="space-y-5">
 
-        <div className="inline-form">
+        <div className="flex flex-wrap gap-3">
           <select
             value={statusFilter}
             onChange={(event) => {
               setStatusFilter(event.target.value);
               setOffset(0);
             }}
+            className="h-10 rounded-md border border-stone-200 bg-white px-3 text-sm text-stone-900 shadow-sm"
           >
             <option value="">{t("console.jobs.all_statuses")}</option>
             <option value="queued">{t("console.jobs.stats.queued")}</option>
@@ -180,31 +182,31 @@ export function ConsoleJobs() {
             <option value="blocked">{t("console.jobs.stats.blocked")}</option>
             <option value="dead_letter">{t("console.jobs.stats.dead_letter")}</option>
           </select>
-          <button type="button" disabled={busy} onClick={() => void handleRetryFailed()}>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void handleRetryFailed()}>
             {t("console.jobs.retry_failed")}
-          </button>
-          <button type="button" disabled={busy} onClick={() => void handleCleanupSucceeded()}>
+          </Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void handleCleanupSucceeded()}>
             {t("console.jobs.cleanup_succeeded")}
-          </button>
-          <button type="button" disabled={busy} className="danger-button" onClick={() => void handleStopAll()}>
+          </Button>
+          <Button type="button" variant="destructive" disabled={busy} onClick={() => void handleStopAll()}>
             {t("console.jobs.stop_all")}
-          </button>
+          </Button>
         </div>
 
-        <div className="dense-list">
+        <div className="grid gap-3">
           {loading ? (
-            <div className="list-row">{t("console.jobs.loading")}</div>
+            <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">{t("console.jobs.loading")}</div>
           ) : jobs?.jobs.length ? (
             jobs.jobs.map((job) => (
-              <div className="compact-row job-card" key={job.id}>
+              <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm" key={job.id}>
                 <div className="job-card-head">
                   <div className="row-primary">
                     <strong>{job.final_url ?? job.url}</strong>
                     <span>{job.source}</span>
                   </div>
-                  <button type="button" className="plain-link" onClick={() => setSelectedJobId(job.id)}>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedJobId(job.id)}>
                     {t("console.actions.details")}
-                  </button>
+                  </Button>
                 </div>
                 <div className="row-meta job-card-meta">
                   <span className={job.status === "succeeded" ? "status-pill" : "status-pill status-pill-muted"}>
@@ -232,28 +234,30 @@ export function ConsoleJobs() {
               </div>
             ))
           ) : (
-            <div className="list-row">{t("console.jobs.no_jobs_match")}</div>
+            <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">{t("console.jobs.no_jobs_match")}</div>
           )}
         </div>
 
-        <div className="inline-form" style={{ marginTop: 12, marginBottom: 0 }}>
-          <button
+        <div className="flex items-center gap-3">
+          <Button
             type="button"
+            variant="outline"
             disabled={offset === 0}
             onClick={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))}
           >
             {t("search.previous")}
-          </button>
-          <span className="section-meta">{t("console.jobs.offset", { offset })}</span>
-          <button
+          </Button>
+          <span className="text-sm text-stone-500">{t("console.jobs.offset", { offset })}</span>
+          <Button
             type="button"
+            variant="outline"
             disabled={jobs?.next_offset == null}
             onClick={() => setOffset(jobs?.next_offset ?? offset)}
           >
             {t("search.next")}
-          </button>
+          </Button>
         </div>
-      </section>
+      </PanelSection>
 
       <DetailDialog
         open={Boolean(selectedJob)}

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Copy, KeyRound, Shield, Waypoints } from "lucide-react";
 
 import { getSystemConfig, setSystemConfig } from "../../api";
-import { FieldShell, SectionHeader } from "../common/PanelPrimitives";
+import { FieldShell, PanelSection } from "../common/PanelPrimitives";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { useConsole } from "./ConsoleContext";
 
 type ConfigMap = Record<string, string>;
@@ -18,6 +21,8 @@ function toConfigMap(entries: Array<{ key: string; value: string }>): ConfigMap 
 export function ConsoleSettings() {
   const { token, setFlash } = useConsole();
   const { t } = useTranslation();
+  const installServer =
+    typeof window === "undefined" ? "<API_URL>" : `${window.location.origin}/api`;
   const [config, setConfig] = useState<ConfigMap>({});
   const [loading, setLoading] = useState(true);
   const [savingCrawler, setSavingCrawler] = useState(false);
@@ -33,9 +38,7 @@ export function ConsoleSettings() {
     setLoading(true);
     getSystemConfig(token)
       .then((response) => {
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
         const nextConfig = toConfigMap(response.entries);
         setConfig(nextConfig);
         setCrawlerAuthKey(nextConfig["crawler.auth_key"] ?? "");
@@ -45,14 +48,10 @@ export function ConsoleSettings() {
         setTorProxyUrl(nextConfig["crawler.tor_proxy_url"] ?? "");
       })
       .catch((error) => {
-        if (!cancelled) {
-          setFlash(getErrorMessage(error, t("console.settings.save_error")));
-        }
+        if (!cancelled) setFlash(getErrorMessage(error, t("console.settings.save_error")));
       })
       .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       });
 
     return () => {
@@ -74,6 +73,10 @@ export function ConsoleSettings() {
       torProxyUrl !== (config["crawler.tor_proxy_url"] ?? ""),
     [torEnabled, torProxyUrl, config],
   );
+
+  const installCommand = crawlerAuthKey.trim()
+    ? `curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server ${installServer} --crawler-key ${crawlerAuthKey.trim()} --channel release --concurrency 16`
+    : "";
 
   async function handleSaveCrawlerConfig() {
     setSavingCrawler(true);
@@ -119,60 +122,97 @@ export function ConsoleSettings() {
     }
   }
 
+  async function handleCopyInstallCommand() {
+    if (!installCommand) return;
+    try {
+      await navigator.clipboard.writeText(installCommand);
+      setFlash(t("console.settings.save_success"));
+    } catch {
+      setFlash(installCommand);
+    }
+  }
+
   if (loading) {
-    return <div className="list-row">{t("console.settings.loading")}</div>;
+    return <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">{t("console.settings.loading")}</div>;
   }
 
   return (
-    <>
-      <section className="panel panel-wide compact-panel">
-        <SectionHeader title={t("console.settings.crawler_config_section")} />
-        <div className="inline-form form-fields">
-          <FieldShell className="compact-field field-group-wide" label={t("console.settings.auth_key_label")}>
-            <input
+    <div className="space-y-4">
+      <PanelSection
+        title={t("console.settings.crawler_config_section")}
+        meta={t("console.live_refresh")}
+        contentClassName="space-y-5"
+      >
+        <div className="grid gap-4 lg:grid-cols-[1.6fr_0.7fr_0.7fr_auto] lg:items-end">
+          <FieldShell className="lg:col-span-1" label={t("console.settings.auth_key_label")}>
+            <Input
               value={crawlerAuthKey}
               onChange={(event) => setCrawlerAuthKey(event.target.value)}
               placeholder={t("console.settings.auth_key_placeholder")}
             />
           </FieldShell>
-          <FieldShell className="compact-field" label={t("console.settings.claim_timeout_label")}>
-            <input value={claimTimeout} onChange={(event) => setClaimTimeout(event.target.value)} />
+          <FieldShell label={t("console.settings.claim_timeout_label")}>
+            <Input value={claimTimeout} onChange={(event) => setClaimTimeout(event.target.value)} />
           </FieldShell>
-          <FieldShell className="compact-field" label={t("console.settings.max_attempts_label")}>
-            <input value={maxAttempts} onChange={(event) => setMaxAttempts(event.target.value)} />
+          <FieldShell label={t("console.settings.max_attempts_label")}>
+            <Input value={maxAttempts} onChange={(event) => setMaxAttempts(event.target.value)} />
           </FieldShell>
-          <button type="button" disabled={savingCrawler || !crawlerDirty} onClick={() => void handleSaveCrawlerConfig()}>
+          <Button disabled={savingCrawler || !crawlerDirty} onClick={() => void handleSaveCrawlerConfig()}>
+            <KeyRound data-icon="inline-start" />
             {t("console.settings.save")}
-          </button>
+          </Button>
         </div>
-        {crawlerAuthKey.trim() ? (
-          <pre style={{ fontSize: "0.85em", marginTop: 12 }}>
-{`curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server <API_URL> --crawler-key ${crawlerAuthKey.trim()} --channel release --concurrency 16 --skip-browser-install`}
-          </pre>
-        ) : null}
-      </section>
 
-      <section className="panel panel-wide compact-panel">
-        <SectionHeader title={t("console.settings.tor_section")} />
-        <div className="inline-form">
-          <label className="checkbox">
-            <input type="checkbox" checked={torEnabled} onChange={(event) => setTorEnabled(event.target.checked)} />
-            {t("console.settings.tor_enabled_label")}
-          </label>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-stone-700"><Shield className="size-4" />Auth</div>
+            <p className="mt-2 text-sm text-stone-500">{t("console.settings.auth_key_label")}</p>
+          </div>
+          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-stone-700"><Waypoints className="size-4" />Claim</div>
+            <p className="mt-2 text-sm text-stone-500">{t("console.settings.claim_timeout_label")}</p>
+          </div>
+          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-stone-700"><Waypoints className="size-4" />Retry</div>
+            <p className="mt-2 text-sm text-stone-500">{t("console.settings.max_attempts_label")}</p>
+          </div>
         </div>
-        <div className="inline-form form-fields">
-          <FieldShell className="compact-field field-group-wide" label={t("console.settings.tor_proxy_url_label")}>
-            <input
+
+        {installCommand ? (
+          <div className="rounded-2xl border border-stone-200 bg-stone-950 p-4 text-stone-50 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">{t("console.workers.setup_hint")}</p>
+                <p className="text-xs text-stone-400">{installServer}</p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => void handleCopyInstallCommand()}>
+                <Copy data-icon="inline-start" />
+                {t("console.actions.copy")}
+              </Button>
+            </div>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs leading-6 text-stone-200">{installCommand}</pre>
+          </div>
+        ) : null}
+      </PanelSection>
+
+      <PanelSection title={t("console.settings.tor_section")} contentClassName="space-y-5">
+        <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
+          <input type="checkbox" checked={torEnabled} onChange={(event) => setTorEnabled(event.target.checked)} />
+          <span>{t("console.settings.tor_enabled_label")}</span>
+        </label>
+        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+          <FieldShell className="lg:col-span-1" label={t("console.settings.tor_proxy_url_label")}>
+            <Input
               value={torProxyUrl}
               onChange={(event) => setTorProxyUrl(event.target.value)}
               placeholder={t("console.settings.tor_proxy_placeholder")}
             />
           </FieldShell>
-          <button type="button" disabled={savingTor || !torDirty} onClick={() => void handleSaveTorConfig()}>
+          <Button disabled={savingTor || !torDirty} onClick={() => void handleSaveTorConfig()}>
             {t("console.settings.save")}
-          </button>
+          </Button>
         </div>
-      </section>
-    </>
+      </PanelSection>
+    </div>
   );
 }

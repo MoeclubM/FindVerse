@@ -9,7 +9,10 @@ import {
   type CrawlRule,
   type DiscoveryScope,
 } from "../../api";
-import { SectionHeader } from "../common/PanelPrimitives";
+import { PanelSection } from "../common/PanelPrimitives";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -179,12 +182,11 @@ export function ConsoleCrawlTasks() {
 
   return (
     <>
-      <section className="panel compact-panel">
-        <SectionHeader title={t("console.tasks.manual_seed_title")} />
+      <PanelSection title={t("console.tasks.manual_seed_title")} contentClassName="space-y-5">
         <form onSubmit={handleSeedFrontier}>
           <label className="field-group">
             <span className="field-label">{t("console.tasks.urls_label")}</span>
-            <textarea
+            <Textarea
               value={seedUrls}
               onChange={(event) => setSeedUrls(event.target.value)}
               placeholder={t("console.tasks.urls_placeholder")}
@@ -193,17 +195,17 @@ export function ConsoleCrawlTasks() {
           <div className="inline-form form-fields">
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.max_depth_label")}</span>
-              <input value={seedDepth} onChange={(event) => setSeedDepth(event.target.value)} />
+              <Input value={seedDepth} onChange={(event) => setSeedDepth(event.target.value)} />
               <span className="field-hint">{t("console.tasks.max_depth_hint")}</span>
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.max_pages_label")}</span>
-              <input value={seedMaxPages} onChange={(event) => setSeedMaxPages(event.target.value)} />
+              <Input value={seedMaxPages} onChange={(event) => setSeedMaxPages(event.target.value)} />
               <span className="field-hint">{t("console.tasks.max_pages_hint")}</span>
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.same_origin_concurrency_label")}</span>
-              <input
+              <Input
                 value={seedSameOriginConcurrency}
                 onChange={(event) => setSeedSameOriginConcurrency(event.target.value)}
               />
@@ -223,7 +225,7 @@ export function ConsoleCrawlTasks() {
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.max_links_label")}</span>
-              <input
+              <Input
                 value={seedMaxDiscovered}
                 onChange={(event) => setSeedMaxDiscovered(event.target.value)}
               />
@@ -237,43 +239,42 @@ export function ConsoleCrawlTasks() {
               />
               <span>{t("console.tasks.allow_revisit_label")}</span>
             </label>
-            <button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy}>
               {t("console.tasks.submit_seed")}
-            </button>
+            </Button>
           </div>
         </form>
-      </section>
+      </PanelSection>
 
-      <section className="panel compact-panel">
-        <SectionHeader title={t("console.tasks.create_rule_title")} />
+      <PanelSection title={t("console.tasks.create_rule_title")} contentClassName="space-y-5">
         <form onSubmit={handleCreateRule}>
           <div className="inline-form form-fields">
             <label className="field-group compact-field field-group-wide">
               <span className="field-label">{t("console.tasks.rule_name_label")}</span>
-              <input value={ruleName} onChange={(event) => setRuleName(event.target.value)} />
+              <Input value={ruleName} onChange={(event) => setRuleName(event.target.value)} />
             </label>
             <label className="field-group compact-field field-group-wide">
               <span className="field-label">{t("console.tasks.seed_url_label")}</span>
-              <input value={ruleUrl} onChange={(event) => setRuleUrl(event.target.value)} />
+              <Input value={ruleUrl} onChange={(event) => setRuleUrl(event.target.value)} />
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.interval_label")}</span>
-              <input value={ruleInterval} onChange={(event) => setRuleInterval(event.target.value)} />
+              <Input value={ruleInterval} onChange={(event) => setRuleInterval(event.target.value)} />
               <span className="field-hint">{t("console.tasks.interval_hint")}</span>
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.max_depth_label")}</span>
-              <input value={ruleDepth} onChange={(event) => setRuleDepth(event.target.value)} />
+              <Input value={ruleDepth} onChange={(event) => setRuleDepth(event.target.value)} />
               <span className="field-hint">{t("console.tasks.max_depth_hint")}</span>
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.max_pages_label")}</span>
-              <input value={ruleMaxPages} onChange={(event) => setRuleMaxPages(event.target.value)} />
+              <Input value={ruleMaxPages} onChange={(event) => setRuleMaxPages(event.target.value)} />
               <span className="field-hint">{t("console.tasks.max_pages_hint")}</span>
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.same_origin_concurrency_label")}</span>
-              <input
+              <Input
                 value={ruleSameOriginConcurrency}
                 onChange={(event) => setRuleSameOriginConcurrency(event.target.value)}
               />
@@ -293,24 +294,23 @@ export function ConsoleCrawlTasks() {
             </label>
             <label className="field-group compact-field">
               <span className="field-label">{t("console.tasks.max_links_label")}</span>
-              <input
+              <Input
                 value={ruleMaxDiscovered}
                 onChange={(event) => setRuleMaxDiscovered(event.target.value)}
               />
               <span className="field-hint">{t("console.tasks.max_links_hint")}</span>
             </label>
-            <button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy}>
               {t("console.users.save")}
-            </button>
+            </Button>
           </div>
         </form>
-      </section>
+      </PanelSection>
 
-      <section className="panel panel-wide compact-panel">
-        <SectionHeader
+      <PanelSection
           title={t("console.tasks.rules_title")}
           meta={t("console.tasks.rules_configured", { count: overview?.rules.length ?? 0 })}
-        />
+      >
         <div className="dense-list">
           {overview?.rules.length ? (
             overview.rules.map((rule) => (
@@ -320,35 +320,35 @@ export function ConsoleCrawlTasks() {
                     <div className="inline-form form-fields">
                       <label className="field-group compact-field field-group-wide">
                         <span className="field-label">{t("console.tasks.rule_name_label")}</span>
-                        <input
+                        <Input
                           value={editRuleName}
                           onChange={(event) => setEditRuleName(event.target.value)}
                         />
                       </label>
                       <label className="field-group compact-field field-group-wide">
                         <span className="field-label">{t("console.tasks.seed_url_label")}</span>
-                        <input
+                        <Input
                           value={editRuleUrl}
                           onChange={(event) => setEditRuleUrl(event.target.value)}
                         />
                       </label>
                       <label className="field-group compact-field">
                         <span className="field-label">{t("console.tasks.interval_label")}</span>
-                        <input
+                        <Input
                           value={editRuleInterval}
                           onChange={(event) => setEditRuleInterval(event.target.value)}
                         />
                       </label>
                       <label className="field-group compact-field">
                         <span className="field-label">{t("console.tasks.max_depth_label")}</span>
-                        <input
+                        <Input
                           value={editRuleDepth}
                           onChange={(event) => setEditRuleDepth(event.target.value)}
                         />
                       </label>
                       <label className="field-group compact-field">
                         <span className="field-label">{t("console.tasks.max_pages_label")}</span>
-                        <input
+                        <Input
                           value={editRuleMaxPages}
                           onChange={(event) => setEditRuleMaxPages(event.target.value)}
                         />
@@ -357,7 +357,7 @@ export function ConsoleCrawlTasks() {
                         <span className="field-label">
                           {t("console.tasks.same_origin_concurrency_label")}
                         </span>
-                        <input
+                        <Input
                           value={editRuleSameOriginConcurrency}
                           onChange={(event) =>
                             setEditRuleSameOriginConcurrency(event.target.value)
@@ -381,7 +381,7 @@ export function ConsoleCrawlTasks() {
                       </label>
                       <label className="field-group compact-field">
                         <span className="field-label">{t("console.tasks.max_links_label")}</span>
-                        <input
+                        <Input
                           value={editRuleMaxDiscovered}
                           onChange={(event) => setEditRuleMaxDiscovered(event.target.value)}
                         />
@@ -449,52 +449,27 @@ export function ConsoleCrawlTasks() {
                 <div className="row-actions topbar-actions">
                   {editingRuleId === rule.id ? (
                     <>
-                      <button
-                        type="button"
-                        className="plain-link"
-                        disabled={busy}
-                        onClick={() => void handleSaveRule(rule.id)}
-                      >
+                      <Button type="button" variant="outline" disabled={busy} onClick={() => void handleSaveRule(rule.id)}>
                         {t("console.users.save")}
-                      </button>
-                      <button
-                        type="button"
-                        className="plain-link"
-                        disabled={busy}
-                        onClick={handleCancelEdit}
-                      >
+                      </Button>
+                      <Button type="button" variant="ghost" disabled={busy} onClick={handleCancelEdit}>
                         {t("console.workers.cancel")}
-                      </button>
+                      </Button>
                     </>
                   ) : (
                     <>
                       <span className={rule.enabled ? "status-pill" : "status-pill status-pill-muted"}>
                         {rule.enabled ? t("console.tasks.enabled") : t("console.tasks.disabled")}
                       </span>
-                      <button
-                        type="button"
-                        className="plain-link"
-                        disabled={busy}
-                        onClick={() => handleStartEdit(rule)}
-                      >
+                      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => handleStartEdit(rule)}>
                         {t("console.tasks.edit_rule")}
-                      </button>
-                      <button
-                        type="button"
-                        className="plain-link"
-                        disabled={busy}
-                        onClick={() => void handleToggleRule(rule.id, rule.enabled)}
-                      >
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void handleToggleRule(rule.id, rule.enabled)}>
                         {rule.enabled ? t("console.tasks.disable_rule") : t("console.tasks.enable_rule")}
-                      </button>
-                      <button
-                        type="button"
-                        className="plain-link"
-                        disabled={busy}
-                        onClick={() => void handleDeleteRule(rule.id)}
-                      >
+                      </Button>
+                      <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => void handleDeleteRule(rule.id)}>
                         {t("console.tasks.delete_rule")}
-                      </button>
+                      </Button>
                     </>
                   )}
                 </div>
@@ -504,7 +479,7 @@ export function ConsoleCrawlTasks() {
             <div className="list-row">{t("console.tasks.no_rules")}</div>
           )}
         </div>
-      </section>
+      </PanelSection>
     </>
   );
 }

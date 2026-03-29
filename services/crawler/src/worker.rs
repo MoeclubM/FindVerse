@@ -32,6 +32,7 @@ use crate::sitemap::fetch_and_parse_sitemap;
 use crate::url_normalize::normalize_url_advanced;
 
 const MAX_DISCOVERED_URLS_PER_REPORT: usize = 200;
+const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 
 #[derive(Clone)]
 struct NetworkClients {
@@ -115,6 +116,26 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             }
             shutdown_requested.store(true, Ordering::Relaxed);
             shutdown_notify.notify_waiters();
+        }
+    });
+    tokio::spawn({
+        let api_client = api_client.clone();
+        let config = config.clone();
+        let shutdown_requested = Arc::clone(&shutdown_requested);
+        let shutdown_notify = Arc::clone(&shutdown_notify);
+        async move {
+            loop {
+                tokio::select! {
+                    _ = sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SECS)) => {}
+                    _ = shutdown_notify.notified() => break,
+                }
+                if shutdown_requested.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Err(error) = heartbeat_crawler(&api_client, &config).await {
+                    warn!(?error, "crawler heartbeat failed");
+                }
+            }
         }
     });
 
@@ -293,6 +314,28 @@ async fn submit_report(
     }
 
     Ok(response.json().await?)
+}
+
+async fn heartbeat_crawler(client: &reqwest::Client, config: &WorkerConfig) -> anyhow::Result<()> {
+    let response = client
+        .post(format!(
+            "{}/internal/crawlers/heartbeat",
+            config.server.trim_end_matches('/')
+        ))
+        .header("x-crawler-id", &config.crawler_id)
+        .header(
+            "x-crawler-name",
+            config.crawler_name.as_deref().unwrap_or(""),
+        )
+        .bearer_auth(&config.auth_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("heartbeat failed with status {}", response.status());
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

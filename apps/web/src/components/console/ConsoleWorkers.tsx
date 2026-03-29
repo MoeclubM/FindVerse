@@ -1,20 +1,23 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Activity, Bot, Clock3, Trash2 } from "lucide-react";
 
 import { deleteCrawler, renameCrawler } from "../../api";
-import { DetailDialog, SectionHeader, StatStrip } from "../common/PanelPrimitives";
+import { DetailDialog, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+const ONLINE_THRESHOLD_MS = 90 * 1000;
 
 function isWorkerOnline(lastSeenAt: string | null): boolean {
   if (!lastSeenAt) return false;
-  const lastSeen = new Date(lastSeenAt).getTime();
-  return Date.now() - lastSeen < ONLINE_THRESHOLD_MS;
+  return Date.now() - new Date(lastSeenAt).getTime() < ONLINE_THRESHOLD_MS;
 }
 
 function formatTimestamp(value: string | null) {
@@ -29,14 +32,10 @@ export function ConsoleWorkers() {
       [...(overview?.crawlers ?? [])].sort((left, right) => {
         const leftOnline = isWorkerOnline(left.last_seen_at);
         const rightOnline = isWorkerOnline(right.last_seen_at);
-        if (leftOnline !== rightOnline) {
-          return Number(rightOnline) - Number(leftOnline);
-        }
+        if (leftOnline !== rightOnline) return Number(rightOnline) - Number(leftOnline);
         const leftSeen = left.last_seen_at ? new Date(left.last_seen_at).getTime() : 0;
         const rightSeen = right.last_seen_at ? new Date(right.last_seen_at).getTime() : 0;
-        if (leftSeen !== rightSeen) {
-          return rightSeen - leftSeen;
-        }
+        if (leftSeen !== rightSeen) return rightSeen - leftSeen;
         return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
       }),
     [overview?.crawlers],
@@ -48,7 +47,6 @@ export function ConsoleWorkers() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [selectedCrawlerId, setSelectedCrawlerId] = useState<string | null>(null);
-
   const selectedCrawler = crawlers.find((crawler) => crawler.id === selectedCrawlerId) ?? null;
 
   function startEditing(crawlerId: string, currentName: string) {
@@ -75,9 +73,7 @@ export function ConsoleWorkers() {
   }
 
   async function handleDeleteCrawler(crawlerId: string, crawlerName: string) {
-    if (!window.confirm(t("console.workers.delete_confirm", { name: crawlerName }))) {
-      return;
-    }
+    if (!window.confirm(t("console.workers.delete_confirm", { name: crawlerName }))) return;
     setBusy(true);
     setFlash(null);
     try {
@@ -94,11 +90,14 @@ export function ConsoleWorkers() {
   }
 
   return (
-    <section className="panel panel-wide compact-panel">
-      <SectionHeader title={t("console.workers.title")} meta={t("console.workers.registered", { count: crawlers.length })} />
-      <p className="dev-hint">{t("console.workers.setup_hint")}</p>
+    <PanelSection
+      title={t("console.workers.title")}
+      meta={t("console.workers.registered", { count: crawlers.length })}
+      contentClassName="space-y-5"
+    >
+      <p className="text-sm text-stone-500">{t("console.workers.setup_hint")}</p>
       <StatStrip
-        className="worker-density-grid"
+        className="xl:grid-cols-5"
         items={[
           { label: t("console.overview.workers"), value: crawlers.length },
           { label: t("console.workers.online_count"), value: onlineWorkers },
@@ -107,61 +106,66 @@ export function ConsoleWorkers() {
           { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
         ]}
       />
-      <div className="dense-list">
+
+      <div className="grid gap-3">
         {crawlers.length ? (
           crawlers.map((crawler) => {
             const online = isWorkerOnline(crawler.last_seen_at);
             return (
-              <div className="compact-row worker-row worker-card" key={crawler.id}>
-                <div className="worker-card-head">
-                  <div className="row-primary">
-                    <div className="row-meta row-meta-tight">
-                      <strong>{crawler.name}</strong>
-                      <span className={online ? "status-pill" : "status-pill status-pill-muted"}>
+              <button
+                key={crawler.id}
+                type="button"
+                onClick={() => {
+                  setEditingId(null);
+                  setEditName(crawler.name);
+                  setSelectedCrawlerId(crawler.id);
+                }}
+                className="grid gap-4 rounded-2xl border border-stone-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-stone-300 hover:bg-stone-50"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base font-semibold text-stone-950">{crawler.name}</h3>
+                      <Badge variant={online ? "success" : "outline"}>
                         {online ? t("console.workers.online") : t("console.workers.offline")}
-                      </span>
-                      <code>{crawler.id.slice(0, 8)}</code>
+                      </Badge>
+                      <Badge variant="outline">{crawler.id.slice(0, 8)}</Badge>
                     </div>
-                    <span>{crawler.preview}</span>
+                    <p className="text-sm text-stone-500">{crawler.preview}</p>
                   </div>
-                  <button
-                    type="button"
-                    className="plain-link"
-                    onClick={() => {
-                      setEditingId(null);
-                      setEditName(crawler.name);
-                      setSelectedCrawlerId(crawler.id);
-                    }}
-                  >
-                    {t("console.actions.details")}
-                  </button>
-                </div>
-                <div className="worker-card-stats">
-                  <div>
+                  <div className="grid gap-1 text-sm text-stone-500 md:text-right">
                     <span>{t("console.workers.last_seen")}</span>
-                    <strong>{formatTimestamp(crawler.last_seen_at)}</strong>
-                  </div>
-                  <div>
-                    <span>{t("console.workers.jobs_claimed")}</span>
-                    <strong>{crawler.jobs_claimed}</strong>
-                  </div>
-                  <div>
-                    <span>{t("console.workers.jobs_reported")}</span>
-                    <strong>{crawler.jobs_reported}</strong>
+                    <strong className="text-stone-900">{formatTimestamp(crawler.last_seen_at)}</strong>
                   </div>
                 </div>
-              </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                    <span className="text-xs uppercase tracking-[0.14em] text-stone-500">{t("console.workers.jobs_claimed")}</span>
+                    <div className="mt-2 text-lg font-semibold text-stone-950">{crawler.jobs_claimed}</div>
+                  </div>
+                  <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                    <span className="text-xs uppercase tracking-[0.14em] text-stone-500">{t("console.workers.jobs_reported")}</span>
+                    <div className="mt-2 text-lg font-semibold text-stone-950">{crawler.jobs_reported}</div>
+                  </div>
+                  <div className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+                    <span className="text-xs uppercase tracking-[0.14em] text-stone-500">{t("console.workers.created")}</span>
+                    <div className="mt-2 text-lg font-semibold text-stone-950">{formatTimestamp(crawler.created_at)}</div>
+                  </div>
+                </div>
+              </button>
             );
           })
         ) : (
-          <div className="list-row">{t("console.workers.no_workers")}</div>
+          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">
+            {t("console.workers.no_workers")}
+          </div>
         )}
       </div>
 
       <DetailDialog
         open={Boolean(selectedCrawler)}
         title={selectedCrawler?.name ?? t("console.workers.title")}
-        meta={selectedCrawler ? t("console.workers.id") : undefined}
+        meta={selectedCrawler?.id}
         closeLabel={t("console.actions.close")}
         onClose={() => {
           setEditingId(null);
@@ -170,24 +174,31 @@ export function ConsoleWorkers() {
         }}
         actions={
           selectedCrawler ? (
-            <button
-              type="button"
-              className="plain-link"
-              disabled={busy}
-              onClick={() => startEditing(selectedCrawler.id, selectedCrawler.name)}
-            >
-              {t("console.workers.rename")}
-            </button>
+            <>
+              <Button variant="ghost" onClick={() => startEditing(selectedCrawler.id, selectedCrawler.name)}>
+                {t("console.workers.rename")}
+              </Button>
+              {!isWorkerOnline(selectedCrawler.last_seen_at) ? (
+                <Button
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={() => void handleDeleteCrawler(selectedCrawler.id, selectedCrawler.name)}
+                >
+                  <Trash2 data-icon="inline-start" />
+                  {t("console.workers.delete")}
+                </Button>
+              ) : null}
+            </>
           ) : null
         }
       >
         {selectedCrawler ? (
-          <div className="detail-stack">
+          <div className="space-y-5">
             {editingId === selectedCrawler.id ? (
-              <div className="inline-form form-fields">
-                <label className="field-group compact-field field-group-wide">
-                  <span className="field-label">{t("console.workers.name_placeholder")}</span>
-                  <input
+              <div className="grid gap-3 rounded-2xl border border-stone-200 bg-stone-50 p-4 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+                <div className="grid gap-2">
+                  <span className="text-sm font-medium text-stone-700">{t("console.workers.name_placeholder")}</span>
+                  <Input
                     value={editName}
                     onChange={(event) => setEditName(event.target.value)}
                     onKeyDown={(event) => {
@@ -196,68 +207,62 @@ export function ConsoleWorkers() {
                     }}
                     autoFocus
                   />
-                </label>
-                <button type="button" disabled={busy} onClick={() => void handleSaveName(selectedCrawler.id)}>
+                </div>
+                <Button disabled={busy} onClick={() => void handleSaveName(selectedCrawler.id)}>
                   {t("console.workers.save")}
-                </button>
-                <button type="button" className="plain-link" onClick={() => setEditingId(null)}>
+                </Button>
+                <Button variant="outline" onClick={() => setEditingId(null)}>
                   {t("console.workers.cancel")}
-                </button>
+                </Button>
               </div>
             ) : null}
-            <div className="metadata-grid compact-metadata-wide detail-grid">
-              <div>
-                <span>{t("console.workers.id")}</span>
-                <strong>{selectedCrawler.id}</strong>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+                <div className="flex items-center gap-2 text-stone-500"><Bot className="size-4" />{t("console.workers.preview")}</div>
+                <div className="mt-2 break-all font-medium text-stone-950">{selectedCrawler.preview}</div>
               </div>
-              <div>
-                <span>{t("console.workers.preview")}</span>
-                <strong>{selectedCrawler.preview}</strong>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+                <div className="flex items-center gap-2 text-stone-500"><Activity className="size-4" />{t("console.workers.status")}</div>
+                <div className="mt-2">
+                  <Badge variant={isWorkerOnline(selectedCrawler.last_seen_at) ? "success" : "outline"}>
+                    {isWorkerOnline(selectedCrawler.last_seen_at)
+                      ? t("console.workers.online")
+                      : t("console.workers.offline")}
+                  </Badge>
+                </div>
               </div>
-              <div>
-                <span>{t("console.workers.created")}</span>
-                <strong>{formatTimestamp(selectedCrawler.created_at)}</strong>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+                <div className="flex items-center gap-2 text-stone-500"><Clock3 className="size-4" />{t("console.workers.last_seen")}</div>
+                <div className="mt-2 font-medium text-stone-950">{formatTimestamp(selectedCrawler.last_seen_at)}</div>
               </div>
-              <div>
-                <span>{t("console.workers.last_seen")}</span>
-                <strong>{formatTimestamp(selectedCrawler.last_seen_at)}</strong>
-              </div>
-              <div>
-                <span>{t("console.workers.last_claimed")}</span>
-                <strong>{formatTimestamp(selectedCrawler.last_claimed_at)}</strong>
-              </div>
-              <div>
-                <span>{t("console.workers.jobs_claimed")}</span>
-                <strong>{selectedCrawler.jobs_claimed}</strong>
-              </div>
-              <div>
-                <span>{t("console.workers.jobs_reported")}</span>
-                <strong>{selectedCrawler.jobs_reported}</strong>
-              </div>
-              <div>
-                <span>{t("console.workers.status")}</span>
-                <strong>
-                  {isWorkerOnline(selectedCrawler.last_seen_at)
-                    ? t("console.workers.online")
-                    : t("console.workers.offline")}
-                </strong>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+                <div className="flex items-center gap-2 text-stone-500"><Clock3 className="size-4" />{t("console.workers.last_claimed")}</div>
+                <div className="mt-2 font-medium text-stone-950">{formatTimestamp(selectedCrawler.last_claimed_at)}</div>
               </div>
             </div>
-            {!isWorkerOnline(selectedCrawler.last_seen_at) ? (
-              <div className="detail-actions">
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={busy}
-                  onClick={() => void handleDeleteCrawler(selectedCrawler.id, selectedCrawler.name)}
-                >
-                  {t("console.workers.delete")}
-                </button>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-[0.14em] text-stone-500">{t("console.workers.jobs_claimed")}</span>
+                <div className="mt-2 text-2xl font-semibold text-stone-950">{selectedCrawler.jobs_claimed}</div>
               </div>
-            ) : null}
+              <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-[0.14em] text-stone-500">{t("console.workers.jobs_reported")}</span>
+                <div className="mt-2 text-2xl font-semibold text-stone-950">{selectedCrawler.jobs_reported}</div>
+              </div>
+              <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-[0.14em] text-stone-500">{t("console.workers.created")}</span>
+                <div className="mt-2 text-lg font-semibold text-stone-950">{formatTimestamp(selectedCrawler.created_at)}</div>
+              </div>
+              <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-[0.14em] text-stone-500">{t("console.workers.id")}</span>
+                <div className="mt-2 break-all text-sm font-medium text-stone-950">{selectedCrawler.id}</div>
+              </div>
+            </div>
           </div>
         ) : null}
       </DetailDialog>
-    </section>
+    </PanelSection>
   );
 }

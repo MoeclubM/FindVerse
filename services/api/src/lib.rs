@@ -345,6 +345,10 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             "/internal/crawlers/report",
             post(handlers::crawler::submit_crawl_report),
         )
+        .route(
+            "/internal/crawlers/heartbeat",
+            post(handlers::crawler::heartbeat_crawler),
+        )
         .layer(shared_cors(config))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

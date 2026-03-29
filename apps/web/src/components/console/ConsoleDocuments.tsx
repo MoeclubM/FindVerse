@@ -2,7 +2,9 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { deleteDocument, listDocuments, purgeSite } from "../../api";
-import { DetailDialog, FieldShell, SectionHeader, StatStrip } from "../common/PanelPrimitives";
+import { DetailDialog, FieldShell, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -120,11 +122,11 @@ export function ConsoleDocuments() {
   }
 
   return (
-    <section className="panel panel-wide compact-panel document-panel">
-      <SectionHeader
+    <PanelSection
         title={t("console.documents.title")}
         meta={t("console.documents.summary", { count: displayDocuments?.total_estimate ?? 0, next: displayDocuments?.next_offset ?? "-" })}
-      />
+        contentClassName="space-y-5"
+    >
       <StatStrip
         className="document-summary-strip"
         items={[
@@ -134,38 +136,38 @@ export function ConsoleDocuments() {
           { label: t("console.documents.primary_count"), value: primaryCount },
         ]}
       />
-      <div className="inline-form form-fields document-filter-form">
+      <div className="grid gap-4 md:grid-cols-2">
         <FieldShell className="compact-field" label={t("console.documents.search_label")}>
-          <input
+          <Input
             value={documentQuery}
             onChange={(event) => setDocumentQuery(event.target.value)}
             placeholder={t("console.documents.query_placeholder")}
           />
         </FieldShell>
         <FieldShell className="compact-field" label={t("console.documents.site_label")}>
-          <input
+          <Input
             value={documentSite}
             onChange={(event) => setDocumentSite(event.target.value)}
             placeholder={t("console.documents.site_placeholder")}
           />
         </FieldShell>
       </div>
-      <form className="inline-form form-fields document-purge-form" onSubmit={handlePurgeSite}>
+      <form className="grid gap-4 lg:grid-cols-[1fr_auto]" onSubmit={handlePurgeSite}>
         <FieldShell className="compact-field field-group-wide" label={t("console.documents.purge_site")}>
-          <input
+          <Input
             value={purgeSiteInput}
             onChange={(event) => setPurgeSiteInput(event.target.value)}
             placeholder={t("console.documents.purge_placeholder")}
           />
         </FieldShell>
-        <button type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy}>
           {t("console.documents.purge_site")}
-        </button>
+        </Button>
       </form>
-      <div className="dense-list">
+      <div className="grid gap-3">
         {visibleDocuments.length ? (
           visibleDocuments.map((document) => (
-            <div className="compact-row document-card" key={document.id}>
+            <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm" key={document.id}>
               <div className="document-toolbar">
                 <div className="document-title-group">
                   <div className="row-primary">
@@ -183,33 +185,35 @@ export function ConsoleDocuments() {
                     </span>
                   </div>
                 </div>
-                <button type="button" className="plain-link" onClick={() => setSelectedDocumentId(document.id)}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedDocumentId(document.id)}>
                   {t("console.actions.details")}
-                </button>
+                </Button>
               </div>
               <p className="document-snippet">{document.snippet}</p>
             </div>
           ))
         ) : (
-          <div className="list-row">{t("console.documents.no_documents")}</div>
+          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">{t("console.documents.no_documents")}</div>
         )}
       </div>
-      <div className="inline-form document-pagination">
-        <button
+      <div className="flex items-center gap-3">
+        <Button
           type="button"
+          variant="outline"
           disabled={documentOffset === 0}
           onClick={handlePrevious}
         >
           {t("search.previous")}
-        </button>
-        <span className="section-meta">{t("console.documents.offset", { offset: documentOffset })}</span>
-        <button
+        </Button>
+        <span className="text-sm text-stone-500">{t("console.documents.offset", { offset: documentOffset })}</span>
+        <Button
           type="button"
+          variant="outline"
           disabled={displayDocuments?.next_offset == null}
           onClick={handleNext}
         >
           {t("search.next")}
-        </button>
+        </Button>
       </div>
 
       <DetailDialog
@@ -220,14 +224,9 @@ export function ConsoleDocuments() {
         onClose={() => setSelectedDocumentId(null)}
         actions={
           selectedDocument ? (
-            <button
-              type="button"
-              className="plain-link"
-              disabled={busy}
-              onClick={() => void handleDeleteDocument(selectedDocument.id)}
-            >
+            <Button type="button" variant="destructive" disabled={busy} onClick={() => void handleDeleteDocument(selectedDocument.id)}>
               {t("console.documents.delete")}
-            </button>
+            </Button>
           ) : null
         }
       >
@@ -278,6 +277,6 @@ export function ConsoleDocuments() {
           </div>
         ) : null}
       </DetailDialog>
-    </section>
+    </PanelSection>
   );
 }

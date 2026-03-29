@@ -63,7 +63,8 @@
     "logout": "退出登录",
     "actions": {
       "details": "详情",
-      "close": "关闭"
+      "close": "关闭",
+      "copy": "复制"
     },
     "summary": {
       "console_user": "控制台用户",
