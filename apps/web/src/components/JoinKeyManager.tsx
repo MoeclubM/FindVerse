@@ -67,14 +67,14 @@ export function JoinKeyManager(props: { token: string; setFlash: (value: string 
         <pre style={{ fontSize: "0.85em", marginTop: 4 }}>
 {`Share this key with crawler operators so they can register a worker. The join key is only used during enrollment; after joining, each worker continues with its own crawler credentials.
 
-Install or update a worker directly from GitHub:
+Install or update a worker directly from GitHub with the same command:
 
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server <API_URL> --join-key <KEY> --channel release
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server <API_URL> --join-key <KEY> --channel release --concurrency 16 --skip-browser-install
 # public release installs do not need a token
 # only use GITHUB_TOKEN when following the latest CI build with --channel dev
-# curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server <API_URL> --join-key <KEY> --channel dev
+# curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server <API_URL> --join-key <KEY> --channel dev --concurrency 16 --skip-browser-install
 
-Re-run the same command later to update the node in place.`}
+Re-run the same command later to update the node in place. Keeping --join-key on update commands is fine unless you also add --rejoin.`}
         </pre>
       </details>
     </div>

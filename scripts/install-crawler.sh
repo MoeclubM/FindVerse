@@ -33,10 +33,10 @@ The script downloads either the latest GitHub release artifact or the latest CI 
 installs the binary into /opt, writes config into /etc, and enables a systemd service.
 
 Options:
-  --server <url>                Control API base URL. Required on first install
-  --join-key <key>              Join key for first install or forced re-registration
+  --server <url>                Control API base URL. Required on first install, reused later if omitted
+  --join-key <key>              Join key for first install. Safe to keep on update commands unless you add --rejoin
   --channel <release|dev>       Download source. Default: release
-  --version <tag>               Specific release tag, for example v1.2.3
+  --version <tag>               Optional pinned release tag, for example v1.2.3
   --repo <owner/name>           GitHub repo. Default: MoeclubM/FindVerse
   --name <crawler-name>         Registration name. Default: worker-<hostname>
   --service-name <name>         systemd service name. Default: findverse-crawler
@@ -56,6 +56,7 @@ Notes:
   - This script is standalone and can be downloaded or piped directly from GitHub onto the target machine.
   - Re-running the script updates the binary in place and restarts the service.
   - Once the env file exists, updates can reuse the saved server and credentials.
+  - The same release command can be used for both first install and updates.
   - Release mode downloads the public GitHub release asset without auth.
   - Dev mode downloads the latest successful crawler dev build artifact and requires GitHub API auth even for public repos.
 EOF

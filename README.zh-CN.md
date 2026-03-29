@@ -46,16 +46,18 @@ docker compose up -d --build
 
 ## 爬虫节点
 
-直接从 GitHub 安装或更新 crawler：
+直接从 GitHub 安装或更新 crawler，用同一条命令就行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release --concurrency 16 --skip-browser-install
 ```
 
-如果你要跟最新成功的开发构建，而不是正式 release：
+以后重复执行这条命令就是原地更新。更新时继续带 `--join-key` 也没问题，只有首次入网或显式加 `--rejoin` 时才会真的用到它。
+
+只有你明确要跟最新成功的 CI 开发构建时，才用 `dev`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --channel dev
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel dev --concurrency 16 --skip-browser-install
 ```
 
 - `--channel release` 不需要 token

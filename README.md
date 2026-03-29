@@ -46,16 +46,18 @@ Main service data is persisted under `./data` and will be created automatically 
 
 ## Crawler Worker
 
-Install or update a crawler worker directly from GitHub:
+Install or update a crawler worker directly from GitHub with the same command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release --concurrency 16 --skip-browser-install
 ```
 
-To follow the latest successful development artifact instead of the latest release:
+Re-running that command updates the node in place. Keeping `--join-key` on update commands is fine; it is only used when the node enrolls for the first time or when you add `--rejoin`.
+
+Only use the development channel when you explicitly want the latest successful CI build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --channel dev
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel dev --concurrency 16 --skip-browser-install
 ```
 
 `--channel release` does not need a token. `--channel dev` does, because GitHub Actions artifact downloads require authenticated API access.

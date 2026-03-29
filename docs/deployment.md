@@ -91,10 +91,10 @@ npm run dev:web
 
 ### Machine install and update
 
-For production or long-lived WSL nodes, the only recommended entrypoint is the GitHub-hosted installer:
+For production or long-lived WSL nodes, the only recommended entrypoint is the GitHub-hosted installer. Use the same command for first install and later updates:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release --concurrency 16 --skip-browser-install
 ```
 
 What it does:
@@ -108,6 +108,8 @@ What it does:
 - cleans up its temporary download directory automatically
 
 Legacy `crawler-setup.sh` and `crawler-setup.ps1` flows have been removed from this repository. Do not build the crawler in-place for production nodes, and do not depend on a repo checkout on the target machine. Use the GitHub installer for both first install and updates.
+
+Keeping `--join-key` on update commands is safe. The installer only uses it when the node enrolls for the first time or when you explicitly add `--rejoin`.
 
 Public release installs do not need a GitHub token. Only `--channel dev` needs `GITHUB_TOKEN`, because GitHub Actions artifact downloads go through the authenticated API even when the repository itself is public.
 
@@ -162,7 +164,7 @@ docker compose up -d --build
 4. Install crawler nodes from GitHub.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "$FINDVERSE_CRAWLER_JOIN_KEY" --channel release
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "$FINDVERSE_CRAWLER_JOIN_KEY" --channel release --concurrency 16 --skip-browser-install
 ```
 
 The installer writes the crawler binary to `/opt/findverse-crawler`, the config to `/etc/findverse-crawler/crawler.env`, and a `systemd` unit named `findverse-crawler.service`.
@@ -183,22 +185,27 @@ docker compose up -d --build
 
 Crawler node updates:
 
-- stable upgrade: rerun the installer with `--channel release`
-- pin a specific release: rerun it with `--channel release --version <tag>`
-- follow the latest successful CI build: rerun it with `--channel dev`
+- latest stable release: rerun the same release command
+- pinned stable release: add `--version <tag>`
+- latest successful CI build: switch to `--channel dev`
+- forced re-enrollment: add `--rejoin`
 
-Examples:
+Latest stable release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --channel release
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "$FINDVERSE_CRAWLER_JOIN_KEY" --channel release --concurrency 16 --skip-browser-install
 ```
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --channel release --version <tag>
-```
+Optional pinned release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=github_pat_xxx bash -s -- --server https://search.example.com/api --channel dev
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "$FINDVERSE_CRAWLER_JOIN_KEY" --channel release --version <tag> --concurrency 16 --skip-browser-install
+```
+
+Optional CI build:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=github_pat_xxx bash -s -- --server https://search.example.com/api --join-key "$FINDVERSE_CRAWLER_JOIN_KEY" --channel dev --concurrency 16 --skip-browser-install
 ```
 
 `--channel dev` downloads the latest successful crawler dev artifact from `.github/workflows/crawler-dev-artifact.yml`, so it requires GitHub API authentication even for a public repo. `--channel release` does not need a token.
