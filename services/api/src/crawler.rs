@@ -10,16 +10,15 @@ use crate::{
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJob, CrawlJobDetail,
         CrawlJobListResponse, CrawlJobStats, CrawlOverviewResponse, CrawlResultInput, CrawlRule,
-        CrawlerMetadata, CreateCrawlRuleRequest, CreatedCrawlerResponse, DeveloperDomainDocument,
-        DeveloperDomainFacet, DeveloperDomainInsightResponse, DeveloperDomainJob,
-        DeveloperDomainSubmitRequest, DeveloperDomainSubmitResponse, IndexedDocument,
-        SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
-        SubmitCrawlReportResponse, UpdateCrawlRuleRequest,
+        CrawlerMetadata, CreateCrawlRuleRequest, DeveloperDomainDocument, DeveloperDomainFacet,
+        DeveloperDomainInsightResponse, DeveloperDomainJob, DeveloperDomainSubmitRequest,
+        DeveloperDomainSubmitResponse, IndexedDocument, SeedFrontierRequest, SeedFrontierResponse,
+        SubmitCrawlReportRequest, SubmitCrawlReportResponse, UpdateCrawlRuleRequest,
     },
     store::{
         CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, SearchIndex,
-        content_hash, derive_terms, display_url, extract_host, generate_token, hash_token,
-        normalize_url, stable_document_id, word_count,
+        content_hash, derive_terms, display_url, extract_host, hash_token, normalize_url,
+        stable_document_id, word_count,
     },
 };
 
@@ -70,53 +69,6 @@ impl CrawlerStore {
         .await?;
 
         Ok(())
-    }
-
-    pub async fn create_crawler(
-        &self,
-        developer_id: &str,
-        name: Option<&str>,
-    ) -> Result<CreatedCrawlerResponse, ApiError> {
-        let clean_name = name
-            .map(str::trim)
-            .filter(|n| n.len() >= 2)
-            .unwrap_or("crawler");
-        let key = generate_token("fvc");
-        let preview = format!("{}...{}", &key[..8], &key[key.len() - 4..]);
-        let id = Uuid::now_v7().to_string();
-        let now = Utc::now();
-
-        sqlx::query(
-            "insert into crawlers (id, owner_developer_id, name, preview, key_hash, created_at, last_seen_at, metadata)
-             values ($1, $2, $3, $4, $5, $6, $6, '{}'::jsonb)",
-        )
-        .bind(&id)
-        .bind(developer_id)
-        .bind(clean_name)
-        .bind(&preview)
-        .bind(hash_token(&key))
-        .bind(now)
-        .execute(&self.pg_pool)
-        .await
-        .map_err(|e| ApiError::Internal(e.into()))?;
-
-        self.push_event(
-            developer_id,
-            "crawler-created",
-            "ok",
-            format!("issued crawler credentials for {clean_name}"),
-            None,
-            Some(id.clone()),
-        )
-        .await?;
-
-        Ok(CreatedCrawlerResponse {
-            crawler_id: id,
-            crawler_key: key,
-            name: clean_name.to_string(),
-            preview,
-            created_at: now,
-        })
     }
 
     pub async fn delete_crawler(
@@ -949,13 +901,16 @@ impl CrawlerStore {
         &self,
         crawler_id: &str,
         auth_header: Option<&str>,
+        default_owner_developer_id: &str,
         request: ClaimJobsRequest,
     ) -> Result<ClaimJobsResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
         let max_jobs = request.max_jobs.clamp(1, 100) as i64;
         let now = Utc::now();
 
-        let crawler = self.validate_crawler_auth(crawler_id, &token_hash).await?;
+        let crawler = self
+            .validate_crawler_auth(crawler_id, &token_hash, default_owner_developer_id)
+            .await?;
 
         // Update last_seen_at and last_claimed_at
         sqlx::query("update crawlers set last_seen_at = $2, last_claimed_at = $2 where id = $1")
@@ -1111,13 +1066,16 @@ impl CrawlerStore {
         &self,
         crawler_id: &str,
         auth_header: Option<&str>,
+        default_owner_developer_id: &str,
         request: SubmitCrawlReportRequest,
         search_index: &SearchIndex,
     ) -> Result<SubmitCrawlReportResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
         let now = Utc::now();
 
-        let crawler = self.validate_crawler_auth(crawler_id, &token_hash).await?;
+        let crawler = self
+            .validate_crawler_auth(crawler_id, &token_hash, default_owner_developer_id)
+            .await?;
 
         sqlx::query("update crawlers set last_seen_at = $2 where id = $1")
             .bind(crawler_id)
@@ -2421,31 +2379,18 @@ impl CrawlerStore {
         &self,
         crawler_id: &str,
         token_hash: &str,
+        default_owner_developer_id: &str,
     ) -> Result<CrawlerAuthInfo, ApiError> {
-        let row = sqlx::query_as::<_, CrawlerAuthRow>(
-            "select id, owner_developer_id, name, key_hash, revoked_at
-             from crawlers where id = $1",
-        )
-        .bind(crawler_id)
-        .fetch_optional(&self.pg_pool)
-        .await
-        .map_err(|e| ApiError::Internal(e.into()))?
-        .ok_or_else(|| ApiError::Unauthorized("unknown crawler id".to_string()))?;
+        let configured_hash = self.resolve_crawler_auth_key_hash().await?.ok_or_else(|| {
+            ApiError::Unauthorized("crawler auth key is not configured".to_string())
+        })?;
 
-        if row.revoked_at.is_some() {
-            return Err(ApiError::Unauthorized("crawler key is revoked".to_string()));
-        }
-
-        let matches_key = !row.key_hash.is_empty() && row.key_hash == token_hash;
-
-        if !matches_key {
+        if configured_hash != token_hash {
             return Err(ApiError::Unauthorized("invalid crawler key".to_string()));
         }
 
-        Ok(CrawlerAuthInfo {
-            owner_developer_id: row.owner_developer_id,
-            name: row.name,
-        })
+        self.ensure_crawler_identity(crawler_id, default_owner_developer_id, token_hash)
+            .await
     }
 
     async fn apply_due_rules(&self, now: DateTime<Utc>) -> Result<(), ApiError> {
@@ -2579,6 +2524,43 @@ impl CrawlerStore {
             .map_err(|e| ApiError::Internal(e.into()))
     }
 
+    async fn resolve_crawler_auth_key_hash(&self) -> Result<Option<String>, ApiError> {
+        Ok(self
+            .get_config("crawler.auth_key")
+            .await?
+            .map(|value| hash_token(&value)))
+    }
+
+    async fn ensure_crawler_identity(
+        &self,
+        crawler_id: &str,
+        default_owner_developer_id: &str,
+        token_hash: &str,
+    ) -> Result<CrawlerAuthInfo, ApiError> {
+        let row = sqlx::query_as::<_, CrawlerAuthRow>(
+            "insert into crawlers (id, owner_developer_id, name, preview, key_hash, created_at, last_seen_at, metadata)
+             values ($1, $2, $3, 'shared', $4, now(), now(), '{}'::jsonb)
+             on conflict (id) do update
+             set owner_developer_id = excluded.owner_developer_id,
+                 preview = excluded.preview,
+                 key_hash = excluded.key_hash,
+                 revoked_at = null
+             returning id, owner_developer_id, name",
+        )
+        .bind(crawler_id)
+        .bind(default_owner_developer_id)
+        .bind(default_crawler_name(crawler_id))
+        .bind(token_hash)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        Ok(CrawlerAuthInfo {
+            owner_developer_id: row.owner_developer_id,
+            name: row.name,
+        })
+    }
+
     async fn set_config(&self, key: &str, value: &str) -> Result<(), ApiError> {
         sqlx::query(
             "insert into system_config (key, value, updated_at) values ($1, $2, now())
@@ -2610,8 +2592,6 @@ struct CrawlerAuthRow {
     id: String,
     owner_developer_id: String,
     name: String,
-    key_hash: String,
-    revoked_at: Option<DateTime<Utc>>,
 }
 
 struct CrawlerAuthInfo {
@@ -3072,6 +3052,11 @@ fn bearer_hash(auth_header: Option<&str>) -> Result<String, ApiError> {
     }
 
     Ok(hash_token(token))
+}
+
+fn default_crawler_name(crawler_id: &str) -> String {
+    let suffix: String = crawler_id.chars().take(8).collect();
+    format!("crawler-{suffix}")
 }
 
 fn validate_rule_name(input: &str) -> Result<String, ApiError> {

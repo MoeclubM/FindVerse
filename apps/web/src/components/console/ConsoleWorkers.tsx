@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { createCrawler, deleteCrawler, renameCrawler } from "../../api";
-import { FieldShell, SectionHeader, StatStrip } from "../common/PanelPrimitives";
+import { deleteCrawler, renameCrawler } from "../../api";
+import { SectionHeader, StatStrip } from "../common/PanelPrimitives";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -40,12 +40,6 @@ export function ConsoleWorkers() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [newCrawlerName, setNewCrawlerName] = useState("");
-  const [createdCrawler, setCreatedCrawler] = useState<{
-    crawler_id: string;
-    crawler_key: string;
-    name: string;
-  } | null>(null);
 
   function startEditing(crawlerId: string, currentName: string) {
     setEditingId(crawlerId);
@@ -76,25 +70,6 @@ export function ConsoleWorkers() {
     }
   }
 
-  async function handleCreateCrawler() {
-    if (newCrawlerName.trim() && newCrawlerName.trim().length < 2) {
-      setFlash(t("console.workers.name_too_short"));
-      return;
-    }
-    setBusy(true);
-    setFlash(null);
-    try {
-      const created = await createCrawler(token, newCrawlerName.trim());
-      setCreatedCrawler(created);
-      setNewCrawlerName("");
-      await refreshAll();
-    } catch (error) {
-      setFlash(getErrorMessage(error, t("console.workers.create_failed")));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function handleDeleteCrawler(crawlerId: string, crawlerName: string) {
     if (!window.confirm(t("console.workers.delete_confirm", { name: crawlerName }))) {
       return;
@@ -117,29 +92,6 @@ export function ConsoleWorkers() {
       <p className="dev-hint">
         {t("console.workers.setup_hint")}
       </p>
-      <div className="inline-form form-fields" style={{ marginBottom: 12 }}>
-        <FieldShell className="compact-field field-group-wide" label={t("console.workers.create_label")}>
-          <input
-            value={newCrawlerName}
-            onChange={(event) => setNewCrawlerName(event.target.value)}
-            placeholder={t("console.workers.name_placeholder")}
-          />
-        </FieldShell>
-        <button type="button" disabled={busy} onClick={() => void handleCreateCrawler()}>
-          {t("console.workers.create")}
-        </button>
-      </div>
-      {createdCrawler ? (
-        <details style={{ marginBottom: 12 }} open>
-          <summary className="section-meta">{t("console.workers.created_credentials")}</summary>
-          <pre style={{ fontSize: "0.85em", marginTop: 4 }}>
-{`crawler_id=${createdCrawler.crawler_id}
-crawler_key=${createdCrawler.crawler_key}
-
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server <API_URL> --crawler-id ${createdCrawler.crawler_id} --crawler-key ${createdCrawler.crawler_key} --channel release --concurrency 16 --skip-browser-install`}
-          </pre>
-        </details>
-      ) : null}
       <StatStrip
         className="worker-density-grid"
         items={[

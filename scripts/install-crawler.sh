@@ -5,7 +5,6 @@ REPO="${FINDVERSE_GITHUB_REPO:-MoeclubM/FindVerse}"
 CHANNEL="release"
 VERSION=""
 SERVER_URL=""
-CRAWLER_ID_ARG=""
 CRAWLER_KEY_ARG=""
 SERVICE_NAME="findverse-crawler"
 INSTALL_DIR="/opt/findverse-crawler"
@@ -33,8 +32,7 @@ installs the binary into /opt, writes config into /etc, and enables a systemd se
 
 Options:
   --server <url>                Control API base URL. Required on first install, reused later if omitted
-  --crawler-id <id>             Fixed crawler ID. Required on first install, reused later if omitted
-  --crawler-key <key>           Fixed crawler key. Required on first install, reused later if omitted
+  --crawler-key <key>           Shared fixed crawler key. Required on first install, reused later if omitted
   --channel <release|dev>       Download source. Default: release
   --version <tag>               Optional pinned release tag, for example v1.2.3
   --repo <owner/name>           GitHub repo. Default: MoeclubM/FindVerse
@@ -53,7 +51,8 @@ Options:
 Notes:
   - This script is standalone and can be downloaded or piped directly from GitHub onto the target machine.
   - Re-running the script updates the binary in place and restarts the service.
-  - Once the env file exists, updates can reuse the saved server and credentials.
+  - On first install the script auto-generates crawler_id and saves it into the env file.
+  - Once the env file exists, updates can reuse the saved server, crawler_id, and crawler_key.
   - The same release command can be used for both first install and updates.
   - Release mode downloads the public GitHub release asset without auth.
   - Dev mode downloads the latest successful crawler dev build artifact and requires GitHub API auth even for public repos.
@@ -80,7 +79,6 @@ trap cleanup EXIT
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server) SERVER_URL="$2"; shift 2 ;;
-    --crawler-id) CRAWLER_ID_ARG="$2"; shift 2 ;;
     --crawler-key) CRAWLER_KEY_ARG="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
@@ -118,6 +116,20 @@ fi
 
 run_as_root() {
   "${AS_ROOT[@]}" "$@"
+}
+
+generate_crawler_id() {
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    tr '[:upper:]' '[:lower:]' </proc/sys/kernel/random/uuid
+    return
+  fi
+
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+    return
+  fi
+
+  fail "unable to generate crawler id automatically"
 }
 
 machine_suffix() {
@@ -385,9 +397,11 @@ main() {
 
   binary_path="$(extract_crawler_binary "$archive_path")"
 
-  final_crawler_id="${CRAWLER_ID_ARG:-${EXISTING_CRAWLER_ID:-}}"
+  final_crawler_id="${EXISTING_CRAWLER_ID:-}"
   final_crawler_key="${CRAWLER_KEY_ARG:-${EXISTING_CRAWLER_KEY:-}}"
-  [[ -n "$final_crawler_id" ]] || fail "--crawler-id is required on first install"
+  if [[ -z "$final_crawler_id" ]]; then
+    final_crawler_id="$(generate_crawler_id)"
+  fi
   [[ -n "$final_crawler_key" ]] || fail "--crawler-key is required on first install"
 
   install_runtime_files "$binary_path"

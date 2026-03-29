@@ -22,6 +22,7 @@ export function ConsoleSettings() {
   const [loading, setLoading] = useState(true);
   const [savingCrawler, setSavingCrawler] = useState(false);
   const [savingTor, setSavingTor] = useState(false);
+  const [crawlerAuthKey, setCrawlerAuthKey] = useState("");
   const [claimTimeout, setClaimTimeout] = useState("");
   const [maxAttempts, setMaxAttempts] = useState("");
   const [torEnabled, setTorEnabled] = useState(false);
@@ -37,6 +38,7 @@ export function ConsoleSettings() {
         }
         const nextConfig = toConfigMap(response.entries);
         setConfig(nextConfig);
+        setCrawlerAuthKey(nextConfig["crawler.auth_key"] ?? "");
         setClaimTimeout(nextConfig["crawler.claim_timeout_secs"] ?? "");
         setMaxAttempts(nextConfig["crawler.max_attempts"] ?? "");
         setTorEnabled(nextConfig["crawler.tor_enabled"] === "true");
@@ -60,9 +62,10 @@ export function ConsoleSettings() {
 
   const crawlerDirty = useMemo(
     () =>
+      crawlerAuthKey !== (config["crawler.auth_key"] ?? "") ||
       claimTimeout !== (config["crawler.claim_timeout_secs"] ?? "") ||
       maxAttempts !== (config["crawler.max_attempts"] ?? ""),
-    [claimTimeout, maxAttempts, config],
+    [crawlerAuthKey, claimTimeout, maxAttempts, config],
   );
 
   const torDirty = useMemo(
@@ -77,11 +80,13 @@ export function ConsoleSettings() {
     setFlash(null);
     try {
       await Promise.all([
+        setSystemConfig(token, "crawler.auth_key", crawlerAuthKey.trim() || null),
         setSystemConfig(token, "crawler.claim_timeout_secs", claimTimeout.trim() || null),
         setSystemConfig(token, "crawler.max_attempts", maxAttempts.trim() || null),
       ]);
       setConfig((current) => ({
         ...current,
+        "crawler.auth_key": crawlerAuthKey.trim(),
         "crawler.claim_timeout_secs": claimTimeout.trim(),
         "crawler.max_attempts": maxAttempts.trim(),
       }));
@@ -123,6 +128,13 @@ export function ConsoleSettings() {
       <section className="panel panel-wide compact-panel">
         <SectionHeader title={t("console.settings.crawler_config_section")} />
         <div className="inline-form form-fields">
+          <FieldShell className="compact-field field-group-wide" label={t("console.settings.auth_key_label")}>
+            <input
+              value={crawlerAuthKey}
+              onChange={(event) => setCrawlerAuthKey(event.target.value)}
+              placeholder={t("console.settings.auth_key_placeholder")}
+            />
+          </FieldShell>
           <FieldShell className="compact-field" label={t("console.settings.claim_timeout_label")}>
             <input value={claimTimeout} onChange={(event) => setClaimTimeout(event.target.value)} />
           </FieldShell>
@@ -133,6 +145,11 @@ export function ConsoleSettings() {
             {t("console.settings.save")}
           </button>
         </div>
+        {crawlerAuthKey.trim() ? (
+          <pre style={{ fontSize: "0.85em", marginTop: 12 }}>
+{`curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server <API_URL> --crawler-key ${crawlerAuthKey.trim()} --channel release --concurrency 16 --skip-browser-install`}
+          </pre>
+        ) : null}
       </section>
 
       <section className="panel panel-wide compact-panel">

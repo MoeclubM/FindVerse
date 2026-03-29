@@ -45,18 +45,18 @@ Main service data is persisted under `./data` and will be created automatically 
 
 ## Crawler Worker
 
-Create crawler credentials in `/console -> Workers`, then install or update a crawler worker directly from GitHub:
+Set one shared crawler auth key in `/console -> Settings`, then install or update a crawler worker directly from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
 ```
 
-Re-running that command updates the node in place. Once the node is installed, later updates can keep the same flags or simply reuse the saved `/etc/findverse-crawler/crawler.env`.
+The first install auto-generates `crawler_id` locally and writes it into `/etc/findverse-crawler/crawler.env`. Re-running the same command updates the node in place and reuses the saved id.
 
 Only use the development channel when you explicitly want the latest successful CI build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
 ```
 
 `--channel release` does not need a token. `--channel dev` does, because GitHub Actions artifact downloads require authenticated API access.

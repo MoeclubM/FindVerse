@@ -149,11 +149,10 @@ admin_session="$(json_request POST "$API_BASE_URL/v1/admin/session/login" "{\"us
 admin_token="$(echo "$admin_session" | jq -r '.token')"
 assert "[[ -n \"$admin_token\" && \"$admin_token\" != \"null\" ]]" "admin login returned no token"
 
-crawler_credentials="$(json_request POST "$API_BASE_URL/v1/admin/crawlers" "{\"name\":\"smoke-crawler-$timestamp\"}" "$admin_token")"
-crawler_id="$(echo "$crawler_credentials" | jq -r '.crawler_id')"
-crawler_key="$(echo "$crawler_credentials" | jq -r '.crawler_key')"
-assert "[[ -n \"$crawler_id\" && \"$crawler_id\" != \"null\" ]]" "crawler creation returned no crawler_id"
-assert "[[ -n \"$crawler_key\" && \"$crawler_key\" != \"null\" ]]" "crawler creation returned no crawler_key"
+crawler_id="smoke-crawler-$timestamp"
+crawler_key="smoke-crawler-key-$timestamp"
+auth_key_status="$(status_request PUT "$API_BASE_URL/v1/admin/system-config/crawler.auth_key" "{\"value\":\"$crawler_key\"}" "$admin_token")"
+assert "[[ \"$auth_key_status\" == \"204\" ]]" "setting crawler auth key did not return 204"
 
 seed_payload="$(json_request POST "$API_BASE_URL/v1/admin/frontier/seed" "{\"urls\":[\"$seed_url\"],\"source\":\"smoke-test\",\"max_depth\":1,\"allow_revisit\":true}" "$admin_token")"
 echo "$seed_payload" | jq -e '.accepted_urls >= 1' >/dev/null
@@ -225,4 +224,4 @@ if $RUN_PLAYWRIGHT; then
 fi
 
 step "Smoke test summary"
-echo "PASS  search, suggest, developer auth, key revocation, admin login, crawler credential issue/claim/report, indexed document metadata, smoke search result"
+echo "PASS  search, suggest, developer auth, key revocation, admin login, shared crawler auth/claim/report, indexed document metadata, smoke search result"

@@ -274,20 +274,6 @@ pub struct RenameCrawlerRequest {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateCrawlerRequest {
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CreatedCrawlerResponse {
-    pub crawler_id: String,
-    pub crawler_key: String,
-    pub name: String,
-    pub preview: String,
-    pub created_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct CrawlerMetadata {
     pub id: String,

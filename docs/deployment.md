@@ -43,10 +43,10 @@ After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=f
 
 Crawler workers are host services, not Docker services.
 
-Create crawler credentials in `/console -> Workers`, then install or update a node with the same command:
+Set one shared crawler auth key in `/console -> Settings`, then install or update a node with the same command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
 ```
 
 What the installer writes:
@@ -56,12 +56,12 @@ What the installer writes:
 - config: `/etc/findverse-crawler/crawler.env`
 - service: `findverse-crawler.service`
 
-Re-running the same command updates the binary and restarts the service in place. Existing `SERVER`, `CRAWLER_ID`, and `CRAWLER_KEY` are reused from `/etc/findverse-crawler/crawler.env` if you omit them later.
+The first install auto-generates `CRAWLER_ID` locally and writes it into `/etc/findverse-crawler/crawler.env`. Re-running the same command updates the binary and restarts the service in place. Existing `SERVER`, `CRAWLER_ID`, and `CRAWLER_KEY` are reused from the env file if you omit them later.
 
 Use the development channel only when you explicitly want the latest successful CI crawler build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
 ```
 
 `--channel release` does not need a token. `--channel dev` does, because GitHub Actions artifact downloads require authenticated API access.

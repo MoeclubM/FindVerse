@@ -93,7 +93,7 @@ test.beforeEach(async ({ request }) => {
   await waitForFindVerseReady(request);
 });
 
-test("developer self-service, admin management, crawler credential issuance, and search flow", async ({
+test("developer self-service, admin management, shared crawler auth, and search flow", async ({
   page,
   request,
 }) => {
@@ -102,6 +102,8 @@ test("developer self-service, admin management, crawler credential issuance, and
   const seedUrl = `https://example.com/?findverse-e2e=${Date.now()}`;
   const developerUsername = `dev-${Date.now()}`;
   const developerPassword = "dev-password-123";
+  const crawlerId = `e2e-crawler-${Date.now()}`;
+  const crawlerKey = `e2e-crawler-key-${Date.now()}`;
 
   await waitForFindVerseReady(request);
 
@@ -140,12 +142,11 @@ test("developer self-service, admin management, crawler credential issuance, and
   });
   expect(sessionResponse.ok()).toBeTruthy();
   const { token } = await sessionResponse.json();
-  const crawlerResponse = await request.post(`${controlApiBaseUrl}/v1/admin/crawlers`, {
+  const authKeyResponse = await request.put(`${controlApiBaseUrl}/v1/admin/system-config/crawler.auth_key`, {
     headers: { Authorization: `Bearer ${token}` },
-    data: { name: `e2e-crawler-${Date.now()}` },
+    data: { value: crawlerKey },
   });
-  expect(crawlerResponse.ok()).toBeTruthy();
-  const { crawler_id: crawlerId, crawler_key: crawlerKey } = await crawlerResponse.json();
+  expect(authKeyResponse.status()).toBe(204);
 
   await page.getByRole("button", { name: "Users" }).click();
   const developerRow = page
@@ -206,9 +207,11 @@ test("developer self-service, admin management, crawler credential issuance, and
   await expect(page.locator("main article a").first()).toBeVisible();
 });
 
-test("crawler credential flow", async ({ request }) => {
+test("crawler shared auth key flow", async ({ request }) => {
   const username = process.env.FINDVERSE_LOCAL_ADMIN_USERNAME ?? "admin";
   const password = process.env.FINDVERSE_LOCAL_ADMIN_PASSWORD ?? "change-me";
+  const crawlerId = `e2e-shared-${Date.now()}`;
+  const crawlerKey = `e2e-shared-key-${Date.now()}`;
 
   // Login as admin
   const loginRes = await request.post(`${controlApiBaseUrl}/v1/admin/session/login`, {
@@ -217,18 +220,26 @@ test("crawler credential flow", async ({ request }) => {
   expect(loginRes.ok()).toBeTruthy();
   const { token } = await loginRes.json();
 
-  const createRes = await request.post(`${controlApiBaseUrl}/v1/admin/crawlers`, {
+  const setAuthKeyRes = await request.put(`${controlApiBaseUrl}/v1/admin/system-config/crawler.auth_key`, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    data: { name: "e2e-issued-crawler" },
+    data: { value: crawlerKey },
   });
-  expect(createRes.status()).toBe(201);
-  const issued = await createRes.json();
-  expect(issued.crawler_id).toBeTruthy();
-  expect(issued.crawler_key).toBeTruthy();
-  expect(issued.name).toBe("e2e-issued-crawler");
+  expect(setAuthKeyRes.status()).toBe(204);
 
-  const deleteRes = await request.delete(`${controlApiBaseUrl}/v1/admin/crawlers/${issued.crawler_id}`, {
+  const claimRes = await request.post(`${controlApiBaseUrl}/internal/crawlers/claim`, {
+    headers: {
+      Authorization: `Bearer ${crawlerKey}`,
+      "Content-Type": "application/json",
+      "x-crawler-id": crawlerId,
+    },
+    data: { max_jobs: 1 },
+  });
+  expect(claimRes.status()).toBe(200);
+
+  const overviewRes = await request.get(`${controlApiBaseUrl}/v1/admin/crawl/overview`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  expect(deleteRes.status()).toBe(204);
+  expect(overviewRes.ok()).toBeTruthy();
+  const overview = await overviewRes.json();
+  expect(overview.crawlers.some((crawler: { id: string }) => crawler.id === crawlerId)).toBeTruthy();
 });

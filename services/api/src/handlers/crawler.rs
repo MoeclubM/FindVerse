@@ -22,6 +22,7 @@ pub async fn claim_jobs(
                 headers
                     .get("authorization")
                     .and_then(|value| value.to_str().ok()),
+                &state.default_crawler_owner_id,
                 request,
             )
             .await?,
@@ -42,6 +43,7 @@ pub async fn submit_crawl_report(
                 headers
                     .get("authorization")
                     .and_then(|value| value.to_str().ok()),
+                &state.default_crawler_owner_id,
                 request,
                 &state.query.search_index,
             )

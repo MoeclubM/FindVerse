@@ -174,14 +174,6 @@ export type CrawlOverview = {
   recent_events: CrawlEvent[];
 };
 
-export type CreatedCrawlerCredential = {
-  crawler_id: string;
-  crawler_key: string;
-  name: string;
-  preview: string;
-  created_at: string;
-};
-
 export type DocumentList = {
   total_estimate: number;
   next_offset: number | null;
@@ -281,14 +273,6 @@ export function getCrawlOverview(token: string) {
 export function renameCrawler(token: string, id: string, name: string) {
   return request<void>(`/v1/admin/crawlers/${id}`, {
     method: "PATCH",
-    token,
-    body: JSON.stringify({ name }),
-  });
-}
-
-export function createCrawler(token: string, name: string) {
-  return request<CreatedCrawlerCredential>("/v1/admin/crawlers", {
-    method: "POST",
     token,
     body: JSON.stringify({ name }),
   });

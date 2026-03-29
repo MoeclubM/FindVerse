@@ -244,10 +244,6 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             delete(handlers::admin::admin_revoke_developer_key),
         )
         .route(
-            "/v1/admin/crawlers",
-            post(handlers::admin::admin_create_crawler),
-        )
-        .route(
             "/v1/admin/crawlers/{id}",
             patch(handlers::admin::admin_rename_crawler)
                 .delete(handlers::admin::admin_delete_crawler),
