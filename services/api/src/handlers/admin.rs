@@ -14,10 +14,10 @@ use crate::{
     models::{
         AdminDeveloperRecord, AdminLoginRequest, AdminSessionResponse, CrawlJobListParams,
         CrawlJobListResponse, CrawlJobStats, CrawlOriginState, CrawlOverviewResponse, CrawlRule,
-        CrawlerJoinKeyResponse, CreateCrawlRuleRequest, CreateKeyRequest, CreatedKeyResponse,
-        DeveloperUsageResponse, DocumentListParams, DocumentListResponse, PurgeSiteRequest,
-        PurgeSiteResponse, RenameCrawlerRequest, SeedFrontierRequest, SeedFrontierResponse,
-        SetSystemConfigRequest, SystemConfigResponse, UpdateCrawlRuleRequest,
+        CreateCrawlRuleRequest, CreateCrawlerRequest, CreateKeyRequest, CreatedCrawlerResponse,
+        CreatedKeyResponse, DeveloperUsageResponse, DocumentListParams, DocumentListResponse,
+        PurgeSiteRequest, PurgeSiteResponse, RenameCrawlerRequest, SeedFrontierRequest,
+        SeedFrontierResponse, SetSystemConfigRequest, SystemConfigResponse, UpdateCrawlRuleRequest,
         UpdateDeveloperRequest,
     },
     store::DeveloperStore,
@@ -137,6 +137,32 @@ pub async fn admin_rename_crawler(
     state
         .crawler_store
         .rename_crawler(&state.default_crawler_owner_id, &id, &request.name)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_create_crawler(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateCrawlerRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    let created: CreatedCrawlerResponse = state
+        .crawler_store
+        .create_crawler(&state.default_crawler_owner_id, request.name.as_deref())
+        .await?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+pub async fn admin_delete_crawler(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    state
+        .crawler_store
+        .delete_crawler(&state.default_crawler_owner_id, &id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -276,31 +302,6 @@ pub async fn admin_purge_site(
     Ok(Json(response))
 }
 
-pub async fn admin_get_join_key(
-    State(state): State<ControlState>,
-    headers: HeaderMap,
-) -> Result<Json<CrawlerJoinKeyResponse>, ApiError> {
-    let _admin = authorize_admin(&state, &headers).await?;
-    let key = state
-        .crawler_store
-        .get_join_key(state.crawler_join_key.as_deref())
-        .await;
-    Ok(Json(CrawlerJoinKeyResponse { join_key: key }))
-}
-
-pub async fn admin_set_join_key(
-    State(state): State<ControlState>,
-    headers: HeaderMap,
-    Json(body): Json<CrawlerJoinKeyResponse>,
-) -> Result<StatusCode, ApiError> {
-    let _admin = authorize_admin(&state, &headers).await?;
-    state
-        .crawler_store
-        .set_join_key(body.join_key.filter(|k| !k.is_empty()))
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
 pub async fn admin_list_system_config(
     State(state): State<ControlState>,
     headers: HeaderMap,
@@ -319,8 +320,7 @@ pub async fn admin_set_system_config(
     let _admin = authorize_admin(&state, &headers).await?;
     let allowed = matches!(
         key.as_str(),
-        "join_key"
-            | "crawler.claim_timeout_secs"
+        "crawler.claim_timeout_secs"
             | "crawler.max_attempts"
             | "crawler.tor_proxy_url"
             | "crawler.tor_enabled"

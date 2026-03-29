@@ -34,7 +34,6 @@ cp .env.example .env
 - `FINDVERSE_FRONTEND_ORIGIN`
 - `FINDVERSE_LOCAL_ADMIN_PASSWORD`
 - `FINDVERSE_POSTGRES_PASSWORD`
-- `FINDVERSE_CRAWLER_JOIN_KEY`
 
 3. 构建并启动主站。
 
@@ -46,18 +45,18 @@ docker compose up -d --build
 
 ## 爬虫节点
 
-直接从 GitHub 安装或更新 crawler，用同一条命令就行：
+先在 `/console -> Workers` 创建 crawler 凭据，然后直接从 GitHub 安装或更新 crawler：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
 ```
 
-以后重复执行这条命令就是原地更新。更新时继续带 `--join-key` 也没问题，只有首次入网或显式加 `--rejoin` 时才会真的用到它。
+以后重复执行这条命令就是原地更新。装好之后，后续更新既可以继续带同一组参数，也可以直接复用本地 `/etc/findverse-crawler/crawler.env`。
 
 只有你明确要跟最新成功的 CI 开发构建时，才用 `dev`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel dev --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
 ```
 
 - `--channel release` 不需要 token

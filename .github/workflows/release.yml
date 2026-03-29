@@ -18,27 +18,7 @@ jobs:
 
   build-binaries:
     needs: validate
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            archive: findverse-linux-x86_64.tar.gz
-            artifact_name: binaries-linux-x86_64
-            package_cmd: |
-              mkdir -p dist
-              tar -czf dist/findverse-linux-x86_64.tar.gz -C target/release findverse-control-api findverse-query-api findverse-crawler
-          - os: windows-latest
-            archive: findverse-windows-x86_64.zip
-            artifact_name: binaries-windows-x86_64
-            package_cmd: |
-              New-Item -ItemType Directory -Path dist -Force | Out-Null
-              Compress-Archive -Path `
-                target/release/findverse-control-api.exe, `
-                target/release/findverse-query-api.exe, `
-                target/release/findverse-crawler.exe `
-                -DestinationPath dist/findverse-windows-x86_64.zip -Force
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -52,21 +32,17 @@ jobs:
       - name: Build release binaries
         run: cargo build --release -p findverse-control-api -p findverse-query-api -p findverse-crawler
 
-      - name: Package binaries on Linux
-        if: runner.os == 'Linux'
+      - name: Package binaries
         shell: bash
-        run: ${{ matrix.package_cmd }}
-
-      - name: Package binaries on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ${{ matrix.package_cmd }}
+        run: |
+          mkdir -p dist
+          tar -czf dist/findverse-linux-x86_64.tar.gz -C target/release findverse-control-api findverse-query-api findverse-crawler
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.archive }}
+          name: binaries-linux-x86_64
+          path: dist/findverse-linux-x86_64.tar.gz
 
   create-release:
     needs:

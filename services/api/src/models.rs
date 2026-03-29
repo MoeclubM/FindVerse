@@ -274,6 +274,20 @@ pub struct RenameCrawlerRequest {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateCrawlerRequest {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatedCrawlerResponse {
+    pub crawler_id: String,
+    pub crawler_key: String,
+    pub name: String,
+    pub preview: String,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CrawlerMetadata {
     pub id: String,
@@ -612,25 +626,6 @@ pub struct UpdateDeveloperRequest {
     pub daily_limit: Option<u32>,
     pub enabled: Option<bool>,
     pub password: Option<String>,
-}
-
-// Crawler join key
-#[derive(Debug, Clone, Deserialize)]
-pub struct JoinCrawlerRequest {
-    pub join_key: String,
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct JoinCrawlerResponse {
-    pub crawler_id: String,
-    pub crawler_key: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CrawlerJoinKeyResponse {
-    pub join_key: Option<String>,
 }
 
 // Crawl job management

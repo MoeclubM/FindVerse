@@ -1,9 +1,18 @@
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeSet,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
 use reqwest::header::CONTENT_TYPE;
-use tokio::sync::Mutex;
+#[cfg(unix)]
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::{Mutex, Notify};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -28,35 +37,6 @@ const MAX_DISCOVERED_URLS_PER_REPORT: usize = 200;
 struct NetworkClients {
     page: reqwest::Client,
     meta: reqwest::Client,
-}
-
-// ---------------------------------------------------------------------------
-// Registration helpers
-// ---------------------------------------------------------------------------
-pub async fn crawler_join(
-    client: &reqwest::Client,
-    server: &str,
-    join_key: &str,
-) -> anyhow::Result<crate::models::JoinCrawlerResponse> {
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-    let name = format!("worker-{hostname}");
-
-    let response = client
-        .post(format!(
-            "{}/internal/crawlers/join",
-            server.trim_end_matches('/')
-        ))
-        .json(&serde_json::json!({ "join_key": join_key, "name": name }))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("join failed with status {}", response.status());
-    }
-
-    Ok(response.json().await?)
 }
 
 fn build_fetch_client(
@@ -123,8 +103,27 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
     };
 
     let state = Arc::new(Mutex::new(WorkerState::new()));
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let shutdown_notify = Arc::new(Notify::new());
+    tokio::spawn({
+        let shutdown_requested = Arc::clone(&shutdown_requested);
+        let shutdown_notify = Arc::clone(&shutdown_notify);
+        async move {
+            if let Err(error) = wait_for_shutdown_signal().await {
+                warn!(?error, "failed to install shutdown listener");
+                return;
+            }
+            shutdown_requested.store(true, Ordering::Relaxed);
+            shutdown_notify.notify_waiters();
+        }
+    });
 
     loop {
+        if shutdown_requested.load(Ordering::Relaxed) {
+            info!("shutdown requested, stopping before claiming more jobs");
+            break;
+        }
+
         let claim = claim_jobs(&api_client, &config).await?;
         if claim.jobs.is_empty() {
             info!(
@@ -134,7 +133,13 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             if config.once {
                 break;
             }
-            sleep(Duration::from_secs(config.poll_interval_secs)).await;
+            tokio::select! {
+                _ = sleep(Duration::from_secs(config.poll_interval_secs)) => {}
+                _ = shutdown_notify.notified() => {
+                    info!("shutdown requested while idle, stopping worker");
+                    break;
+                }
+            }
             continue;
         }
 
@@ -198,9 +203,31 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             report.indexed_documents
         );
 
-        if config.once {
+        if config.once || shutdown_requested.load(Ordering::Relaxed) {
+            if shutdown_requested.load(Ordering::Relaxed) {
+                info!("shutdown requested, exiting after reporting current batch");
+            }
             break;
         }
+    }
+
+    Ok(())
+}
+
+async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut term = signal(SignalKind::terminate())?;
+        let mut interrupt = signal(SignalKind::interrupt())?;
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = interrupt.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
     }
 
     Ok(())

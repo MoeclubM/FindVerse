@@ -35,7 +35,6 @@ pub struct Config {
     pub bootstrap_admin_enabled: bool,
     pub crawler_maintenance_interval_secs: u64,
     pub crawler_claim_timeout_secs: u64,
-    pub crawler_join_key: Option<String>,
 }
 
 impl Config {
@@ -104,10 +103,6 @@ impl Config {
             .parse()
             .context("invalid FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS")?;
 
-        let crawler_join_key = env::var("FINDVERSE_CRAWLER_JOIN_KEY")
-            .ok()
-            .filter(|v| !v.is_empty());
-
         Ok(Self {
             bind_addr,
             index_path,
@@ -125,7 +120,6 @@ impl Config {
             bootstrap_admin_enabled,
             crawler_maintenance_interval_secs,
             crawler_claim_timeout_secs,
-            crawler_join_key,
         })
     }
 }

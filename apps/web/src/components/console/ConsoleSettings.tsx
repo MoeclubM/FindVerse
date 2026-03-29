@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 
 import { getSystemConfig, setSystemConfig } from "../../api";
 import { FieldShell, SectionHeader } from "../common/PanelPrimitives";
-import { JoinKeyManager } from "../JoinKeyManager";
 import { useConsole } from "./ConsoleContext";
 
 type ConfigMap = Record<string, string>;
@@ -121,14 +120,6 @@ export function ConsoleSettings() {
 
   return (
     <>
-      <section className="panel panel-wide compact-panel">
-        <SectionHeader
-          title={t("console.settings.join_key_section")}
-          meta={t("console.settings.join_key_description")}
-        />
-        <JoinKeyManager token={token} setFlash={setFlash} />
-      </section>
-
       <section className="panel panel-wide compact-panel">
         <SectionHeader title={t("console.settings.crawler_config_section")} />
         <div className="inline-form form-fields">

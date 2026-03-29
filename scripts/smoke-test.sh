@@ -104,7 +104,6 @@ try_probe "query-api readyz" "${QUERY_API_BASE_URL:+$QUERY_API_BASE_URL/readyz}"
 timestamp="$(date +%s)"
 developer_username="smoke-dev-$timestamp"
 developer_password="smoke-password-123"
-join_key="smoke-join-key-$timestamp"
 if [[ -z "$SEED_URL_TEMPLATE" ]]; then
   SEED_URL_TEMPLATE="$PUBLIC_BASE_URL/smoke-crawler.html?findverse-smoke={timestamp}"
 fi
@@ -150,8 +149,11 @@ admin_session="$(json_request POST "$API_BASE_URL/v1/admin/session/login" "{\"us
 admin_token="$(echo "$admin_session" | jq -r '.token')"
 assert "[[ -n \"$admin_token\" && \"$admin_token\" != \"null\" ]]" "admin login returned no token"
 
-join_key_status="$(status_request PUT "$API_BASE_URL/v1/admin/crawler-join-key" "{\"join_key\":\"$join_key\"}" "$admin_token")"
-assert "[[ \"$join_key_status\" == \"204\" ]]" "setting crawler join key did not return 204"
+crawler_credentials="$(json_request POST "$API_BASE_URL/v1/admin/crawlers" "{\"name\":\"smoke-crawler-$timestamp\"}" "$admin_token")"
+crawler_id="$(echo "$crawler_credentials" | jq -r '.crawler_id')"
+crawler_key="$(echo "$crawler_credentials" | jq -r '.crawler_key')"
+assert "[[ -n \"$crawler_id\" && \"$crawler_id\" != \"null\" ]]" "crawler creation returned no crawler_id"
+assert "[[ -n \"$crawler_key\" && \"$crawler_key\" != \"null\" ]]" "crawler creation returned no crawler_key"
 
 seed_payload="$(json_request POST "$API_BASE_URL/v1/admin/frontier/seed" "{\"urls\":[\"$seed_url\"],\"source\":\"smoke-test\",\"max_depth\":1,\"allow_revisit\":true}" "$admin_token")"
 echo "$seed_payload" | jq -e '.accepted_urls >= 1' >/dev/null
@@ -171,9 +173,9 @@ run_worker() {
     all_proxy=
   )
   if command -v findverse-crawler >/dev/null 2>&1; then
-    "${worker_env[@]}" findverse-crawler worker --server "$CRAWLER_SERVER" --join-key "$join_key" --once --max-jobs 10
+    "${worker_env[@]}" findverse-crawler worker --server "$CRAWLER_SERVER" --crawler-id "$crawler_id" --crawler-key "$crawler_key" --once --max-jobs 10
   else
-    "${worker_env[@]}" cargo run -p findverse-crawler -- worker --server "$CRAWLER_SERVER" --join-key "$join_key" --once --max-jobs 10
+    "${worker_env[@]}" cargo run -p findverse-crawler -- worker --server "$CRAWLER_SERVER" --crawler-id "$crawler_id" --crawler-key "$crawler_key" --once --max-jobs 10
   fi
 }
 
@@ -210,8 +212,8 @@ echo "$search_smoke_payload" | jq -e '.results | any(.url | contains("smoke-craw
 echo "PASS  smoke document is searchable"
 
 step "Docker rebuild verification"
-echo "Reuse the deployment script to rebuild containers when needed:"
-echo "  ./scripts/deploy-stack.sh --rebuild"
+echo "Rebuild the main stack directly with Docker Compose when needed:"
+echo "  docker compose up -d --build"
 
 if $RUN_PLAYWRIGHT; then
   step "Playwright"
@@ -223,4 +225,4 @@ if $RUN_PLAYWRIGHT; then
 fi
 
 step "Smoke test summary"
-echo "PASS  search, suggest, developer auth, key revocation, admin login, crawler join/claim/report, indexed document metadata, smoke search result"
+echo "PASS  search, suggest, developer auth, key revocation, admin login, crawler credential issue/claim/report, indexed document metadata, smoke search result"

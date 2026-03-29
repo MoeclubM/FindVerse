@@ -9,8 +9,6 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(process.cwd());
 const controlApiBaseUrl = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:8080";
 const queryApiBaseUrl = process.env.PLAYWRIGHT_QUERY_API_BASE_URL ?? "http://127.0.0.1:8081";
-const wslDistro = process.env.PLAYWRIGHT_WSL_DISTRO ?? "Debian";
-const wslUser = process.env.PLAYWRIGHT_WSL_USER ?? "root";
 
 test.describe.configure({ timeout: 300_000 });
 
@@ -47,21 +45,15 @@ async function waitForFindVerseReady(request: APIRequestContext) {
     .toBe("ready");
 }
 
-function toWslPath(value: string) {
-  const normalized = value.replace(/\\/g, "/");
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    return `/mnt/${normalized[0].toLowerCase()}${normalized.slice(2)}`;
-  }
-  return normalized;
-}
-
-async function runCrawlerWorker(joinKey: string) {
+async function runCrawlerWorker(crawlerId: string, crawlerKey: string) {
   const workerArgs = [
     "worker",
     "--server",
     controlApiBaseUrl,
-    "--join-key",
-    joinKey,
+    "--crawler-id",
+    crawlerId,
+    "--crawler-key",
+    crawlerKey,
     "--once",
     "--max-jobs",
     "1",
@@ -79,12 +71,7 @@ async function runCrawlerWorker(joinKey: string) {
     no_proxy: "127.0.0.1,localhost,host.docker.internal,172.30.3.194",
     RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Awarnings`.trim(),
   };
-  const localBinary = path.join(
-    repoRoot,
-    "target",
-    "debug",
-    process.platform === "win32" ? "findverse-crawler.exe" : "findverse-crawler",
-  );
+  const localBinary = path.join(repoRoot, "target", "debug", "findverse-crawler");
 
   if (existsSync(localBinary)) {
     await execFileAsync(localBinary, workerArgs, {
@@ -93,29 +80,6 @@ async function runCrawlerWorker(joinKey: string) {
       env: workerEnv,
     });
     return;
-  }
-
-  if (process.platform === "win32") {
-    try {
-      await execFileAsync("cargo", cargoArgs, {
-        cwd: repoRoot,
-        timeout: 180_000,
-        env: workerEnv,
-      });
-      return;
-    } catch {
-      const command = `cd ${JSON.stringify(toWslPath(repoRoot))} && cargo ${cargoArgs.join(" ")}`;
-      await execFileAsync(
-        "wsl.exe",
-        ["-d", wslDistro, "-u", wslUser, "--", "bash", "-lc", command],
-        {
-          cwd: repoRoot,
-          timeout: 180_000,
-          env: workerEnv,
-        },
-      );
-      return;
-    }
   }
 
   await execFileAsync("cargo", cargoArgs, {
@@ -129,7 +93,7 @@ test.beforeEach(async ({ request }) => {
   await waitForFindVerseReady(request);
 });
 
-test("developer self-service, admin management, crawler join registration, and search flow", async ({
+test("developer self-service, admin management, crawler credential issuance, and search flow", async ({
   page,
   request,
 }) => {
@@ -138,7 +102,6 @@ test("developer self-service, admin management, crawler join registration, and s
   const seedUrl = `https://example.com/?findverse-e2e=${Date.now()}`;
   const developerUsername = `dev-${Date.now()}`;
   const developerPassword = "dev-password-123";
-  const joinKey = `e2e-join-key-${Date.now()}`;
 
   await waitForFindVerseReady(request);
 
@@ -172,11 +135,17 @@ test("developer self-service, admin management, crawler join registration, and s
   await page.getByRole("button", { name: "Login" }).click();
   await expect(page.getByRole("heading", { name: "System Overview" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Settings" }).click();
-  await expect(page.getByRole("heading", { name: "Crawler Join Key" })).toBeVisible();
-  await page.getByPlaceholder("Join key for enrolling new workers").fill(joinKey);
-  await page.getByRole("button", { name: "Save key" }).click();
-  await expect(page.getByText("Join key updated")).toBeVisible();
+  const sessionResponse = await request.post(`${controlApiBaseUrl}/v1/admin/session/login`, {
+    data: { username, password },
+  });
+  expect(sessionResponse.ok()).toBeTruthy();
+  const { token } = await sessionResponse.json();
+  const crawlerResponse = await request.post(`${controlApiBaseUrl}/v1/admin/crawlers`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { name: `e2e-crawler-${Date.now()}` },
+  });
+  expect(crawlerResponse.ok()).toBeTruthy();
+  const { crawler_id: crawlerId, crawler_key: crawlerKey } = await crawlerResponse.json();
 
   await page.getByRole("button", { name: "Users" }).click();
   const developerRow = page
@@ -193,13 +162,7 @@ test("developer self-service, admin management, crawler join registration, and s
   await page.getByRole("button", { name: "Queue URLs" }).click();
   await expect(page.getByText(/Queued 1 URLs/i)).toBeVisible();
 
-  await runCrawlerWorker(joinKey);
-
-  const sessionResponse = await request.post(`${controlApiBaseUrl}/v1/admin/session/login`, {
-    data: { username, password },
-  });
-  expect(sessionResponse.ok()).toBeTruthy();
-  const { token } = await sessionResponse.json();
+  await runCrawlerWorker(crawlerId, crawlerKey);
 
   await expect
     .poll(
@@ -243,7 +206,7 @@ test("developer self-service, admin management, crawler join registration, and s
   await expect(page.locator("main article a").first()).toBeVisible();
 });
 
-test("crawler join key flow", async ({ request }) => {
+test("crawler credential flow", async ({ request }) => {
   const username = process.env.FINDVERSE_LOCAL_ADMIN_USERNAME ?? "admin";
   const password = process.env.FINDVERSE_LOCAL_ADMIN_PASSWORD ?? "change-me";
 
@@ -254,35 +217,18 @@ test("crawler join key flow", async ({ request }) => {
   expect(loginRes.ok()).toBeTruthy();
   const { token } = await loginRes.json();
 
-  // Set join key via admin API
-  const joinKey = `test-join-key-${Date.now()}`;
-  const setRes = await request.put(`${controlApiBaseUrl}/v1/admin/crawler-join-key`, {
+  const createRes = await request.post(`${controlApiBaseUrl}/v1/admin/crawlers`, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    data: { join_key: joinKey },
+    data: { name: "e2e-issued-crawler" },
   });
-  expect(setRes.status()).toBe(204);
+  expect(createRes.status()).toBe(201);
+  const issued = await createRes.json();
+  expect(issued.crawler_id).toBeTruthy();
+  expect(issued.crawler_key).toBeTruthy();
+  expect(issued.name).toBe("e2e-issued-crawler");
 
-  // Read it back
-  const getRes = await request.get(`${controlApiBaseUrl}/v1/admin/crawler-join-key`, {
+  const deleteRes = await request.delete(`${controlApiBaseUrl}/v1/admin/crawlers/${issued.crawler_id}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  expect(getRes.ok()).toBeTruthy();
-  const { join_key } = await getRes.json();
-  expect(join_key).toBe(joinKey);
-
-  // Join with correct key
-  const joinRes = await request.post(`${controlApiBaseUrl}/internal/crawlers/join`, {
-    data: { join_key: joinKey, name: "e2e-join-crawler" },
-  });
-  expect(joinRes.status()).toBe(201);
-  const joined = await joinRes.json();
-  expect(joined.crawler_id).toBeTruthy();
-  expect(joined.crawler_key).toBeTruthy();
-  expect(joined.name).toBe("e2e-join-crawler");
-
-  // Join with wrong key should fail
-  const badRes = await request.post(`${controlApiBaseUrl}/internal/crawlers/join`, {
-    data: { join_key: "wrong-key", name: "bad-crawler" },
-  });
-  expect(badRes.status()).toBe(401);
+  expect(deleteRes.status()).toBe(204);
 });

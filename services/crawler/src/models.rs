@@ -40,15 +40,12 @@ pub enum Command {
     Worker {
         #[arg(long)]
         server: String,
-        /// Explicit crawler ID (use with --crawler-key for manual setup)
+        /// Fixed crawler ID
         #[arg(long)]
-        crawler_id: Option<String>,
-        /// Explicit crawler key (use with --crawler-id for manual setup)
+        crawler_id: String,
+        /// Fixed crawler key
         #[arg(long)]
-        crawler_key: Option<String>,
-        /// Join key — auto-registers via /internal/crawlers/join
-        #[arg(long)]
-        join_key: Option<String>,
+        crawler_key: String,
         /// Claim batch size. Values below --concurrency are ignored.
         #[arg(long, default_value_t = 16)]
         max_jobs: usize,
@@ -249,7 +246,7 @@ pub struct SubmitCrawlReportResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Worker config & registration structs
+// Worker config
 // ---------------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -274,13 +271,6 @@ pub struct LlmFilterConfig {
     pub model: String,
     pub min_score: f32,
     pub max_body_chars: usize,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct JoinCrawlerResponse {
-    pub crawler_id: String,
-    pub crawler_key: String,
-    pub name: String,
 }
 
 // ---------------------------------------------------------------------------

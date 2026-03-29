@@ -5,8 +5,8 @@ REPO="${FINDVERSE_GITHUB_REPO:-MoeclubM/FindVerse}"
 CHANNEL="release"
 VERSION=""
 SERVER_URL=""
-JOIN_KEY=""
-CRAWLER_NAME="worker-$(hostname 2>/dev/null || echo unknown)"
+CRAWLER_ID_ARG=""
+CRAWLER_KEY_ARG=""
 SERVICE_NAME="findverse-crawler"
 INSTALL_DIR="/opt/findverse-crawler"
 ENV_FILE="/etc/findverse-crawler/crawler.env"
@@ -16,7 +16,6 @@ POLL_INTERVAL_SECS=""
 ALLOWED_DOMAINS=""
 PROXY=""
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
-FORCE_REJOIN=false
 SKIP_BROWSER_INSTALL=false
 
 TMP_DIR=""
@@ -34,11 +33,11 @@ installs the binary into /opt, writes config into /etc, and enables a systemd se
 
 Options:
   --server <url>                Control API base URL. Required on first install, reused later if omitted
-  --join-key <key>              Join key for first install. Safe to keep on update commands unless you add --rejoin
+  --crawler-id <id>             Fixed crawler ID. Required on first install, reused later if omitted
+  --crawler-key <key>           Fixed crawler key. Required on first install, reused later if omitted
   --channel <release|dev>       Download source. Default: release
   --version <tag>               Optional pinned release tag, for example v1.2.3
   --repo <owner/name>           GitHub repo. Default: MoeclubM/FindVerse
-  --name <crawler-name>         Registration name. Default: worker-<hostname>
   --service-name <name>         systemd service name. Default: findverse-crawler
   --install-dir <dir>           Install directory. Default: /opt/findverse-crawler
   --env-file <path>             Config file path. Default: /etc/findverse-crawler/crawler.env
@@ -48,7 +47,6 @@ Options:
   --allowed-domains <csv>       Optional domain allowlist
   --proxy <url>                 Optional outbound proxy
   --github-token <token>        GitHub token. Only needed for --channel dev
-  --rejoin                      Force re-registration and refresh crawler credentials
   --skip-browser-install        Do not auto-install Chromium when missing
   --help                        Show this help
 
@@ -82,11 +80,11 @@ trap cleanup EXIT
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --server) SERVER_URL="$2"; shift 2 ;;
-    --join-key) JOIN_KEY="$2"; shift 2 ;;
+    --crawler-id) CRAWLER_ID_ARG="$2"; shift 2 ;;
+    --crawler-key) CRAWLER_KEY_ARG="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
-    --name) CRAWLER_NAME="$2"; shift 2 ;;
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
@@ -96,7 +94,6 @@ while [[ $# -gt 0 ]]; do
     --allowed-domains) ALLOWED_DOMAINS="$2"; shift 2 ;;
     --proxy) PROXY="$2"; shift 2 ;;
     --github-token) GITHUB_TOKEN="$2"; shift 2 ;;
-    --rejoin) FORCE_REJOIN=true; shift ;;
     --skip-browser-install) SKIP_BROWSER_INSTALL=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) fail "unknown option: $1" ;;
@@ -274,21 +271,6 @@ load_existing_config() {
   fi
 }
 
-register_crawler() {
-  local join_url request_body response
-
-  [[ -n "$JOIN_KEY" ]] || fail "--join-key is required for first install or --rejoin"
-  join_url="${SERVER_URL%/}/internal/crawlers/join"
-  request_body="$(jq -nc --arg join_key "$JOIN_KEY" --arg name "$CRAWLER_NAME" '{join_key: $join_key, name: $name}')"
-  response="$(curl -fsSL -X POST "$join_url" -H "Content-Type: application/json" -d "$request_body")" \
-    || fail "crawler registration failed for ${join_url}"
-
-  REGISTERED_CRAWLER_ID="$(printf '%s' "$response" | jq -r '.crawler_id')"
-  REGISTERED_CRAWLER_KEY="$(printf '%s' "$response" | jq -r '.crawler_key')"
-  [[ -n "$REGISTERED_CRAWLER_ID" && "$REGISTERED_CRAWLER_ID" != "null" ]] || fail "crawler registration returned no crawler_id"
-  [[ -n "$REGISTERED_CRAWLER_KEY" && "$REGISTERED_CRAWLER_KEY" != "null" ]] || fail "crawler registration returned no crawler_key"
-}
-
 write_env_file() {
   local final_crawler_id="$1"
   local final_crawler_key="$2"
@@ -367,6 +349,7 @@ EnvironmentFile=${ENV_FILE}
 ExecStart=${INSTALL_DIR}/run-crawler.sh
 Restart=always
 RestartSec=5
+TimeoutStopSec=600
 WorkingDirectory=${INSTALL_DIR}
 
 [Install]
@@ -402,14 +385,10 @@ main() {
 
   binary_path="$(extract_crawler_binary "$archive_path")"
 
-  final_crawler_id="${EXISTING_CRAWLER_ID:-}"
-  final_crawler_key="${EXISTING_CRAWLER_KEY:-}"
-  if $FORCE_REJOIN || [[ -z "$final_crawler_id" || -z "$final_crawler_key" ]]; then
-    [[ -n "$JOIN_KEY" ]] || fail "--join-key is required for first install or --rejoin"
-    register_crawler
-    final_crawler_id="$REGISTERED_CRAWLER_ID"
-    final_crawler_key="$REGISTERED_CRAWLER_KEY"
-  fi
+  final_crawler_id="${CRAWLER_ID_ARG:-${EXISTING_CRAWLER_ID:-}}"
+  final_crawler_key="${CRAWLER_KEY_ARG:-${EXISTING_CRAWLER_KEY:-}}"
+  [[ -n "$final_crawler_id" ]] || fail "--crawler-id is required on first install"
+  [[ -n "$final_crawler_key" ]] || fail "--crawler-key is required on first install"
 
   install_runtime_files "$binary_path"
   write_env_file "$final_crawler_id" "$final_crawler_key"

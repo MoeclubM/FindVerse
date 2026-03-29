@@ -49,7 +49,6 @@ pub struct ControlState {
     pub admin_auth: AdminAuth,
     pub dev_auth: DevAuthStore,
     pub crawler_claim_timeout_secs: u64,
-    pub crawler_join_key: Option<String>,
     pub default_crawler_owner_id: String,
 }
 
@@ -166,7 +165,6 @@ async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState
         admin_auth: AdminAuth::new(db.pg_pool.clone()),
         dev_auth: DevAuthStore::new(db.pg_pool.clone()),
         crawler_claim_timeout_secs: config.crawler_claim_timeout_secs.max(1),
-        crawler_join_key: config.crawler_join_key.clone(),
         default_crawler_owner_id: format!("local:{}", config.local_admin_username),
     })
 }
@@ -246,8 +244,13 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             delete(handlers::admin::admin_revoke_developer_key),
         )
         .route(
+            "/v1/admin/crawlers",
+            post(handlers::admin::admin_create_crawler),
+        )
+        .route(
             "/v1/admin/crawlers/{id}",
-            patch(handlers::admin::admin_rename_crawler),
+            patch(handlers::admin::admin_rename_crawler)
+                .delete(handlers::admin::admin_delete_crawler),
         )
         .route(
             "/v1/admin/frontier/seed",
@@ -276,10 +279,6 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
         .route(
             "/v1/admin/documents/purge-site",
             post(handlers::admin::admin_purge_site),
-        )
-        .route(
-            "/v1/admin/crawler-join-key",
-            get(handlers::admin::admin_get_join_key).put(handlers::admin::admin_set_join_key),
         )
         .route(
             "/v1/admin/system-config",
@@ -349,10 +348,6 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
         .route(
             "/internal/crawlers/report",
             post(handlers::crawler::submit_crawl_report),
-        )
-        .route(
-            "/internal/crawlers/join",
-            post(handlers::crawler::crawler_join),
         )
         .layer(shared_cors(config))
         .layer(TraceLayer::new_for_http())

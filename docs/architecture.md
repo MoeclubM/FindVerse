@@ -4,7 +4,7 @@
 
 - `query-api`: public search traffic and developer search traffic
 - `control-api`: admin UI, developer portal, crawler control, scheduling, document management
-- `crawler-worker`: fetch, parse, discover, report
+- `crawler`: fetch, parse, discover, report
 - `web`: single SPA that proxies search routes to `query-api` and everything else to `control-api`
 
 ## Storage split
@@ -15,7 +15,7 @@
 
 ## Search flow
 
-1. `crawler-worker` fetches and parses pages.
+1. `crawler` fetches and parses pages.
 2. `control-api` classifies the report into `succeeded`, `failed`, `blocked`, `dead_letter`, or re-queued `queued`.
 3. Successful documents are written to PostgreSQL metadata tables and indexed into OpenSearch.
 4. `query-api` serves `/v1/search` and `/v1/suggest` from OpenSearch only.
@@ -23,7 +23,7 @@
 ## Crawl flow
 
 1. Seeds and rules create `queued` jobs in PostgreSQL.
-2. Workers join through `/internal/crawlers/join`.
+2. Admin issues fixed `crawler_id` and `crawler_key` credentials for workers.
 3. Workers claim jobs through `/internal/crawlers/claim`; claim increments `attempt_count`.
 4. Workers report results through `/internal/crawlers/report`.
 5. Retryable failures are re-queued with `next_retry_at`.

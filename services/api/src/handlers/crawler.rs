@@ -1,16 +1,10 @@
-use axum::{
-    Json,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, http::HeaderMap};
 
 use crate::{
     ControlState,
     error::ApiError,
     models::{
-        ClaimJobsRequest, ClaimJobsResponse, JoinCrawlerRequest, SubmitCrawlReportRequest,
-        SubmitCrawlReportResponse,
+        ClaimJobsRequest, ClaimJobsResponse, SubmitCrawlReportRequest, SubmitCrawlReportResponse,
     },
 };
 
@@ -53,21 +47,6 @@ pub async fn submit_crawl_report(
             )
             .await?,
     ))
-}
-
-pub async fn crawler_join(
-    State(state): State<ControlState>,
-    Json(request): Json<JoinCrawlerRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let response = state
-        .crawler_store
-        .join(
-            &state.default_crawler_owner_id,
-            state.crawler_join_key.as_deref(),
-            request,
-        )
-        .await?;
-    Ok((StatusCode::CREATED, Json(response)))
 }
 
 fn crawler_id_from_headers(headers: &HeaderMap) -> Result<String, ApiError> {

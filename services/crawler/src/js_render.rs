@@ -3,6 +3,9 @@ use headless_chrome::{Browser, LaunchOptions};
 #[cfg(feature = "js-render")]
 use std::time::Duration;
 
+#[cfg(feature = "js-render")]
+use crate::fetch::FINDVERSE_UA;
+
 pub fn needs_js_rendering(html: &str, body_text: &str) -> bool {
     let body_text = body_text.trim();
     let has_content_root = [
@@ -52,6 +55,11 @@ pub async fn render_with_js(url: &str) -> anyhow::Result<String> {
         })?;
 
         let tab = browser.new_tab()?;
+        tab.set_user_agent(
+            FINDVERSE_UA,
+            Some("zh-CN,zh;q=0.9,en;q=0.8"),
+            Some("Linux x86_64"),
+        )?;
         tab.navigate_to(&url)?;
         tab.wait_for_element("body")?;
 

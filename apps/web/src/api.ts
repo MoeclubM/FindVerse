@@ -174,6 +174,14 @@ export type CrawlOverview = {
   recent_events: CrawlEvent[];
 };
 
+export type CreatedCrawlerCredential = {
+  crawler_id: string;
+  crawler_key: string;
+  name: string;
+  preview: string;
+  created_at: string;
+};
+
 export type DocumentList = {
   total_estimate: number;
   next_offset: number | null;
@@ -275,6 +283,21 @@ export function renameCrawler(token: string, id: string, name: string) {
     method: "PATCH",
     token,
     body: JSON.stringify({ name }),
+  });
+}
+
+export function createCrawler(token: string, name: string) {
+  return request<CreatedCrawlerCredential>("/v1/admin/crawlers", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteCrawler(token: string, id: string) {
+  return request<void>(`/v1/admin/crawlers/${id}`, {
+    method: "DELETE",
+    token,
   });
 }
 
@@ -522,21 +545,6 @@ export function deleteDeveloper(token: string, userId: string) {
   return request<void>(`/v1/admin/developers/${userId}`, {
     method: "DELETE",
     token,
-  });
-}
-
-export function getCrawlerJoinKey(token: string) {
-  return request<{ join_key: string | null }>("/v1/admin/crawler-join-key", {
-    method: "GET",
-    token,
-  });
-}
-
-export function setCrawlerJoinKey(token: string, joinKey: string | null) {
-  return request<void>("/v1/admin/crawler-join-key", {
-    method: "PUT",
-    token,
-    body: JSON.stringify({ join_key: joinKey }),
   });
 }
 

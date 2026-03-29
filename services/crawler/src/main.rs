@@ -9,7 +9,7 @@ mod url_normalize;
 mod worker;
 
 use clap::Parser;
-use tracing::{info, warn};
+use tracing::warn;
 
 use models::{Cli, Command, LlmFilterConfig, WorkerConfig};
 
@@ -41,7 +41,6 @@ async fn main() -> anyhow::Result<()> {
             server,
             crawler_id,
             crawler_key,
-            join_key,
             max_jobs,
             poll_interval_secs,
             once,
@@ -62,28 +61,6 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
 
-            let mut client_builder =
-                reqwest::Client::builder().user_agent("FindVerseCrawlerWorker/0.1");
-
-            if let Some(ref proxy_url) = proxy {
-                client_builder = client_builder.proxy(reqwest::Proxy::all(proxy_url)?);
-            }
-
-            let client = client_builder.build()?;
-
-            let (resolved_id, auth_token) = match (crawler_id, crawler_key, join_key) {
-                (Some(id), Some(key), None) => (id, key),
-                (None, None, Some(jk)) => {
-                    let join = worker::crawler_join(&client, &server, &jk).await?;
-                    info!("joined as crawler {} ({})", join.name, join.crawler_id);
-                    (join.crawler_id, join.crawler_key)
-                }
-                _ => anyhow::bail!(
-                    "provide --join-key for join-based registration, \
-                     or both --crawler-id and --crawler-key for manual setup"
-                ),
-            };
-
             let parsed_domains: Vec<String> = allowed_domains
                 .map(|d| {
                     d.split(',')
@@ -95,8 +72,8 @@ async fn main() -> anyhow::Result<()> {
 
             let config = WorkerConfig {
                 server,
-                crawler_id: resolved_id,
-                auth_token,
+                crawler_id,
+                auth_token: crawler_key,
                 max_jobs: max_jobs.max(concurrency),
                 poll_interval_secs,
                 once,

@@ -34,7 +34,6 @@ cp .env.example .env
 - `FINDVERSE_FRONTEND_ORIGIN`
 - `FINDVERSE_LOCAL_ADMIN_PASSWORD`
 - `FINDVERSE_POSTGRES_PASSWORD`
-- `FINDVERSE_CRAWLER_JOIN_KEY`
 
 3. Build and start the main stack.
 
@@ -46,18 +45,18 @@ Main service data is persisted under `./data` and will be created automatically 
 
 ## Crawler Worker
 
-Install or update a crawler worker directly from GitHub with the same command:
+Create crawler credentials in `/console -> Workers`, then install or update a crawler worker directly from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel release --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
 ```
 
-Re-running that command updates the node in place. Keeping `--join-key` on update commands is fine; it is only used when the node enrolls for the first time or when you add `--rejoin`.
+Re-running that command updates the node in place. Once the node is installed, later updates can keep the same flags or simply reuse the saved `/etc/findverse-crawler/crawler.env`.
 
 Only use the development channel when you explicitly want the latest successful CI build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --join-key "<join-key>" --channel dev --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-id "<crawler-id>" --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
 ```
 
 `--channel release` does not need a token. `--channel dev` does, because GitHub Actions artifact downloads require authenticated API access.

@@ -68,7 +68,6 @@ services:
       FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
       FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
       FINDVERSE_BOOTSTRAP_ADMIN_ENABLED: ${FINDVERSE_BOOTSTRAP_ADMIN_ENABLED:-true}
-      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-change-me}
       FINDVERSE_INDEX_PATH: ${FINDVERSE_INDEX_PATH:-services/api/fixtures/bootstrap_documents.json}
       FINDVERSE_DEVELOPER_STORE: ${FINDVERSE_DEVELOPER_STORE:-services/api/fixtures/developer_store.json}
       FINDVERSE_DEV_AUTH_STORE: ${FINDVERSE_DEV_AUTH_STORE:-services/api/fixtures/dev_auth_store.json}
@@ -121,50 +120,3 @@ services:
     ports:
       - "${FINDVERSE_WEB_BIND_HOST:-0.0.0.0}:${FINDVERSE_WEB_PORT:-3000}:3000"
     mem_limit: ${FINDVERSE_WEB_MEM_LIMIT:-256m}
-
-  crawler-worker:
-    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-crawler:${FINDVERSE_IMAGE_TAG:-dev}
-    build:
-      context: .
-      dockerfile: services/crawler/Dockerfile
-    restart: unless-stopped
-    profiles:
-      - crawler
-    depends_on:
-      - control-api
-    environment:
-      FINDVERSE_CRAWLER_SERVER: ${FINDVERSE_CRAWLER_SERVER:-http://control-api:8080}
-      FINDVERSE_CRAWLER_JOIN_KEY: ${FINDVERSE_CRAWLER_JOIN_KEY:-change-me}
-      FINDVERSE_CRAWLER_MAX_JOBS: ${FINDVERSE_CRAWLER_MAX_JOBS:-10}
-      FINDVERSE_CRAWLER_POLL_INTERVAL_SECS: ${FINDVERSE_CRAWLER_POLL_INTERVAL_SECS:-5}
-      FINDVERSE_CRAWLER_CONCURRENCY: ${FINDVERSE_CRAWLER_CONCURRENCY:-4}
-      FINDVERSE_CRAWLER_ALLOWED_DOMAINS: ${FINDVERSE_CRAWLER_ALLOWED_DOMAINS:-}
-      FINDVERSE_CRAWLER_PROXY: ${FINDVERSE_CRAWLER_PROXY:-}
-      FINDVERSE_CRAWLER_LLM_BASE_URL: ${FINDVERSE_CRAWLER_LLM_BASE_URL:-}
-      FINDVERSE_CRAWLER_LLM_API_KEY: ${FINDVERSE_CRAWLER_LLM_API_KEY:-}
-      FINDVERSE_CRAWLER_LLM_MODEL: ${FINDVERSE_CRAWLER_LLM_MODEL:-}
-      FINDVERSE_CRAWLER_LLM_MIN_SCORE: ${FINDVERSE_CRAWLER_LLM_MIN_SCORE:-0.45}
-      FINDVERSE_CRAWLER_LLM_MAX_BODY_CHARS: ${FINDVERSE_CRAWLER_LLM_MAX_BODY_CHARS:-6000}
-    entrypoint:
-      - /bin/sh
-      - -lc
-      - >
-          set -- worker
-          --server "$$FINDVERSE_CRAWLER_SERVER"
-          --join-key "$$FINDVERSE_CRAWLER_JOIN_KEY"
-          --max-jobs "$$FINDVERSE_CRAWLER_MAX_JOBS"
-          --poll-interval-secs "$$FINDVERSE_CRAWLER_POLL_INTERVAL_SECS"
-          --concurrency "$$FINDVERSE_CRAWLER_CONCURRENCY";
-          if [ -n "$$FINDVERSE_CRAWLER_ALLOWED_DOMAINS" ]; then
-          set -- "$$@" --allowed-domains "$$FINDVERSE_CRAWLER_ALLOWED_DOMAINS";
-          fi;
-          if [ -n "$$FINDVERSE_CRAWLER_PROXY" ]; then
-          set -- "$$@" --proxy "$$FINDVERSE_CRAWLER_PROXY";
-          fi;
-          if [ -n "$$FINDVERSE_CRAWLER_LLM_BASE_URL" ] && [ -n "$$FINDVERSE_CRAWLER_LLM_MODEL" ]; then
-          set -- "$$@" --llm-base-url "$$FINDVERSE_CRAWLER_LLM_BASE_URL" --llm-model "$$FINDVERSE_CRAWLER_LLM_MODEL" --llm-min-score "$$FINDVERSE_CRAWLER_LLM_MIN_SCORE" --llm-max-body-chars "$$FINDVERSE_CRAWLER_LLM_MAX_BODY_CHARS";
-          fi;
-          if [ -n "$$FINDVERSE_CRAWLER_LLM_API_KEY" ]; then
-          set -- "$$@" --llm-api-key "$$FINDVERSE_CRAWLER_LLM_API_KEY";
-          fi;
-          exec findverse-crawler "$$@"

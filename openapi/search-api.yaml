@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FindVerse Split API
-  version: 0.3.0
+  version: 0.0.7
 servers:
   - url: http://localhost:8081
     description: query-api
@@ -290,6 +290,13 @@ paths:
         "204":
           description: Key revoked
 
+  /v1/admin/crawlers:
+    post:
+      summary: Create crawler credentials
+      responses:
+        "201":
+          description: Crawler credentials issued
+
   /v1/admin/crawlers/{id}:
     patch:
       summary: Rename crawler worker
@@ -305,8 +312,24 @@ paths:
           schema:
             type: string
       responses:
-        "200":
+        "204":
           description: Crawler updated
+    delete:
+      summary: Delete crawler worker
+      parameters:
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Crawler deleted
 
   /v1/admin/frontier/seed:
     post:
@@ -420,25 +443,6 @@ paths:
       responses:
         "200":
           description: Purge result
-
-  /v1/admin/crawler-join-key:
-    get:
-      summary: Read crawler join key
-      responses:
-        "200":
-          description: Join key
-    put:
-      summary: Set crawler join key
-      responses:
-        "204":
-          description: Updated
-
-  /internal/crawlers/join:
-    post:
-      summary: Register worker with join key
-      responses:
-        "201":
-          description: Worker credentials
 
   /internal/crawlers/claim:
     post:

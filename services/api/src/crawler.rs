@@ -10,9 +10,9 @@ use crate::{
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJob, CrawlJobDetail,
         CrawlJobListResponse, CrawlJobStats, CrawlOverviewResponse, CrawlResultInput, CrawlRule,
-        CrawlerMetadata, CreateCrawlRuleRequest, DeveloperDomainDocument, DeveloperDomainFacet,
-        DeveloperDomainInsightResponse, DeveloperDomainJob, DeveloperDomainSubmitRequest,
-        DeveloperDomainSubmitResponse, IndexedDocument, JoinCrawlerRequest, JoinCrawlerResponse,
+        CrawlerMetadata, CreateCrawlRuleRequest, CreatedCrawlerResponse, DeveloperDomainDocument,
+        DeveloperDomainFacet, DeveloperDomainInsightResponse, DeveloperDomainJob,
+        DeveloperDomainSubmitRequest, DeveloperDomainSubmitResponse, IndexedDocument,
         SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
         SubmitCrawlReportResponse, UpdateCrawlRuleRequest,
     },
@@ -72,30 +72,15 @@ impl CrawlerStore {
         Ok(())
     }
 
-    pub async fn join(
+    pub async fn create_crawler(
         &self,
-        owner_developer_id: &str,
-        config_join_key: Option<&str>,
-        request: JoinCrawlerRequest,
-    ) -> Result<JoinCrawlerResponse, ApiError> {
-        let expected_key = self
-            .resolve_join_key(config_join_key)
-            .await?
-            .ok_or_else(|| {
-                ApiError::BadRequest("crawler join key is not configured".to_string())
-            })?;
-
-        if request.join_key != expected_key {
-            return Err(ApiError::Unauthorized("invalid join key".to_string()));
-        }
-
-        let clean_name = request
-            .name
-            .as_deref()
+        developer_id: &str,
+        name: Option<&str>,
+    ) -> Result<CreatedCrawlerResponse, ApiError> {
+        let clean_name = name
             .map(str::trim)
             .filter(|n| n.len() >= 2)
-            .unwrap_or("join-crawler");
-
+            .unwrap_or("crawler");
         let key = generate_token("fvc");
         let preview = format!("{}...{}", &key[..8], &key[key.len() - 4..]);
         let id = Uuid::now_v7().to_string();
@@ -106,7 +91,7 @@ impl CrawlerStore {
              values ($1, $2, $3, $4, $5, $6, $6, '{}'::jsonb)",
         )
         .bind(&id)
-        .bind(owner_developer_id)
+        .bind(developer_id)
         .bind(clean_name)
         .bind(&preview)
         .bind(hash_token(&key))
@@ -116,31 +101,76 @@ impl CrawlerStore {
         .map_err(|e| ApiError::Internal(e.into()))?;
 
         self.push_event(
-            owner_developer_id,
-            "crawler-joined",
+            developer_id,
+            "crawler-created",
             "ok",
-            format!("crawler {clean_name} joined via join key"),
+            format!("issued crawler credentials for {clean_name}"),
             None,
             Some(id.clone()),
         )
         .await?;
 
-        Ok(JoinCrawlerResponse {
+        Ok(CreatedCrawlerResponse {
             crawler_id: id,
             crawler_key: key,
             name: clean_name.to_string(),
+            preview,
+            created_at: now,
         })
     }
 
-    pub async fn get_join_key(&self, config_join_key: Option<&str>) -> Option<String> {
-        self.resolve_join_key(config_join_key).await.ok().flatten()
-    }
+    pub async fn delete_crawler(
+        &self,
+        developer_id: &str,
+        crawler_id: &str,
+    ) -> Result<(), ApiError> {
+        let row = sqlx::query_as::<_, CrawlerDeleteRow>(
+            "select id, name
+             from crawlers
+             where id = $1 and owner_developer_id = $2",
+        )
+        .bind(crawler_id)
+        .bind(developer_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .ok_or_else(|| ApiError::NotFound("crawler not found".to_string()))?;
 
-    pub async fn set_join_key(&self, new_key: Option<String>) -> Result<(), ApiError> {
-        match new_key {
-            Some(k) => self.set_config("join_key", &k).await,
-            None => self.delete_config("join_key").await,
+        let claimed_job_exists: Option<String> = sqlx::query_scalar(
+            "select id
+             from crawl_jobs
+             where claimed_by = $1 and status = 'claimed'
+             limit 1",
+        )
+        .bind(crawler_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        if claimed_job_exists.is_some() {
+            return Err(ApiError::Conflict(
+                "crawler still has claimed jobs".to_string(),
+            ));
         }
+
+        sqlx::query("delete from crawlers where id = $1 and owner_developer_id = $2")
+            .bind(crawler_id)
+            .bind(developer_id)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+        self.push_event(
+            developer_id,
+            "crawler-deleted",
+            "ok",
+            format!("deleted crawler {}", row.name),
+            None,
+            Some(row.id),
+        )
+        .await?;
+
+        Ok(())
     }
 
     pub async fn get_all_system_config(
@@ -293,7 +323,8 @@ impl CrawlerStore {
         let new_same_origin_concurrency = request
             .same_origin_concurrency
             .map(|value| value.clamp(1, 32))
-            .unwrap_or(row.same_origin_concurrency as u32) as i32;
+            .unwrap_or(row.same_origin_concurrency as u32)
+            as i32;
         let new_discovery_scope = request
             .discovery_scope
             .unwrap_or_else(|| DiscoveryScope::from_db_value(&row.discovery_scope));
@@ -2531,40 +2562,12 @@ impl CrawlerStore {
 
     async fn prune_stale_crawlers(
         &self,
-        now: DateTime<Utc>,
-        claim_timeout: Duration,
+        _now: DateTime<Utc>,
+        _claim_timeout: Duration,
     ) -> Result<(), ApiError> {
-        let timeout_secs = claim_timeout.as_secs() as i64;
-        let cutoff = now - chrono::Duration::seconds(timeout_secs);
-
-        let stale_crawlers = sqlx::query_as::<_, PrunedCrawlerRow>(
-            "delete from crawlers c
-             where c.last_seen_at < $1
-               and not exists (
-                   select 1
-                   from crawl_jobs j
-                   where j.claimed_by = c.id
-                     and j.status = 'claimed'
-               )
-             returning id, owner_developer_id, name",
-        )
-        .bind(cutoff)
-        .fetch_all(&self.pg_pool)
-        .await
-        .map_err(|e| ApiError::Internal(e.into()))?;
-
-        for crawler in stale_crawlers {
-            self.push_event(
-                &crawler.owner_developer_id,
-                "crawler-pruned",
-                "ok",
-                format!("removed offline crawler {}", crawler.name),
-                None,
-                Some(crawler.id),
-            )
-            .await?;
-        }
-
+        // Keep crawler identities stable across long offline windows.
+        // Online/offline state is derived from last_seen_at in the console,
+        // so maintenance only needs to requeue stale claimed jobs.
         Ok(())
     }
 
@@ -2574,17 +2577,6 @@ impl CrawlerStore {
             .fetch_optional(&self.pg_pool)
             .await
             .map_err(|e| ApiError::Internal(e.into()))
-    }
-
-    async fn resolve_join_key(
-        &self,
-        config_join_key: Option<&str>,
-    ) -> Result<Option<String>, ApiError> {
-        if let Some(stored_key) = self.get_config("join_key").await? {
-            return Ok(Some(stored_key));
-        }
-
-        Ok(config_join_key.map(ToString::to_string))
     }
 
     async fn set_config(&self, key: &str, value: &str) -> Result<(), ApiError> {
@@ -2638,6 +2630,12 @@ struct CrawlerMetadataRow {
     last_claimed_at: Option<DateTime<Utc>>,
     jobs_claimed: i64,
     jobs_reported: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct CrawlerDeleteRow {
+    id: String,
+    name: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2730,13 +2728,6 @@ struct StaleDocRow {
     budget_id: String,
     rule_id: Option<String>,
     discovery_scope: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct PrunedCrawlerRow {
-    id: String,
-    owner_developer_id: String,
-    name: String,
 }
 
 #[derive(sqlx::FromRow)]
