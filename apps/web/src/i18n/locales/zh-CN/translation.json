@@ -219,6 +219,39 @@
       "recent_events_meta": "自动化健康状态与节点活动",
       "no_events": "暂无最近事件。"
     },
+    "events": {
+      "statuses": {
+        "ok": "正常",
+        "error": "错误"
+      },
+      "kinds": {
+        "crawler_renamed": "爬虫已重命名",
+        "crawler_deleted": "爬虫已删除",
+        "rule_created": "规则已创建",
+        "rule_updated": "规则已更新",
+        "rule_deleted": "规则已删除",
+        "developer_property_seeded": "开发者属性已加入种子",
+        "seed_queued": "种子已入队",
+        "jobs_claimed": "任务已认领",
+        "job_succeeded": "任务成功",
+        "job_filtered": "任务已过滤",
+        "job_requeued": "任务已重新入队",
+        "job_blocked": "任务已阻塞",
+        "job_failed": "任务失败",
+        "job_dead_lettered": "任务进入死信",
+        "job_gone": "任务对应文档已移除",
+        "jobs_retried": "任务已重试",
+        "jobs_cleaned": "任务已清理",
+        "crawl_stopped": "抓取已停止",
+        "rule_enqueued": "规则已入队",
+        "stale_job_requeued": "过期任务已重新入队",
+        "developer_api_key_created": "开发者 API 密钥已创建",
+        "developer_api_key_revoked": "开发者 API 密钥已撤销",
+        "document_deleted": "文档已删除",
+        "site_purged": "站点已清理",
+        "developer_deleted": "开发者已删除"
+      }
+    },
     "users": {
       "title": "开发者",
       "accounts": "{{count}} 个账号",
@@ -448,6 +481,11 @@
       "title": "设置",
       "worker_setup": "节点设置",
       "crawler_config_section": "爬虫配置",
+      "summary": {
+        "auth": "认证",
+        "claim": "认领",
+        "retry": "重试"
+      },
       "auth_key_label": "Crawler 认证密钥",
       "auth_key_placeholder": "所有节点共享的固定 crawler key",
       "claim_timeout_label": "认领超时（秒）",

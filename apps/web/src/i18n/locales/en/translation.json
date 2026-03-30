@@ -219,6 +219,39 @@
       "recent_events_meta": "Automation health and worker activity",
       "no_events": "No recent events."
     },
+    "events": {
+      "statuses": {
+        "ok": "OK",
+        "error": "Error"
+      },
+      "kinds": {
+        "crawler_renamed": "Crawler Renamed",
+        "crawler_deleted": "Crawler Deleted",
+        "rule_created": "Rule Created",
+        "rule_updated": "Rule Updated",
+        "rule_deleted": "Rule Deleted",
+        "developer_property_seeded": "Developer Property Seeded",
+        "seed_queued": "Seed Queued",
+        "jobs_claimed": "Jobs Claimed",
+        "job_succeeded": "Job Succeeded",
+        "job_filtered": "Job Filtered",
+        "job_requeued": "Job Requeued",
+        "job_blocked": "Job Blocked",
+        "job_failed": "Job Failed",
+        "job_dead_lettered": "Job Dead Lettered",
+        "job_gone": "Job Removed",
+        "jobs_retried": "Jobs Retried",
+        "jobs_cleaned": "Jobs Cleaned",
+        "crawl_stopped": "Crawl Stopped",
+        "rule_enqueued": "Rule Enqueued",
+        "stale_job_requeued": "Stale Job Requeued",
+        "developer_api_key_created": "Developer API Key Created",
+        "developer_api_key_revoked": "Developer API Key Revoked",
+        "document_deleted": "Document Deleted",
+        "site_purged": "Site Purged",
+        "developer_deleted": "Developer Deleted"
+      }
+    },
     "users": {
       "title": "Developers",
       "accounts": "{{count}} accounts",
@@ -448,6 +481,11 @@
       "title": "Settings",
       "worker_setup": "Worker setup",
       "crawler_config_section": "Crawler Configuration",
+      "summary": {
+        "auth": "Auth",
+        "claim": "Claim",
+        "retry": "Retry"
+      },
       "auth_key_label": "Crawler auth key",
       "auth_key_placeholder": "Shared fixed crawler key for every node",
       "claim_timeout_label": "Claim timeout (seconds)",

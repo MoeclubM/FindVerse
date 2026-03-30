@@ -50,6 +50,11 @@ function effectiveSearchLanguage(value: string) {
   return normalizeLanguage(value) || DEFAULT_SEARCH_LANGUAGE;
 }
 
+function hasExplicitSearchLanguage(value: string) {
+  const normalized = normalizeLanguage(value);
+  return Boolean(normalized) && normalized !== DEFAULT_SEARCH_LANGUAGE;
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -156,7 +161,7 @@ export function SearchPage(props: {
     () =>
       Boolean(
         submittedSearch.site ||
-          (submittedSearch.lang && normalizeLanguage(submittedSearch.lang) !== DEFAULT_SEARCH_LANGUAGE) ||
+          hasExplicitSearchLanguage(submittedSearch.lang) ||
           submittedSearch.freshness !== "all" ||
           submittedSearch.network,
       ),
@@ -183,7 +188,7 @@ export function SearchPage(props: {
       setFiltersOpen(
         Boolean(
           next.site ||
-            (next.lang && normalizeLanguage(next.lang) !== DEFAULT_SEARCH_LANGUAGE) ||
+            hasExplicitSearchLanguage(next.lang) ||
             next.freshness !== "all" ||
             next.network,
         ),
@@ -371,10 +376,9 @@ export function SearchPage(props: {
   }
 
   const hasResults = Boolean(results);
-  const normalizedLangFilter = normalizeLanguage(langFilter);
   const activeFilterCount =
     Number(Boolean(siteFilter.trim())) +
-    Number(Boolean(normalizedLangFilter) && normalizedLangFilter !== DEFAULT_SEARCH_LANGUAGE) +
+    Number(hasExplicitSearchLanguage(langFilter)) +
     Number(freshnessFilter !== "all") +
     Number(Boolean(networkFilter));
   const resultsMode = hasResults || loading || error;

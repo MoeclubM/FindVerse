@@ -29,6 +29,17 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function getScopeLabel(t: (key: string) => string, scope: DiscoveryScope) {
+  switch (scope) {
+    case "same_host":
+      return t("console.tasks.scope_same_host");
+    case "same_domain":
+      return t("console.tasks.scope_same_domain");
+    default:
+      return t("console.tasks.scope_any");
+  }
+}
+
 export function ConsoleCrawlTasks() {
   const { token, busy, setBusy, setFlash, refreshAll, refreshDocumentList, overview } = useConsole();
   const { t } = useTranslation();
@@ -417,7 +428,7 @@ export function ConsoleCrawlTasks() {
                       </div>
                       <div className="rounded-xl border border-border bg-muted/40 p-4">
                         <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.scope_label")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.discovery_scope}</strong>
+                        <strong className="mt-2 block text-sm font-semibold text-foreground">{getScopeLabel(t, rule.discovery_scope)}</strong>
                       </div>
                       <div className="rounded-xl border border-border bg-muted/40 p-4">
                         <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.links_per_page")}</span>

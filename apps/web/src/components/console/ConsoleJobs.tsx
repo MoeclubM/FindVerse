@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { useConsole } from "./ConsoleContext";
+import { getConsoleJobStatusLabel, getConsoleValueLabel } from "./consoleLabels";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -223,7 +224,9 @@ export function ConsoleJobs() {
                   </Button>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <Badge variant={job.status === "succeeded" ? "success" : "outline"}>{job.status}</Badge>
+                  <Badge variant={job.status === "succeeded" ? "success" : "outline"}>
+                    {getConsoleJobStatusLabel(t, job.status)}
+                  </Badge>
                   {job.http_status != null ? <span>HTTP {job.http_status}</span> : null}
                   <span>{t("console.jobs.attempt_progress", { current: job.attempt_count, max: job.max_attempts })}</span>
                   <span>{t("console.jobs.depth_progress", { current: job.depth, max: job.max_depth })}</span>
@@ -240,7 +243,7 @@ export function ConsoleJobs() {
                   </div>
                   <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
                     <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.status")}</span>
-                    <strong className="mt-2 block text-sm font-semibold text-foreground">{job.failure_kind ?? job.llm_decision ?? "-"}</strong>
+                    <strong className="mt-2 block text-sm font-semibold text-foreground">{getConsoleValueLabel(job.failure_kind ?? job.llm_decision)}</strong>
                   </div>
                 </div>
                 </CardContent>
@@ -280,12 +283,12 @@ export function ConsoleJobs() {
         onClose={() => setSelectedJobId(null)}
       >
         {selectedJob ? (
-          <div className="grid gap-4">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.status")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.status}</strong>
-              </div>
+            <div className="grid gap-4">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-xl border border-border bg-muted/40 p-4">
+                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.status")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{getConsoleJobStatusLabel(t, selectedJob.status)}</strong>
+                </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.http_status")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.http_status ?? "-"}</strong>
@@ -336,7 +339,7 @@ export function ConsoleJobs() {
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.llm_decision")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.llm_decision ?? "-"}</strong>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{getConsoleValueLabel(selectedJob.llm_decision)}</strong>
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.score")}</span>

@@ -1,4 +1,5 @@
 import { useConsole } from "./ConsoleContext";
+import { getConsoleEventKindLabel, getConsoleEventStatusLabel } from "./consoleLabels";
 import { useTranslation } from "react-i18next";
 import { PanelSection, StatStrip } from "../common/PanelPrimitives";
 import { Badge } from "../ui/badge";
@@ -46,8 +47,10 @@ export function ConsoleOverview() {
               <Card key={event.id} className="rounded-2xl">
                 <CardContent className="grid gap-3 p-4">
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <strong className="text-foreground">{event.kind}</strong>
-                  <Badge variant={event.status === "ok" ? "success" : "outline"}>{event.status}</Badge>
+                  <strong className="text-foreground">{getConsoleEventKindLabel(t, event.kind)}</strong>
+                  <Badge variant={event.status === "ok" ? "success" : "outline"}>
+                    {getConsoleEventStatusLabel(t, event.status)}
+                  </Badge>
                   <span>{event.created_at}</span>
                   {event.crawler_id ? <code>{event.crawler_id}</code> : null}
                 </div>

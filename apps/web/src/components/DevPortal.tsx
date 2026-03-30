@@ -30,7 +30,6 @@ import { Textarea } from "./ui/textarea";
 
 const DEV_SESSION_KEY = "findverse_dev_session";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
-const DEFAULT_KEY_NAME = "Search key";
 
 function persistDevSession(token: string | null, setToken: (value: string | null) => void) {
   if (token) {
@@ -77,7 +76,7 @@ export function DevPortalPage(props: {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [keyName, setKeyName] = useState(DEFAULT_KEY_NAME);
+  const [keyName, setKeyName] = useState(() => t("dev_portal.create_api_key.default_name"));
   const [latestKey, setLatestKey] = useState<CreatedApiKey | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingSession, setLoadingSession] = useState(Boolean(sessionToken));
@@ -94,12 +93,6 @@ export function DevPortalPage(props: {
   const [submitRevisit, setSubmitRevisit] = useState(true);
   const defaultKeyName = t("dev_portal.create_api_key.default_name");
   const portalTitle = `${SITE_NAME} · ${t("dev_portal.title")}`;
-
-  useEffect(() => {
-    setKeyName((current) =>
-      current === DEFAULT_KEY_NAME || current === defaultKeyName ? defaultKeyName : current,
-    );
-  }, [defaultKeyName]);
 
   useEffect(() => {
     if (!sessionToken) {

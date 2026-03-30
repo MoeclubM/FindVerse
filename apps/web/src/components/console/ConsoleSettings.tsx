@@ -166,15 +166,15 @@ export function ConsoleSettings() {
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-xl border border-border bg-muted/40 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Shield className="size-4" />Auth</div>
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Shield className="size-4" />{t("console.settings.summary.auth")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.auth_key_label")}</p>
           </div>
           <div className="rounded-xl border border-border bg-muted/40 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />Claim</div>
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.claim")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.claim_timeout_label")}</p>
           </div>
           <div className="rounded-xl border border-border bg-muted/40 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />Retry</div>
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.retry")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.max_attempts_label")}</p>
           </div>
         </div>
