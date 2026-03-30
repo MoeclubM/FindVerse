@@ -10,9 +10,9 @@ import {
 } from "./ui/select";
 
 const LANGUAGE_OPTIONS = [
-  { value: "en", label: "English", buttonLabel: "EN" },
-  { value: "zh-CN", label: "简体中文", buttonLabel: "中" },
-  { value: "ja", label: "日本語", buttonLabel: "日" },
+  { value: "en", labelKey: "language.en", buttonLabel: "EN" },
+  { value: "zh-CN", labelKey: "language.zh_CN", buttonLabel: "中" },
+  { value: "ja", labelKey: "language.ja", buttonLabel: "日" },
 ];
 
 export function LanguageSwitcher() {
@@ -37,7 +37,7 @@ export function LanguageSwitcher() {
         <SelectGroup>
           {LANGUAGE_OPTIONS.map((option) => (
             <SelectItem key={option.value} value={option.value}>
-              {option.label}
+              {t(option.labelKey)}
             </SelectItem>
           ))}
         </SelectGroup>

@@ -2,7 +2,8 @@
   "language": {
     "label": "语言",
     "en": "English",
-    "zh_CN": "中文"
+    "zh_CN": "中文",
+    "ja": "日本語"
   },
   "theme": {
     "label": "主题",
@@ -43,7 +44,125 @@
     "clear_filters": "清空过滤",
     "dev_search": "开发者搜索",
     "browser_search": "浏览器搜索",
+    "dev_badge": "开发",
     "console_link": "打开开发者控制台"
+  },
+  "dev_portal": {
+    "title": "开发者门户",
+    "key_badge": "密钥",
+    "search": "搜索",
+    "sign_out": "退出登录",
+    "checking": "正在检查开发者会话...",
+    "common": {
+      "not_yet": "尚未",
+      "unknown": "未知",
+      "duplicate": "重复",
+      "rows": "{{count}} 行",
+      "words": "{{count}} 词"
+    },
+    "auth": {
+      "sign_in": "登录",
+      "register": "注册",
+      "create_account_title": "创建开发者账号",
+      "sign_in_title": "开发者登录",
+      "description": "创建账号，生成",
+      "description_suffix": "密钥，检查站点属性，并直接在门户里提交抓取 URL。",
+      "username": "用户名",
+      "password": "密码",
+      "submitting": "提交中...",
+      "create_account": "创建账号"
+    },
+    "flash": {
+      "login_failed": "登录失败",
+      "register_failed": "注册失败",
+      "api_key_creation_failed": "创建 API 密钥失败",
+      "api_key_revoke_failed": "撤销 API 密钥失败",
+      "property_analysis_failed": "属性分析失败",
+      "property_submission_failed": "属性提交失败",
+      "missing_submission_fields": "提交前请输入属性和至少一个 URL。",
+      "active_search_key_updated": "当前搜索密钥已更新",
+      "queue_summary": "已加入 {{accepted}} 个 URL。该域名当前有 {{queued}} 个待处理任务，共记录 {{known}} 个已知 URL。"
+    },
+    "site_console": {
+      "title": "站点控制台",
+      "meta": "检查站点属性、查看抓取覆盖率，并用共享爬虫提交 URL。",
+      "domain_or_url": "域名或 URL",
+      "domain_placeholder": "example.com 或 https://example.com/docs",
+      "analyzing": "分析中...",
+      "analyze": "分析属性",
+      "empty": "在上方输入域名或 URL，即可检查该属性的索引页面、抓取覆盖率和提交通道。",
+      "stats": {
+        "indexed_docs": "已索引文档",
+        "duplicates": "重复文档",
+        "pending_crawl": "待抓取",
+        "indexed_jobs": "已索引任务",
+        "filtered_jobs": "已过滤任务",
+        "failures": "失败",
+        "last_indexed": "最近索引",
+        "last_crawl_activity": "最近抓取活动"
+      },
+      "recent_indexed_pages": {
+        "title": "最近索引页面",
+        "empty": "该属性下还没有索引页面。"
+      },
+      "coverage_facets": {
+        "title": "覆盖分布",
+        "meta": "已索引文档的主要分布",
+        "languages": "语言",
+        "content_types": "内容类型",
+        "no_language_data": "还没有语言数据。",
+        "no_content_type_data": "还没有内容类型数据。"
+      },
+      "recent_crawl_activity": {
+        "title": "最近抓取活动",
+        "depth": "深度 {{depth}}",
+        "no_status": "无状态",
+        "empty": "该属性下还没有抓取历史。"
+      },
+      "submit_urls": {
+        "title": "提交 URL",
+        "meta": "为该属性加入首页、站点地图或一组聚焦 URL。",
+        "property": "属性",
+        "property_placeholder": "example.com",
+        "homepage_only": "仅首页",
+        "homepage_and_sitemap": "首页 + 站点地图",
+        "url_list": "URL 列表",
+        "url_list_placeholder": "每行一个 URL",
+        "crawl_depth": "抓取深度",
+        "page_budget": "页面预算",
+        "same_origin_concurrency": "同源并发",
+        "allow_revisit": "允许重新访问之前见过的 URL",
+        "submitting": "提交中...",
+        "submit": "加入属性抓取队列",
+        "hint": "这个门户复用了共享爬虫 owner，定位是轻量级 search-console 工作流，不是完全隔离的多租户抓取流水线。"
+      }
+    },
+    "account": {
+      "title": "账号",
+      "description": "当前开发者会话与每日用量。",
+      "user": "用户",
+      "daily_quota": "每日配额",
+      "used_today": "今日已用"
+    },
+    "create_api_key": {
+      "title": "创建 API 密钥",
+      "description": "原始密钥只会显示一次，离开页面前请先保存。",
+      "default_name": "搜索密钥",
+      "placeholder": "密钥名称",
+      "creating": "创建中...",
+      "submit": "创建密钥",
+      "use_for_search": "用于搜索"
+    },
+    "api_keys": {
+      "title": "API 密钥",
+      "description": "管理该开发者账号的搜索密钥。",
+      "active": "当前使用",
+      "revoked": "已撤销",
+      "revoke": "撤销",
+      "created_at": "创建于 {{time}}",
+      "revoked_at": "撤销于 {{time}}",
+      "empty": "还没有 API 密钥。"
+    }
   },
   "console": {
     "login": {

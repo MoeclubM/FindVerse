@@ -1,5 +1,6 @@
 import { ExitIcon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
 import { FormEvent, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   CreatedApiKey,
@@ -29,6 +30,7 @@ import { Textarea } from "./ui/textarea";
 
 const DEV_SESSION_KEY = "findverse_dev_session";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
+const DEFAULT_KEY_NAME = "Search key";
 
 function persistDevSession(token: string | null, setToken: (value: string | null) => void) {
   if (token) {
@@ -47,9 +49,9 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function formatPortalTimestamp(value: string | null) {
+function formatPortalTimestamp(value: string | null, emptyLabel: string) {
   if (!value) {
-    return "Not yet";
+    return emptyLabel;
   }
 
   const parsed = new Date(value);
@@ -68,13 +70,14 @@ export function DevPortalPage(props: {
   onTokenChange: (token: string | null) => void;
   onNavigateSearch: () => void;
 }) {
+  const { t } = useTranslation();
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(DEV_SESSION_KEY));
   const [session, setSession] = useState<DevSession | null>(null);
   const [usage, setUsage] = useState<DeveloperUsage | null>(null);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [keyName, setKeyName] = useState("Search key");
+  const [keyName, setKeyName] = useState(DEFAULT_KEY_NAME);
   const [latestKey, setLatestKey] = useState<CreatedApiKey | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingSession, setLoadingSession] = useState(Boolean(sessionToken));
@@ -89,6 +92,14 @@ export function DevPortalPage(props: {
   const [submitMaxPages, setSubmitMaxPages] = useState("50");
   const [submitSameOriginConcurrency, setSubmitSameOriginConcurrency] = useState("1");
   const [submitRevisit, setSubmitRevisit] = useState(true);
+  const defaultKeyName = t("dev_portal.create_api_key.default_name");
+  const portalTitle = `${SITE_NAME} · ${t("dev_portal.title")}`;
+
+  useEffect(() => {
+    setKeyName((current) =>
+      current === DEFAULT_KEY_NAME || current === defaultKeyName ? defaultKeyName : current,
+    );
+  }, [defaultKeyName]);
 
   useEffect(() => {
     if (!sessionToken) {
@@ -170,7 +181,14 @@ export function DevPortalPage(props: {
       setLatestKey(null);
       await refreshUsage(nextSession.token);
     } catch (error) {
-      setFlash(getErrorMessage(error, mode === "register" ? "Register failed" : "Login failed"));
+      setFlash(
+        getErrorMessage(
+          error,
+          mode === "register"
+            ? t("dev_portal.flash.register_failed")
+            : t("dev_portal.flash.login_failed"),
+        ),
+      );
     } finally {
       setBusy(false);
     }
@@ -210,10 +228,10 @@ export function DevPortalPage(props: {
     try {
       const created = await createDeveloperKey(sessionToken, keyName);
       setLatestKey(created);
-      setKeyName("Search key");
+      setKeyName(defaultKeyName);
       await refreshUsage(sessionToken);
     } catch (error) {
-      setFlash(getErrorMessage(error, "API key creation failed"));
+      setFlash(getErrorMessage(error, t("dev_portal.flash.api_key_creation_failed")));
     } finally {
       setBusy(false);
     }
@@ -236,7 +254,7 @@ export function DevPortalPage(props: {
       }
       await refreshUsage(sessionToken);
     } catch (error) {
-      setFlash(getErrorMessage(error, "API key revoke failed"));
+      setFlash(getErrorMessage(error, t("dev_portal.flash.api_key_revoke_failed")));
     } finally {
       setBusy(false);
     }
@@ -253,7 +271,7 @@ export function DevPortalPage(props: {
     try {
       await loadPropertyInsight(sessionToken, propertyQuery.trim());
     } catch (error) {
-      setFlash(getErrorMessage(error, "Property analysis failed"));
+      setFlash(getErrorMessage(error, t("dev_portal.flash.property_analysis_failed")));
     } finally {
       setPropertyLoading(false);
     }
@@ -272,7 +290,7 @@ export function DevPortalPage(props: {
       .filter(Boolean);
 
     if (!domain || !urls.length) {
-      setFlash("Enter a property and at least one URL before submitting.");
+      setFlash(t("dev_portal.flash.missing_submission_fields"));
       return;
     }
 
@@ -290,10 +308,14 @@ export function DevPortalPage(props: {
       const insight = await loadPropertyInsight(sessionToken, domain);
       setSubmitDomain(insight.domain);
       setFlash(
-        `Queued ${response.accepted_urls} URL(s). Domain queue now has ${response.queued_domain_jobs} pending job(s) across ${response.known_domain_urls} known URL(s).`,
+        t("dev_portal.flash.queue_summary", {
+          accepted: response.accepted_urls,
+          queued: response.queued_domain_jobs,
+          known: response.known_domain_urls,
+        }),
       );
     } catch (error) {
-      setFlash(getErrorMessage(error, "Property submission failed"));
+      setFlash(getErrorMessage(error, t("dev_portal.flash.property_submission_failed")));
     } finally {
       setPropertySubmitting(false);
     }
@@ -301,11 +323,11 @@ export function DevPortalPage(props: {
 
   function handleUseSearchKey(token: string) {
     props.onTokenChange(token);
-    setFlash("Active search key updated");
+    setFlash(t("dev_portal.flash.active_search_key_updated"));
   }
 
   if (loadingSession) {
-    return <div className="grid min-h-screen place-items-center bg-background text-foreground">Checking developer session...</div>;
+    return <div className="grid min-h-screen place-items-center bg-background text-foreground">{t("dev_portal.checking")}</div>;
   }
 
   if (!session || !sessionToken) {
@@ -315,17 +337,17 @@ export function DevPortalPage(props: {
           theme={props.theme}
           themeMode={props.themeMode}
           onThemeModeChange={props.onThemeModeChange}
-          title={`${SITE_NAME} · Developer Portal`}
+          title={portalTitle}
           onTitleClick={props.onNavigateSearch}
           beforeControls={
-            props.devToken ? <TopbarBadge>Key</TopbarBadge> : null
+            props.devToken ? <TopbarBadge>{t("dev_portal.key_badge")}</TopbarBadge> : null
           }
           afterControls={
             <TopbarActionButton
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateSearch}
             >
-              Search
+              {t("dev_portal.search")}
             </TopbarActionButton>
           }
         />
@@ -334,16 +356,20 @@ export function DevPortalPage(props: {
             <CardHeader className="gap-4 pb-4">
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant={mode === "login" ? "default" : "outline"} onClick={() => setMode("login")}>
-                  Sign in
+                  {t("dev_portal.auth.sign_in")}
                 </Button>
                 <Button type="button" variant={mode === "register" ? "default" : "outline"} onClick={() => setMode("register")}>
-                  Register
+                  {t("dev_portal.auth.register")}
                 </Button>
               </div>
               <div className="space-y-1">
-                <CardTitle>{mode === "register" ? "Create developer account" : "Developer sign in"}</CardTitle>
+                <CardTitle>
+                  {mode === "register"
+                    ? t("dev_portal.auth.create_account_title")
+                    : t("dev_portal.auth.sign_in_title")}
+                </CardTitle>
                 <CardDescription>
-                  Create an account, generate an <code>fvk_</code> key, inspect a domain property, and submit URLs for crawl without leaving the portal.
+                  {t("dev_portal.auth.description")} <code>fvk_</code> {t("dev_portal.auth.description_suffix")}
                 </CardDescription>
               </div>
             </CardHeader>
@@ -352,18 +378,22 @@ export function DevPortalPage(props: {
                 <Input
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
-                  placeholder="Username"
+                  placeholder={t("dev_portal.auth.username")}
                   autoComplete="username"
                 />
                 <Input
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Password"
+                  placeholder={t("dev_portal.auth.password")}
                   autoComplete={mode === "register" ? "new-password" : "current-password"}
                 />
                 <Button type="submit" disabled={busy}>
-                  {busy ? "Submitting..." : mode === "register" ? "Create account" : "Sign in"}
+                  {busy
+                    ? t("dev_portal.auth.submitting")
+                    : mode === "register"
+                      ? t("dev_portal.auth.create_account")
+                      : t("dev_portal.auth.sign_in")}
                 </Button>
               </form>
               {flash ? (
@@ -384,23 +414,23 @@ export function DevPortalPage(props: {
         theme={props.theme}
         themeMode={props.themeMode}
         onThemeModeChange={props.onThemeModeChange}
-        title={`${SITE_NAME} · Developer Portal`}
+        title={portalTitle}
         onTitleClick={props.onNavigateSearch}
-        beforeControls={props.devToken ? <TopbarBadge>Key</TopbarBadge> : null}
+        beforeControls={props.devToken ? <TopbarBadge>{t("dev_portal.key_badge")}</TopbarBadge> : null}
         afterControls={
           <>
             <TopbarActionButton
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateSearch}
             >
-              Search
+              {t("dev_portal.search")}
             </TopbarActionButton>
             <TopbarActionButton
               leading={<ExitIcon className="size-4" />}
               disabled={busy}
               onClick={() => void handleSignOut()}
             >
-              Sign out
+              {t("dev_portal.sign_out")}
             </TopbarActionButton>
           </>
         }
@@ -418,21 +448,21 @@ export function DevPortalPage(props: {
         <Card className="rounded-3xl lg:col-span-2">
           <CardHeader className="gap-4 pb-4">
             <SectionHeader
-              title="Site Console"
-              meta="Inspect a property, review crawl coverage, then submit URLs with the shared crawler."
+              title={t("dev_portal.site_console.title")}
+              meta={t("dev_portal.site_console.meta")}
               actions={propertyInsight ? <Badge variant="outline">{propertyInsight.domain}</Badge> : null}
             />
             <form className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]" onSubmit={handleAnalyzeProperty}>
-              <FieldShell label="Domain or URL">
+              <FieldShell label={t("dev_portal.site_console.domain_or_url")}>
                 <Input
                   id="property-query"
                   value={propertyQuery}
                   onChange={(event) => setPropertyQuery(event.target.value)}
-                  placeholder="example.com or https://example.com/docs"
+                  placeholder={t("dev_portal.site_console.domain_placeholder")}
                 />
               </FieldShell>
               <Button className="lg:self-end" type="submit" disabled={propertyLoading || !propertyQuery.trim()}>
-                {propertyLoading ? "Analyzing..." : "Analyze property"}
+                {propertyLoading ? t("dev_portal.site_console.analyzing") : t("dev_portal.site_console.analyze")}
               </Button>
             </form>
           </CardHeader>
@@ -442,14 +472,14 @@ export function DevPortalPage(props: {
                 <StatStrip
                   className="xl:grid-cols-4"
                   items={[
-                    { label: "Indexed docs", value: propertyInsight.indexed_documents },
-                    { label: "Duplicates", value: propertyInsight.duplicate_documents },
-                    { label: "Pending crawl", value: propertyInsight.pending_jobs },
-                    { label: "Indexed jobs", value: propertyInsight.successful_jobs },
-                    { label: "Filtered jobs", value: propertyInsight.filtered_jobs },
-                    { label: "Failures", value: propertyInsight.failed_jobs + propertyInsight.blocked_jobs },
-                    { label: "Last indexed", value: formatPortalTimestamp(propertyInsight.last_indexed_at) },
-                    { label: "Last crawl activity", value: formatPortalTimestamp(propertyInsight.last_crawled_at) },
+                    { label: t("dev_portal.site_console.stats.indexed_docs"), value: propertyInsight.indexed_documents },
+                    { label: t("dev_portal.site_console.stats.duplicates"), value: propertyInsight.duplicate_documents },
+                    { label: t("dev_portal.site_console.stats.pending_crawl"), value: propertyInsight.pending_jobs },
+                    { label: t("dev_portal.site_console.stats.indexed_jobs"), value: propertyInsight.successful_jobs },
+                    { label: t("dev_portal.site_console.stats.filtered_jobs"), value: propertyInsight.filtered_jobs },
+                    { label: t("dev_portal.site_console.stats.failures"), value: propertyInsight.failed_jobs + propertyInsight.blocked_jobs },
+                    { label: t("dev_portal.site_console.stats.last_indexed"), value: formatPortalTimestamp(propertyInsight.last_indexed_at, t("dev_portal.common.not_yet")) },
+                    { label: t("dev_portal.site_console.stats.last_crawl_activity"), value: formatPortalTimestamp(propertyInsight.last_crawled_at, t("dev_portal.common.not_yet")) },
                   ]}
                 />
 
@@ -459,8 +489,8 @@ export function DevPortalPage(props: {
                       <CardHeader className="pb-4">
                         <SectionHeader
                           heading="h3"
-                          title="Recent indexed pages"
-                          meta={`${propertyInsight.recent_documents.length} rows`}
+                          title={t("dev_portal.site_console.recent_indexed_pages.title")}
+                          meta={t("dev_portal.common.rows", { count: propertyInsight.recent_documents.length })}
                         />
                       </CardHeader>
                       <CardContent className="grid gap-3">
@@ -477,21 +507,21 @@ export function DevPortalPage(props: {
                                   >
                                     {document.title}
                                   </a>
-                                  {document.duplicate_of ? <Badge variant="outline">Duplicate</Badge> : null}
+                                  {document.duplicate_of ? <Badge variant="outline">{t("dev_portal.common.duplicate")}</Badge> : null}
                                 </div>
                                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
                                   <span>{document.display_url}</span>
-                                  <span>{document.language || "unknown"}</span>
+                                  <span>{document.language || t("dev_portal.common.unknown")}</span>
                                   <span>{document.content_type}</span>
-                                  <span>{document.word_count} words</span>
-                                  <span>{formatPortalTimestamp(document.last_crawled_at)}</span>
+                                  <span>{t("dev_portal.common.words", { count: document.word_count })}</span>
+                                  <span>{formatPortalTimestamp(document.last_crawled_at, t("dev_portal.common.not_yet"))}</span>
                                 </div>
                               </CardContent>
                             </Card>
                           ))
                         ) : (
                           <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-                            No indexed pages for this property yet.
+                            {t("dev_portal.site_console.recent_indexed_pages.empty")}
                           </div>
                         )}
                       </CardContent>
@@ -501,14 +531,14 @@ export function DevPortalPage(props: {
                       <CardHeader className="pb-4">
                         <SectionHeader
                           heading="h3"
-                          title="Coverage facets"
-                          meta="Top distributions from indexed docs"
+                          title={t("dev_portal.site_console.coverage_facets.title")}
+                          meta={t("dev_portal.site_console.coverage_facets.meta")}
                         />
                       </CardHeader>
                       <CardContent className="grid gap-4 md:grid-cols-2">
                         <Card className="rounded-2xl bg-muted/30 shadow-none">
                           <CardHeader className="pb-4">
-                            <CardTitle className="text-base">Languages</CardTitle>
+                            <CardTitle className="text-base">{t("dev_portal.site_console.coverage_facets.languages")}</CardTitle>
                           </CardHeader>
                           <CardContent className="grid gap-3">
                             {propertyInsight.top_languages.length ? (
@@ -520,14 +550,14 @@ export function DevPortalPage(props: {
                               ))
                             ) : (
                               <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
-                                No language data yet.
+                                {t("dev_portal.site_console.coverage_facets.no_language_data")}
                               </div>
                             )}
                           </CardContent>
                         </Card>
                         <Card className="rounded-2xl bg-muted/30 shadow-none">
                           <CardHeader className="pb-4">
-                            <CardTitle className="text-base">Content types</CardTitle>
+                            <CardTitle className="text-base">{t("dev_portal.site_console.coverage_facets.content_types")}</CardTitle>
                           </CardHeader>
                           <CardContent className="grid gap-3">
                             {propertyInsight.top_content_types.length ? (
@@ -539,7 +569,7 @@ export function DevPortalPage(props: {
                               ))
                             ) : (
                               <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
-                                No content type data yet.
+                                {t("dev_portal.site_console.coverage_facets.no_content_type_data")}
                               </div>
                             )}
                           </CardContent>
@@ -551,8 +581,8 @@ export function DevPortalPage(props: {
                       <CardHeader className="pb-4">
                         <SectionHeader
                           heading="h3"
-                          title="Recent crawl activity"
-                          meta={`${propertyInsight.recent_jobs.length} rows`}
+                          title={t("dev_portal.site_console.recent_crawl_activity.title")}
+                          meta={t("dev_portal.common.rows", { count: propertyInsight.recent_jobs.length })}
                         />
                       </CardHeader>
                       <CardContent className="grid gap-3">
@@ -580,9 +610,9 @@ export function DevPortalPage(props: {
                                   </Badge>
                                 </div>
                                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
-                                  <span>depth {job.depth}</span>
-                                  <span>{job.http_status ? `HTTP ${job.http_status}` : "no status"}</span>
-                                  <span>{formatPortalTimestamp(job.finished_at ?? job.discovered_at)}</span>
+                                  <span>{t("dev_portal.site_console.recent_crawl_activity.depth", { depth: job.depth })}</span>
+                                  <span>{job.http_status ? `HTTP ${job.http_status}` : t("dev_portal.site_console.recent_crawl_activity.no_status")}</span>
+                                  <span>{formatPortalTimestamp(job.finished_at ?? job.discovered_at, t("dev_portal.common.not_yet"))}</span>
                                   {job.failure_kind ? <span>{job.failure_kind}</span> : null}
                                   {job.failure_message ? <span>{job.failure_message}</span> : null}
                                 </div>
@@ -591,7 +621,7 @@ export function DevPortalPage(props: {
                           ))
                         ) : (
                           <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-                            No crawl history for this property yet.
+                            {t("dev_portal.site_console.recent_crawl_activity.empty")}
                           </div>
                         )}
                       </CardContent>
@@ -602,18 +632,18 @@ export function DevPortalPage(props: {
                     <CardHeader className="pb-4">
                       <SectionHeader
                         heading="h3"
-                        title="Submit URLs"
-                        meta="Queue homepage, sitemap, or a focused URL set for this property."
+                        title={t("dev_portal.site_console.submit_urls.title")}
+                        meta={t("dev_portal.site_console.submit_urls.meta")}
                       />
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <form className="grid gap-4" onSubmit={handleSubmitProperty}>
-                        <FieldShell label="Property">
+                        <FieldShell label={t("dev_portal.site_console.submit_urls.property")}>
                           <Input
                             id="submit-domain"
                             value={submitDomain}
                             onChange={(event) => setSubmitDomain(event.target.value)}
-                            placeholder="example.com"
+                            placeholder={t("dev_portal.site_console.submit_urls.property_placeholder")}
                           />
                         </FieldShell>
                         <div className="flex flex-wrap gap-2">
@@ -626,7 +656,7 @@ export function DevPortalPage(props: {
                               setSubmitUrls(`https://${domain}/`);
                             }}
                           >
-                            Homepage only
+                            {t("dev_portal.site_console.submit_urls.homepage_only")}
                           </Button>
                           <Button
                             type="button"
@@ -637,20 +667,20 @@ export function DevPortalPage(props: {
                               setSubmitUrls(buildSeedSuggestions(domain));
                             }}
                           >
-                            Homepage + sitemap
+                            {t("dev_portal.site_console.submit_urls.homepage_and_sitemap")}
                           </Button>
                         </div>
-                        <FieldShell label="URL list">
+                        <FieldShell label={t("dev_portal.site_console.submit_urls.url_list")}>
                           <Textarea
                             id="submit-urls"
                             rows={8}
                             value={submitUrls}
                             onChange={(event) => setSubmitUrls(event.target.value)}
-                            placeholder="One URL per line"
+                            placeholder={t("dev_portal.site_console.submit_urls.url_list_placeholder")}
                           />
                         </FieldShell>
                         <div className="grid gap-4 sm:grid-cols-2">
-                          <FieldShell label="Crawl depth">
+                          <FieldShell label={t("dev_portal.site_console.submit_urls.crawl_depth")}>
                             <Input
                               id="submit-depth"
                               type="number"
@@ -660,7 +690,7 @@ export function DevPortalPage(props: {
                               onChange={(event) => setSubmitDepth(event.target.value)}
                             />
                           </FieldShell>
-                          <FieldShell label="Page budget">
+                          <FieldShell label={t("dev_portal.site_console.submit_urls.page_budget")}>
                             <Input
                               id="submit-pages"
                               type="number"
@@ -670,7 +700,7 @@ export function DevPortalPage(props: {
                               onChange={(event) => setSubmitMaxPages(event.target.value)}
                             />
                           </FieldShell>
-                          <FieldShell label="Same-origin concurrency">
+                          <FieldShell label={t("dev_portal.site_console.submit_urls.same_origin_concurrency")}>
                             <Input
                               id="submit-origin-concurrency"
                               type="number"
@@ -686,15 +716,14 @@ export function DevPortalPage(props: {
                             checked={submitRevisit}
                             onCheckedChange={(checked) => setSubmitRevisit(checked === true)}
                           />
-                          Allow revisit for URLs already seen before
+                          {t("dev_portal.site_console.submit_urls.allow_revisit")}
                         </label>
                         <Button type="submit" disabled={propertySubmitting || !submitUrls.trim()}>
-                          {propertySubmitting ? "Submitting..." : "Queue property crawl"}
+                          {propertySubmitting ? t("dev_portal.site_console.submit_urls.submitting") : t("dev_portal.site_console.submit_urls.submit")}
                         </Button>
                       </form>
                       <p className="text-sm text-muted-foreground">
-                        This portal uses the shared crawler owner. It is designed as a lightweight
-                        search-console workflow, not a fully isolated multi-tenant crawl pipeline.
+                        {t("dev_portal.site_console.submit_urls.hint")}
                       </p>
                     </CardContent>
                   </Card>
@@ -702,8 +731,7 @@ export function DevPortalPage(props: {
               </>
             ) : (
               <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-                Enter a domain or URL above to inspect indexed pages, crawl coverage, and
-                submission controls for that property.
+                {t("dev_portal.site_console.empty")}
               </div>
             )}
           </CardContent>
@@ -711,16 +739,16 @@ export function DevPortalPage(props: {
 
         <Card className="rounded-3xl">
           <CardHeader className="pb-4">
-            <CardTitle>Account</CardTitle>
-            <CardDescription>Current developer session and daily usage.</CardDescription>
+            <CardTitle>{t("dev_portal.account.title")}</CardTitle>
+            <CardDescription>{t("dev_portal.account.description")}</CardDescription>
           </CardHeader>
           <CardContent>
             <StatStrip
               className="grid-cols-1"
               items={[
-                { label: "User", value: session.username },
-                { label: "Daily quota", value: usage?.daily_limit ?? 0 },
-                { label: "Used today", value: usage?.used_today ?? 0 },
+                { label: t("dev_portal.account.user"), value: session.username },
+                { label: t("dev_portal.account.daily_quota"), value: usage?.daily_limit ?? 0 },
+                { label: t("dev_portal.account.used_today"), value: usage?.used_today ?? 0 },
               ]}
             />
           </CardContent>
@@ -728,25 +756,25 @@ export function DevPortalPage(props: {
 
         <Card className="rounded-3xl">
           <CardHeader className="pb-4">
-            <CardTitle>Create API key</CardTitle>
-            <CardDescription>Raw keys are only shown once. Save them before leaving this page.</CardDescription>
+            <CardTitle>{t("dev_portal.create_api_key.title")}</CardTitle>
+            <CardDescription>{t("dev_portal.create_api_key.description")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={handleCreateKey}>
               <Input
                 value={keyName}
                 onChange={(event) => setKeyName(event.target.value)}
-                placeholder="Key name"
+                placeholder={t("dev_portal.create_api_key.placeholder")}
               />
               <Button type="submit" disabled={busy}>
-                {busy ? "Creating..." : "Create key"}
+                {busy ? t("dev_portal.create_api_key.creating") : t("dev_portal.create_api_key.submit")}
               </Button>
             </form>
             {latestKey ? (
               <div className="space-y-3 rounded-2xl border border-border bg-muted/40 p-4">
                 <pre>{latestKey.token}</pre>
                 <Button type="button" variant="outline" onClick={() => handleUseSearchKey(latestKey.token)}>
-                  Use for search
+                  {t("dev_portal.create_api_key.use_for_search")}
                 </Button>
               </div>
             ) : null}
@@ -755,8 +783,8 @@ export function DevPortalPage(props: {
 
         <Card className="rounded-3xl lg:col-span-2">
           <CardHeader className="pb-4">
-            <CardTitle>API keys</CardTitle>
-            <CardDescription>Manage search keys for this developer account.</CardDescription>
+            <CardTitle>{t("dev_portal.api_keys.title")}</CardTitle>
+            <CardDescription>{t("dev_portal.api_keys.description")}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3">
@@ -770,10 +798,10 @@ export function DevPortalPage(props: {
                           <span className="text-sm text-muted-foreground">{key.preview}</span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          {activePreview === key.preview ? <Badge>Active</Badge> : null}
+                          {activePreview === key.preview ? <Badge>{t("dev_portal.api_keys.active")}</Badge> : null}
                           {latestKey?.id === key.id ? (
                             <Button type="button" variant="outline" size="sm" onClick={() => handleUseSearchKey(latestKey.token)}>
-                              Use for search
+                              {t("dev_portal.create_api_key.use_for_search")}
                             </Button>
                           ) : null}
                           <Button
@@ -783,19 +811,21 @@ export function DevPortalPage(props: {
                             disabled={busy || Boolean(key.revoked_at)}
                             onClick={() => void handleRevokeKey(key.id, key.preview)}
                           >
-                            {key.revoked_at ? "Revoked" : "Revoke"}
+                            {key.revoked_at ? t("dev_portal.api_keys.revoked") : t("dev_portal.api_keys.revoke")}
                           </Button>
                         </div>
                       </div>
                       <div className="text-sm text-muted-foreground">
-                        {key.revoked_at ? `revoked ${key.revoked_at}` : `created ${key.created_at}`}
+                        {key.revoked_at
+                          ? t("dev_portal.api_keys.revoked_at", { time: key.revoked_at })
+                          : t("dev_portal.api_keys.created_at", { time: key.created_at })}
                       </div>
                     </CardContent>
                   </Card>
                 ))
               ) : (
                 <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-                  No API keys yet.
+                  {t("dev_portal.api_keys.empty")}
                 </div>
               )}
             </div>

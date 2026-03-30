@@ -5,10 +5,12 @@ import {
   MagnifyingGlassIcon,
   MixerHorizontalIcon,
 } from "@radix-ui/react-icons";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Fragment, ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { searchWithParams, suggestSearch, type SearchResponse } from "../api";
+import { getPreferredSearchLanguage } from "../i18n";
+import { cn } from "../lib/utils";
 import { AppTopbar, TopbarActionButton, TopbarBadge } from "./common/AppTopbar";
 import { FieldShell } from "./common/PanelPrimitives";
 import type { ThemeMode } from "./ThemeSwitcher";
@@ -26,6 +28,7 @@ import {
 } from "./ui/select";
 
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
+const DEFAULT_SEARCH_LANGUAGE = getPreferredSearchLanguage();
 
 type SearchFreshness = "all" | "24h" | "7d" | "30d";
 type SearchNetwork = "clearnet" | "tor" | null;
@@ -38,6 +41,53 @@ type SearchState = {
   network: SearchNetwork;
   offset: number;
 };
+
+function normalizeLanguage(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function effectiveSearchLanguage(value: string) {
+  return normalizeLanguage(value) || DEFAULT_SEARCH_LANGUAGE;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getHighlightTerms(query: string) {
+  return Array.from(
+    new Set(
+      query
+        .trim()
+        .split(/\s+/)
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => right.length - left.length);
+}
+
+function renderHighlightedText(text: string, terms: string[], className?: string): ReactNode {
+  if (!terms.length) {
+    return text;
+  }
+
+  const matcher = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  return text.split(matcher).map((part, index) =>
+    terms.some((term) => part.toLowerCase() === term.toLowerCase()) ? (
+      <mark
+        key={`${part}-${index}`}
+        className={cn(
+          "rounded-[0.35rem] bg-[var(--fv-accent-soft)] px-1 py-0 text-[var(--fv-text)]",
+          className,
+        )}
+      >
+        {part}
+      </mark>
+    ) : (
+      <Fragment key={`${part}-${index}`}>{part}</Fragment>
+    ),
+  );
+}
 
 function currentSearchState(): SearchState {
   const search = new URLSearchParams(window.location.search);
@@ -97,7 +147,7 @@ export function SearchPage(props: {
   const [submittedSearch, setSubmittedSearch] = useState(currentSearchState);
   const [query, setQuery] = useState(() => submittedSearch.query);
   const [siteFilter, setSiteFilter] = useState(() => submittedSearch.site);
-  const [langFilter, setLangFilter] = useState(() => submittedSearch.lang);
+  const [langFilter, setLangFilter] = useState(() => submittedSearch.lang || DEFAULT_SEARCH_LANGUAGE);
   const [freshnessFilter, setFreshnessFilter] = useState<SearchFreshness>(
     () => submittedSearch.freshness,
   );
@@ -106,7 +156,7 @@ export function SearchPage(props: {
     () =>
       Boolean(
         submittedSearch.site ||
-          submittedSearch.lang ||
+          (submittedSearch.lang && normalizeLanguage(submittedSearch.lang) !== DEFAULT_SEARCH_LANGUAGE) ||
           submittedSearch.freshness !== "all" ||
           submittedSearch.network,
       ),
@@ -127,11 +177,16 @@ export function SearchPage(props: {
       setSubmittedSearch(next);
       setQuery(next.query);
       setSiteFilter(next.site);
-      setLangFilter(next.lang);
+      setLangFilter(next.lang || DEFAULT_SEARCH_LANGUAGE);
       setFreshnessFilter(next.freshness);
       setNetworkFilter(next.network);
       setFiltersOpen(
-        Boolean(next.site || next.lang || next.freshness !== "all" || next.network),
+        Boolean(
+          next.site ||
+            (next.lang && normalizeLanguage(next.lang) !== DEFAULT_SEARCH_LANGUAGE) ||
+            next.freshness !== "all" ||
+            next.network,
+        ),
       );
     };
 
@@ -189,7 +244,7 @@ export function SearchPage(props: {
           {
             offset: submittedSearch.offset,
             site: submittedSearch.site || undefined,
-            lang: submittedSearch.lang || undefined,
+            lang: effectiveSearchLanguage(submittedSearch.lang) || undefined,
             freshness:
               submittedSearch.freshness === "all" ? undefined : submittedSearch.freshness,
             network: submittedSearch.network ?? undefined,
@@ -208,7 +263,7 @@ export function SearchPage(props: {
             const fallbackResponse = await searchWithParams(submittedSearch.query, {
               offset: submittedSearch.offset,
               site: submittedSearch.site || undefined,
-              lang: submittedSearch.lang || undefined,
+              lang: effectiveSearchLanguage(submittedSearch.lang) || undefined,
               freshness:
                 submittedSearch.freshness === "all" ? undefined : submittedSearch.freshness,
               network: submittedSearch.network ?? undefined,
@@ -257,7 +312,7 @@ export function SearchPage(props: {
     commitSearch({
       query: query.trim(),
       site: siteFilter.trim(),
-      lang: langFilter.trim().toLowerCase(),
+      lang: normalizeLanguage(langFilter),
       freshness: freshnessFilter,
       network: networkFilter,
       offset: 0,
@@ -266,7 +321,7 @@ export function SearchPage(props: {
 
   function handleClearFilters() {
     setSiteFilter("");
-    setLangFilter("");
+    setLangFilter(DEFAULT_SEARCH_LANGUAGE);
     setFreshnessFilter("all");
     setNetworkFilter(null);
     setFiltersOpen(false);
@@ -301,7 +356,7 @@ export function SearchPage(props: {
     setQuery("");
     setSuggestions([]);
     setSiteFilter("");
-    setLangFilter("");
+    setLangFilter(DEFAULT_SEARCH_LANGUAGE);
     setFreshnessFilter("all");
     setNetworkFilter(null);
     setFiltersOpen(false);
@@ -316,9 +371,10 @@ export function SearchPage(props: {
   }
 
   const hasResults = Boolean(results);
+  const normalizedLangFilter = normalizeLanguage(langFilter);
   const activeFilterCount =
     Number(Boolean(siteFilter.trim())) +
-    Number(Boolean(langFilter.trim())) +
+    Number(Boolean(normalizedLangFilter) && normalizedLangFilter !== DEFAULT_SEARCH_LANGUAGE) +
     Number(freshnessFilter !== "all") +
     Number(Boolean(networkFilter));
   const resultsMode = hasResults || loading || error;
@@ -344,6 +400,7 @@ export function SearchPage(props: {
     { value: "clearnet", label: t("search.network_clearnet") },
     { value: "tor", label: t("search.network_tor") },
   ];
+  const highlightTerms = getHighlightTerms(submittedSearch.query);
 
   return (
     <div className={`min-h-screen ${shellTone}`}>
@@ -365,7 +422,7 @@ export function SearchPage(props: {
             ) : undefined
           }
           onTitleClick={resultsMode ? handleGoHome : undefined}
-          beforeControls={props.devToken ? <TopbarBadge>Dev</TopbarBadge> : null}
+          beforeControls={props.devToken ? <TopbarBadge>{t("search.dev_badge")}</TopbarBadge> : null}
           afterControls={
             <TopbarActionButton
               leading={<CodeIcon className="size-4" />}
@@ -433,7 +490,7 @@ export function SearchPage(props: {
                         commitSearch({
                           query: suggestion,
                           site: siteFilter.trim(),
-                          lang: langFilter.trim().toLowerCase(),
+                          lang: normalizeLanguage(langFilter),
                           freshness: freshnessFilter,
                           network: networkFilter,
                           offset: 0,
@@ -584,7 +641,7 @@ export function SearchPage(props: {
                           commitSearch({
                             query: results.did_you_mean ?? "",
                             site: siteFilter.trim(),
-                            lang: langFilter.trim().toLowerCase(),
+                            lang: normalizeLanguage(langFilter),
                             freshness: freshnessFilter,
                             network: networkFilter,
                             offset: 0,
@@ -605,19 +662,27 @@ export function SearchPage(props: {
                       className="app-rise-in group space-y-1.5 border-b border-[var(--fv-border-soft)] py-5 first:pt-0 last:border-b-0 last:pb-0"
                       style={{ animationDelay: `${Math.min(index, 5) * 45}ms` }}
                     >
-                      <div className="text-sm text-[var(--fv-text-soft)]">
-                        {result.display_url}
+                      <div className="truncate text-sm text-[var(--fv-text-soft)]" title={result.display_url}>
+                        {renderHighlightedText(
+                          result.display_url,
+                          highlightTerms,
+                          "bg-[var(--fv-panel-soft)] text-[var(--fv-text-soft)]",
+                        )}
                       </div>
                       <a
                         href={result.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-2 text-[1.35rem] font-medium leading-tight tracking-[-0.03em] text-[var(--fv-text)] transition-colors hover:text-[var(--fv-accent)]"
+                        className="inline-flex max-w-full items-center gap-2 text-[1.35rem] font-medium leading-tight tracking-[-0.03em] text-[var(--fv-text)] transition-colors hover:text-[var(--fv-accent)]"
                       >
-                        <span>{result.title}</span>
+                        <span className="min-w-0 flex-1">
+                          {renderHighlightedText(result.title, highlightTerms)}
+                        </span>
                         <ExternalLinkIcon className="size-4 shrink-0 opacity-60" />
                       </a>
-                      <p className={`text-[15px] leading-7 ${secondaryTextTone}`}>{result.snippet}</p>
+                      <p className={`text-[15px] leading-7 ${secondaryTextTone}`}>
+                        {renderHighlightedText(result.snippet, highlightTerms)}
+                      </p>
                     </article>
                   ))}
                 </div>

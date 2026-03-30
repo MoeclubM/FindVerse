@@ -2,7 +2,8 @@
   "language": {
     "label": "Language",
     "en": "English",
-    "zh_CN": "中文"
+    "zh_CN": "中文",
+    "ja": "日本語"
   },
   "theme": {
     "label": "Theme",
@@ -43,7 +44,125 @@
     "clear_filters": "Clear filters",
     "dev_search": "Developer search",
     "browser_search": "Browser search",
+    "dev_badge": "Dev",
     "console_link": "Open developer console"
+  },
+  "dev_portal": {
+    "title": "Developer Portal",
+    "key_badge": "Key",
+    "search": "Search",
+    "sign_out": "Sign out",
+    "checking": "Checking developer session...",
+    "common": {
+      "not_yet": "Not yet",
+      "unknown": "unknown",
+      "duplicate": "Duplicate",
+      "rows": "{{count}} rows",
+      "words": "{{count}} words"
+    },
+    "auth": {
+      "sign_in": "Sign in",
+      "register": "Register",
+      "create_account_title": "Create developer account",
+      "sign_in_title": "Developer sign in",
+      "description": "Create an account, generate an",
+      "description_suffix": "key, inspect a domain property, and submit URLs for crawl without leaving the portal.",
+      "username": "Username",
+      "password": "Password",
+      "submitting": "Submitting...",
+      "create_account": "Create account"
+    },
+    "flash": {
+      "login_failed": "Login failed",
+      "register_failed": "Register failed",
+      "api_key_creation_failed": "API key creation failed",
+      "api_key_revoke_failed": "API key revoke failed",
+      "property_analysis_failed": "Property analysis failed",
+      "property_submission_failed": "Property submission failed",
+      "missing_submission_fields": "Enter a property and at least one URL before submitting.",
+      "active_search_key_updated": "Active search key updated",
+      "queue_summary": "Queued {{accepted}} URL(s). Domain queue now has {{queued}} pending job(s) across {{known}} known URL(s)."
+    },
+    "site_console": {
+      "title": "Site Console",
+      "meta": "Inspect a property, review crawl coverage, then submit URLs with the shared crawler.",
+      "domain_or_url": "Domain or URL",
+      "domain_placeholder": "example.com or https://example.com/docs",
+      "analyzing": "Analyzing...",
+      "analyze": "Analyze property",
+      "empty": "Enter a domain or URL above to inspect indexed pages, crawl coverage, and submission controls for that property.",
+      "stats": {
+        "indexed_docs": "Indexed docs",
+        "duplicates": "Duplicates",
+        "pending_crawl": "Pending crawl",
+        "indexed_jobs": "Indexed jobs",
+        "filtered_jobs": "Filtered jobs",
+        "failures": "Failures",
+        "last_indexed": "Last indexed",
+        "last_crawl_activity": "Last crawl activity"
+      },
+      "recent_indexed_pages": {
+        "title": "Recent indexed pages",
+        "empty": "No indexed pages for this property yet."
+      },
+      "coverage_facets": {
+        "title": "Coverage facets",
+        "meta": "Top distributions from indexed docs",
+        "languages": "Languages",
+        "content_types": "Content types",
+        "no_language_data": "No language data yet.",
+        "no_content_type_data": "No content type data yet."
+      },
+      "recent_crawl_activity": {
+        "title": "Recent crawl activity",
+        "depth": "depth {{depth}}",
+        "no_status": "no status",
+        "empty": "No crawl history for this property yet."
+      },
+      "submit_urls": {
+        "title": "Submit URLs",
+        "meta": "Queue homepage, sitemap, or a focused URL set for this property.",
+        "property": "Property",
+        "property_placeholder": "example.com",
+        "homepage_only": "Homepage only",
+        "homepage_and_sitemap": "Homepage + sitemap",
+        "url_list": "URL list",
+        "url_list_placeholder": "One URL per line",
+        "crawl_depth": "Crawl depth",
+        "page_budget": "Page budget",
+        "same_origin_concurrency": "Same-origin concurrency",
+        "allow_revisit": "Allow revisit for URLs already seen before",
+        "submitting": "Submitting...",
+        "submit": "Queue property crawl",
+        "hint": "This portal uses the shared crawler owner. It is designed as a lightweight search-console workflow, not a fully isolated multi-tenant crawl pipeline."
+      }
+    },
+    "account": {
+      "title": "Account",
+      "description": "Current developer session and daily usage.",
+      "user": "User",
+      "daily_quota": "Daily quota",
+      "used_today": "Used today"
+    },
+    "create_api_key": {
+      "title": "Create API key",
+      "description": "Raw keys are only shown once. Save them before leaving this page.",
+      "default_name": "Search key",
+      "placeholder": "Key name",
+      "creating": "Creating...",
+      "submit": "Create key",
+      "use_for_search": "Use for search"
+    },
+    "api_keys": {
+      "title": "API keys",
+      "description": "Manage search keys for this developer account.",
+      "active": "Active",
+      "revoked": "Revoked",
+      "revoke": "Revoke",
+      "created_at": "created {{time}}",
+      "revoked_at": "revoked {{time}}",
+      "empty": "No API keys yet."
+    }
   },
   "console": {
     "login": {
