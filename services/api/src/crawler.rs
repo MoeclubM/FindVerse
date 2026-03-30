@@ -906,7 +906,15 @@ impl CrawlerStore {
         request: ClaimJobsRequest,
     ) -> Result<ClaimJobsResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
-        let max_jobs = request.max_jobs.clamp(1, 100) as i64;
+        let worker_concurrency = parse_positive_usize_config(
+            self.get_system_config("crawler.total_concurrency").await,
+            request.worker_concurrency.max(1),
+        );
+        let js_render_concurrency = parse_positive_usize_config(
+            self.get_system_config("crawler.js_render_concurrency").await,
+            request.js_render_concurrency.max(1),
+        );
+        let max_jobs = worker_concurrency as i64;
         let now = Utc::now();
 
         let crawler = self
@@ -1064,6 +1072,8 @@ impl CrawlerStore {
         Ok(ClaimJobsResponse {
             crawler_id: crawler_id.to_string(),
             frontier_depth: frontier_depth as usize,
+            worker_concurrency,
+            js_render_concurrency,
             jobs,
         })
     }
@@ -3178,6 +3188,13 @@ fn backoff_seconds_for_attempt(attempt_count: u32) -> i64 {
         2 => 120,
         _ => 300,
     }
+}
+
+fn parse_positive_usize_config(value: Option<String>, default: usize) -> usize {
+    value
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
 }
 
 #[cfg(test)]

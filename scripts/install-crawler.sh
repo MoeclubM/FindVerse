@@ -10,6 +10,7 @@ SERVICE_NAME="findverse-crawler"
 INSTALL_DIR="/opt/findverse-crawler"
 ENV_FILE="/etc/findverse-crawler/crawler.env"
 CONCURRENCY=""
+JS_RENDER_CONCURRENCY=""
 MAX_JOBS=""
 POLL_INTERVAL_SECS=""
 ALLOWED_DOMAINS=""
@@ -40,6 +41,7 @@ Options:
   --install-dir <dir>           Install directory. Default: /opt/findverse-crawler
   --env-file <path>             Config file path. Default: /etc/findverse-crawler/crawler.env
   --concurrency <n>             Worker concurrency. Reuses existing config if omitted
+  --js-render-concurrency <n>   Browser render concurrency. Reuses existing config if omitted
   --max-jobs <n>                Claim batch size. Defaults to concurrency when omitted
   --poll-interval-secs <n>      Poll interval. Reuses existing config if omitted
   --allowed-domains <csv>       Optional domain allowlist
@@ -88,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --concurrency) CONCURRENCY="$2"; shift 2 ;;
+    --js-render-concurrency) JS_RENDER_CONCURRENCY="$2"; shift 2 ;;
     --max-jobs) MAX_JOBS="$2"; shift 2 ;;
     --poll-interval-secs) POLL_INTERVAL_SECS="$2"; shift 2 ;;
     --allowed-domains) ALLOWED_DOMAINS="$2"; shift 2 ;;
@@ -266,6 +269,7 @@ load_existing_config() {
   EXISTING_CRAWLER_NAME=""
   EXISTING_CRAWLER_KEY=""
   EXISTING_CONCURRENCY=""
+  EXISTING_JS_RENDER_CONCURRENCY=""
   EXISTING_MAX_JOBS=""
   EXISTING_POLL_INTERVAL_SECS=""
   EXISTING_ALLOWED_DOMAINS=""
@@ -279,6 +283,7 @@ load_existing_config() {
     EXISTING_CRAWLER_NAME="${CRAWLER_NAME:-}"
     EXISTING_CRAWLER_KEY="${CRAWLER_KEY:-}"
     EXISTING_CONCURRENCY="${CONCURRENCY:-}"
+    EXISTING_JS_RENDER_CONCURRENCY="${JS_RENDER_CONCURRENCY:-}"
     EXISTING_MAX_JOBS="${MAX_JOBS:-}"
     EXISTING_POLL_INTERVAL_SECS="${POLL_INTERVAL_SECS:-}"
     EXISTING_ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-}"
@@ -316,10 +321,11 @@ write_env_file() {
   local final_crawler_key="$3"
   local env_dir
   local env_tmp="$TMP_DIR/crawler.env"
-  local final_concurrency final_max_jobs final_poll_interval
+  local final_concurrency final_js_render_concurrency final_max_jobs final_poll_interval
   local final_allowed_domains final_proxy
 
   final_concurrency="${CONCURRENCY:-${EXISTING_CONCURRENCY:-16}}"
+  final_js_render_concurrency="${JS_RENDER_CONCURRENCY:-${EXISTING_JS_RENDER_CONCURRENCY:-1}}"
   final_max_jobs="${MAX_JOBS:-${EXISTING_MAX_JOBS:-$final_concurrency}}"
   final_poll_interval="${POLL_INTERVAL_SECS:-${EXISTING_POLL_INTERVAL_SECS:-5}}"
   final_allowed_domains="${ALLOWED_DOMAINS:-${EXISTING_ALLOWED_DOMAINS:-}}"
@@ -334,6 +340,7 @@ CRAWLER_ID=$final_crawler_id
 CRAWLER_NAME=$final_crawler_name
 CRAWLER_KEY=$final_crawler_key
 CONCURRENCY=$final_concurrency
+JS_RENDER_CONCURRENCY=$final_js_render_concurrency
 MAX_JOBS=$final_max_jobs
 POLL_INTERVAL_SECS=$final_poll_interval
 ALLOWED_DOMAINS=$final_allowed_domains
@@ -360,6 +367,7 @@ args=(
   --max-jobs "\${MAX_JOBS:-\${CONCURRENCY:-16}}"
   --poll-interval-secs "\${POLL_INTERVAL_SECS:-5}"
   --concurrency "\${CONCURRENCY:-16}"
+  --js-render-concurrency "\${JS_RENDER_CONCURRENCY:-1}"
 )
 if [[ -n "\${ALLOWED_DOMAINS:-}" ]]; then
   args+=(--allowed-domains "\${ALLOWED_DOMAINS}")

@@ -12,7 +12,7 @@ use futures::stream::{self, StreamExt};
 use reqwest::header::CONTENT_TYPE;
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, Semaphore};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -164,12 +164,15 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             continue;
         }
 
+        let worker_concurrency = claim.worker_concurrency.max(1);
+        let js_render_limiter = Arc::new(Semaphore::new(claim.js_render_concurrency.max(1)));
         let results: Vec<CrawlResultReport> = stream::iter(claim.jobs)
             .map(|job| {
                 let clearnet_clients = clearnet_clients.clone();
                 let tor_clients = tor_clients.clone();
                 let llm_client = llm_client.clone();
                 let state = Arc::clone(&state);
+                let js_render_limiter = Arc::clone(&js_render_limiter);
                 let allowed_domains = config.allowed_domains.clone();
                 let llm_filter = config.llm_filter.clone();
                 async move {
@@ -202,13 +205,14 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                         llm_filter.as_ref(),
                         &job,
                         &state,
+                        &js_render_limiter,
                         &allowed_domains,
                         network,
                     )
                     .await
                 }
             })
-            .buffer_unordered(config.concurrency)
+            .buffer_unordered(worker_concurrency)
             .collect()
             .await;
 
@@ -278,6 +282,8 @@ async fn claim_jobs(
         .bearer_auth(&config.auth_token)
         .json(&ClaimJobsRequest {
             max_jobs: config.max_jobs,
+            worker_concurrency: config.concurrency,
+            js_render_concurrency: config.js_render_concurrency,
         })
         .send()
         .await?;
@@ -348,6 +354,7 @@ async fn process_job(
     llm_filter: Option<&LlmFilterConfig>,
     job: &CrawlJob,
     state: &Arc<Mutex<WorkerState>>,
+    js_render_limiter: &Arc<Semaphore>,
     allowed_domains: &[String],
     network: String,
 ) -> CrawlResultReport {
@@ -502,6 +509,10 @@ async fn process_job(
     let body = fetch.response.text().await.unwrap_or_default();
     let mut parsed = parse_html_document(&final_url, &body);
     if needs_js_rendering(&body, parsed.body.as_deref().unwrap_or("")) {
+        let _permit = js_render_limiter
+            .acquire()
+            .await
+            .expect("js render semaphore closed");
         match render_with_js(&final_url).await {
             Ok(rendered_html) => {
                 info!("re-parsing {} with JS rendering", final_url);

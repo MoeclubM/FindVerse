@@ -308,12 +308,30 @@ pub async fn admin_set_system_config(
         key.as_str(),
         "crawler.auth_key"
             | "crawler.claim_timeout_secs"
+            | "crawler.total_concurrency"
+            | "crawler.js_render_concurrency"
             | "crawler.max_attempts"
             | "crawler.tor_proxy_url"
             | "crawler.tor_enabled"
     );
     if !allowed {
         return Err(ApiError::BadRequest(format!("unknown config key: {key}")));
+    }
+    if matches!(
+        key.as_str(),
+        "crawler.total_concurrency" | "crawler.js_render_concurrency"
+    ) {
+        if let Some(value) = body.value.as_deref() {
+            let parsed = value
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| ApiError::BadRequest(format!("{key} must be a positive integer")))?;
+            if parsed == 0 {
+                return Err(ApiError::BadRequest(format!(
+                    "{key} must be a positive integer"
+                )));
+            }
+        }
     }
     state
         .crawler_store

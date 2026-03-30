@@ -36,7 +36,6 @@ import {
   SidebarGroupLabel,
   SidebarInset,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -45,7 +44,6 @@ import {
 
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
-const ONLINE_THRESHOLD_MS = 90 * 1000;
 
 type ConsoleTab = "overview" | "users" | "tasks" | "jobs" | "workers" | "documents" | "settings";
 
@@ -96,13 +94,6 @@ async function refreshDocuments(
   }
 }
 
-function isCrawlerOnline(lastSeenAt: string | null) {
-  if (!lastSeenAt) {
-    return false;
-  }
-  return Date.now() - new Date(lastSeenAt).getTime() < ONLINE_THRESHOLD_MS;
-}
-
 export function ConsolePage(props: {
   theme: "light" | "dark";
   themeMode: ThemeMode;
@@ -125,9 +116,6 @@ export function ConsolePage(props: {
   const consoleLabel = t("console.title").startsWith(SITE_NAME)
     ? t("console.title").slice(SITE_NAME.length).trim()
     : t("console.title");
-  const activeCrawlerCount =
-    overview?.crawlers.filter((crawler) => isCrawlerOnline(crawler.last_seen_at)).length ?? 0;
-  const enabledRuleCount = overview?.rules.filter((rule) => rule.enabled).length ?? 0;
 
   const setFlash = useCallback((value: string | null) => {
     if (!value) {
@@ -313,13 +301,13 @@ export function ConsolePage(props: {
   );
 
   const tabItems = [
-    { key: "overview" as const, label: t("console.tabs.overview"), badge: overview?.recent_events.length ?? 0, icon: LayoutDashboard },
-    { key: "users" as const, label: t("console.tabs.users"), badge: developers.length, icon: Users },
-    { key: "tasks" as const, label: t("console.tabs.tasks"), badge: enabledRuleCount, icon: Orbit },
-    { key: "jobs" as const, label: t("console.tabs.jobs"), badge: overview?.in_flight_jobs ?? 0, icon: ListTodo },
-    { key: "workers" as const, label: t("console.tabs.workers"), badge: activeCrawlerCount, icon: Bot },
-    { key: "documents" as const, label: t("console.tabs.documents"), badge: overview?.indexed_documents ?? 0, icon: FileText },
-    { key: "settings" as const, label: t("console.tabs.settings"), badge: null, icon: Settings },
+    { key: "overview" as const, label: t("console.tabs.overview"), icon: LayoutDashboard },
+    { key: "users" as const, label: t("console.tabs.users"), icon: Users },
+    { key: "tasks" as const, label: t("console.tabs.tasks"), icon: Orbit },
+    { key: "jobs" as const, label: t("console.tabs.jobs"), icon: ListTodo },
+    { key: "workers" as const, label: t("console.tabs.workers"), icon: Bot },
+    { key: "documents" as const, label: t("console.tabs.documents"), icon: FileText },
+    { key: "settings" as const, label: t("console.tabs.settings"), icon: Settings },
   ];
 
   const sidebar = (
@@ -342,7 +330,6 @@ export function ConsolePage(props: {
                     <Icon data-icon="inline-start" />
                     <span className="font-medium">{item.label}</span>
                   </span>
-                  {item.badge != null ? <SidebarMenuBadge>{item.badge}</SidebarMenuBadge> : null}
                 </SidebarMenuButton>
               </SidebarMenuItem>
             );

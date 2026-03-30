@@ -46,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
             poll_interval_secs,
             once,
             concurrency,
+            js_render_concurrency,
             allowed_domains,
             proxy,
             tor_socks_url,
@@ -82,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
                 poll_interval_secs,
                 once,
                 concurrency,
+                js_render_concurrency: js_render_concurrency.max(1),
                 allowed_domains: parsed_domains,
                 tor_socks_url: Some(tor_socks_url),
                 llm_filter: match (llm_base_url, llm_model) {

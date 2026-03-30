@@ -415,10 +415,22 @@ pub struct SeedFrontierResponse {
 pub struct ClaimJobsRequest {
     #[serde(default = "default_claim_max_jobs")]
     pub max_jobs: usize,
+    #[serde(default = "default_claim_worker_concurrency")]
+    pub worker_concurrency: usize,
+    #[serde(default = "default_claim_js_render_concurrency")]
+    pub js_render_concurrency: usize,
 }
 
 fn default_claim_max_jobs() -> usize {
     10
+}
+
+fn default_claim_worker_concurrency() -> usize {
+    16
+}
+
+fn default_claim_js_render_concurrency() -> usize {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,6 +455,8 @@ pub struct CrawlJob {
 pub struct ClaimJobsResponse {
     pub crawler_id: String,
     pub frontier_depth: usize,
+    pub worker_concurrency: usize,
+    pub js_render_concurrency: usize,
     pub jobs: Vec<CrawlJob>,
 }
 
