@@ -2,47 +2,36 @@ import type { ReactNode } from "react";
 
 import { LanguageSwitcher } from "../LanguageSwitcher";
 import { ThemeMode, ThemeSwitcher } from "../ThemeSwitcher";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 
 export function TopbarBadge(props: {
-  theme: "light" | "dark";
   children: ReactNode;
 }) {
-  const tone =
-    props.theme === "dark"
-      ? "border-[#5a4335] bg-[#2a231e] text-[#f0cbb3]"
-      : "border-[#e4d7c5] bg-[#f8efe4] text-[#9a5836]";
-
   return (
-    <span
-      className={`inline-flex h-10 items-center rounded-full border px-3 text-xs font-medium uppercase tracking-[0.12em] ${tone}`}
-    >
+    <Badge variant="outline" className="h-10 rounded-full px-3 text-xs font-medium uppercase tracking-[0.12em]">
       {props.children}
-    </span>
+    </Badge>
   );
 }
 
 export function TopbarActionButton(props: {
-  theme: "light" | "dark";
   children: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
   leading?: ReactNode;
 }) {
-  const tone =
-    props.theme === "dark"
-      ? "border-[#3a3129] bg-[#211c18] text-[#f3ece2] hover:bg-[#2a2420]"
-      : "border-[#e2d8cb] bg-[#fbf7f1] text-[#40352d] hover:bg-[#f3ece3]";
-
   return (
-    <button
+    <Button
       type="button"
-      className={`inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm font-medium transition-[background-color,border-color,color,transform] duration-200 ease-out hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 ${tone}`}
+      variant="outline"
+      className="h-10 rounded-full px-3"
       onClick={props.onClick}
       disabled={props.disabled}
     >
-      {props.leading ? <span className="shrink-0 text-neutral-500">{props.leading}</span> : null}
+      {props.leading}
       <span className="truncate">{props.children}</span>
-    </button>
+    </Button>
   );
 }
 
@@ -101,7 +90,7 @@ export function AppTopbar(props: {
         ) : null}
         <div className="flex max-w-full flex-wrap items-center gap-2 self-start sm:self-auto">
           {props.beforeControls}
-          <LanguageSwitcher theme={props.theme} />
+          <LanguageSwitcher />
           <ThemeSwitcher
             theme={props.theme}
             mode={props.themeMode}

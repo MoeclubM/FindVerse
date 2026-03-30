@@ -5,6 +5,7 @@ import { Copy, KeyRound, Shield, Waypoints } from "lucide-react";
 import { getSystemConfig, setSystemConfig } from "../../api";
 import { FieldShell, PanelSection } from "../common/PanelPrimitives";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { useConsole } from "./ConsoleContext";
 
@@ -133,7 +134,7 @@ export function ConsoleSettings() {
   }
 
   if (loading) {
-    return <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">{t("console.settings.loading")}</div>;
+    return <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">{t("console.settings.loading")}</div>;
   }
 
   return (
@@ -164,40 +165,40 @@ export function ConsoleSettings() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-stone-700"><Shield className="size-4" />Auth</div>
-            <p className="mt-2 text-sm text-stone-500">{t("console.settings.auth_key_label")}</p>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Shield className="size-4" />Auth</div>
+            <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.auth_key_label")}</p>
           </div>
-          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-stone-700"><Waypoints className="size-4" />Claim</div>
-            <p className="mt-2 text-sm text-stone-500">{t("console.settings.claim_timeout_label")}</p>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />Claim</div>
+            <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.claim_timeout_label")}</p>
           </div>
-          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-stone-700"><Waypoints className="size-4" />Retry</div>
-            <p className="mt-2 text-sm text-stone-500">{t("console.settings.max_attempts_label")}</p>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />Retry</div>
+            <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.max_attempts_label")}</p>
           </div>
         </div>
 
         {installCommand ? (
-          <div className="rounded-2xl border border-stone-200 bg-stone-950 p-4 text-stone-50 shadow-sm">
+          <div className="rounded-2xl border border-border bg-foreground p-4 text-background shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <p className="text-sm font-medium">{t("console.workers.setup_hint")}</p>
-                <p className="text-xs text-stone-400">{installServer}</p>
+                <p className="text-xs text-background/70">{installServer}</p>
               </div>
               <Button variant="secondary" size="sm" onClick={() => void handleCopyInstallCommand()}>
                 <Copy data-icon="inline-start" />
                 {t("console.actions.copy")}
               </Button>
             </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs leading-6 text-stone-200">{installCommand}</pre>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs leading-6 text-background/90">{installCommand}</pre>
           </div>
         ) : null}
       </PanelSection>
 
       <PanelSection title={t("console.settings.tor_section")} contentClassName="space-y-5">
-        <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
-          <input type="checkbox" checked={torEnabled} onChange={(event) => setTorEnabled(event.target.checked)} />
+        <label className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+          <Checkbox checked={torEnabled} onCheckedChange={(checked) => setTorEnabled(checked === true)} />
           <span>{t("console.settings.tor_enabled_label")}</span>
         </label>
         <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">

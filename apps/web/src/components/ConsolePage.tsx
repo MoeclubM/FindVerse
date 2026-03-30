@@ -1,7 +1,8 @@
 import { ExitIcon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
 import { Menu, Settings, Users, Bot, FileText, ListTodo, LayoutDashboard, Orbit } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import {
   AdminDeveloperRecord,
@@ -26,7 +27,9 @@ import { ConsoleJobs } from "./console/ConsoleJobs";
 import { ConsoleSettings } from "./console/ConsoleSettings";
 import type { ThemeMode } from "./ThemeSwitcher";
 import { Button } from "./ui/button";
-import { Dialog, DialogContent } from "./ui/dialog";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Input } from "./ui/input";
 import { cn } from "../lib/utils";
 
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
@@ -105,12 +108,9 @@ export function ConsolePage(props: {
   const [authLoading, setAuthLoading] = useState(Boolean(token));
   const [busy, setBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [toasts, setToasts] = useState<Array<{ id: number; message: string }>>([]);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const toastIdRef = useRef(0);
-  const toastTimeoutsRef = useRef<number[]>([]);
 
   const consoleLabel = t("console.title").startsWith(SITE_NAME)
     ? t("console.title").slice(SITE_NAME.length).trim()
@@ -119,34 +119,12 @@ export function ConsolePage(props: {
     overview?.crawlers.filter((crawler) => isCrawlerOnline(crawler.last_seen_at)).length ?? 0;
   const enabledRuleCount = overview?.rules.filter((rule) => rule.enabled).length ?? 0;
 
-  useEffect(
-    () => () => {
-      for (const timeoutId of toastTimeoutsRef.current) {
-        window.clearTimeout(timeoutId);
-      }
-      toastTimeoutsRef.current = [];
-    },
-    [],
-  );
-
   const setFlash = useCallback((value: string | null) => {
     if (!value) {
-      for (const timeoutId of toastTimeoutsRef.current) {
-        window.clearTimeout(timeoutId);
-      }
-      toastTimeoutsRef.current = [];
-      setToasts([]);
+      toast.dismiss();
       return;
     }
-
-    const id = ++toastIdRef.current;
-    setToasts((current) => [...current, { id, message: value }]);
-
-    const timeoutId = window.setTimeout(() => {
-      setToasts((current) => current.filter((toast) => toast.id !== id));
-      toastTimeoutsRef.current = toastTimeoutsRef.current.filter((currentId) => currentId !== timeoutId);
-    }, 3600);
-    toastTimeoutsRef.current.push(timeoutId);
+    toast(value);
   }, []);
 
   const refreshAll = useCallback(
@@ -383,12 +361,12 @@ export function ConsolePage(props: {
   );
 
   if (authLoading) {
-    return <div className="console-loading">{t("console.login.checking")}</div>;
+    return <div className="grid min-h-screen place-items-center bg-background text-foreground">{t("console.login.checking")}</div>;
   }
 
   if (!session || !token) {
     return (
-      <div className="console-page">
+      <div className="min-h-screen bg-background text-foreground">
         <AppTopbar
           theme={props.theme}
           themeMode={props.themeMode}
@@ -397,7 +375,6 @@ export function ConsolePage(props: {
           onTitleClick={props.onNavigateHome}
           afterControls={
             <TopbarActionButton
-              theme={props.theme}
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateHome}
             >
@@ -405,25 +382,32 @@ export function ConsolePage(props: {
             </TopbarActionButton>
           }
         />
-        <main className="console-login">
-          <h1>{t("console.login.title")}</h1>
-          <form onSubmit={handleLogin}>
-            <input
-              value={loginUsername}
-              onChange={(event) => setLoginUsername(event.target.value)}
-              placeholder={t("console.login.username")}
-            />
-            <input
-              type="password"
-              value={loginPassword}
-              onChange={(event) => setLoginPassword(event.target.value)}
-              placeholder={t("console.login.password")}
-            />
-            <button type="submit" disabled={busy}>
-              {busy ? t("console.login.submitting") : t("console.login.submit")}
-            </button>
-          </form>
-          {loginError ? <p className="search-error">{loginError}</p> : null}
+        <main className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-md items-center px-4 py-10">
+          <Card className="w-full rounded-3xl">
+            <CardHeader className="pb-4">
+              <CardTitle>{t("console.login.title")}</CardTitle>
+              <CardDescription>{SITE_NAME}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form className="grid gap-3" onSubmit={handleLogin}>
+                <Input
+                  value={loginUsername}
+                  onChange={(event) => setLoginUsername(event.target.value)}
+                  placeholder={t("console.login.username")}
+                />
+                <Input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(event) => setLoginPassword(event.target.value)}
+                  placeholder={t("console.login.password")}
+                />
+                <Button type="submit" disabled={busy}>
+                  {busy ? t("console.login.submitting") : t("console.login.submit")}
+                </Button>
+              </form>
+              {loginError ? <p className="mt-3 text-sm text-destructive">{loginError}</p> : null}
+            </CardContent>
+          </Card>
         </main>
       </div>
     );
@@ -431,7 +415,7 @@ export function ConsolePage(props: {
 
   return (
     <ConsoleProvider value={contextValue}>
-      <div className="console-page">
+      <div className="min-h-screen bg-background text-foreground">
         <AppTopbar
           theme={props.theme}
           themeMode={props.themeMode}
@@ -441,14 +425,12 @@ export function ConsolePage(props: {
           afterControls={
             <>
               <TopbarActionButton
-                theme={props.theme}
                 leading={<MagnifyingGlassIcon className="size-4" />}
                 onClick={props.onNavigateHome}
               >
                 {t("console.search")}
               </TopbarActionButton>
               <TopbarActionButton
-                theme={props.theme}
                 leading={<ExitIcon className="size-4" />}
                 onClick={() => void handleLogout()}
               >
@@ -457,17 +439,7 @@ export function ConsolePage(props: {
             </>
           }
         />
-        {toasts.length ? (
-          <div className="console-toast-stack" aria-live="polite" aria-atomic="true">
-            {toasts.map((toast) => (
-              <div key={toast.id} className="console-toast">
-                {toast.message}
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="console-shell">
+        <div className="bg-background">
           <div className="mx-auto flex w-full max-w-7xl gap-4 px-4 pb-8 pt-4 lg:px-6">
             <aside className="hidden w-72 shrink-0 lg:block">{sidebar}</aside>
 
@@ -509,6 +481,9 @@ export function ConsolePage(props: {
         </div>
         <Dialog open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <DialogContent className="left-0 top-0 h-full max-h-none w-[88vw] max-w-sm translate-x-0 translate-y-0 rounded-none border-r border-border p-4">
+            <DialogHeader className="sr-only">
+              <DialogTitle>{t("console.title")}</DialogTitle>
+            </DialogHeader>
             {sidebar}
           </DialogContent>
         </Dialog>

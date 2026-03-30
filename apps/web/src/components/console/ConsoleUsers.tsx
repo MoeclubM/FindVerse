@@ -10,7 +10,9 @@ import {
   updateDeveloper,
 } from "../../api";
 import { FieldShell, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Card, CardContent } from "../ui/card";
 import { Input } from "../ui/input";
 import { useConsole } from "./ConsoleContext";
 
@@ -208,7 +210,7 @@ export function ConsoleUsers() {
   return (
     <PanelSection title={t("console.users.title")} meta={t("console.users.accounts", { count: developers.length })} contentClassName="space-y-5">
       <StatStrip
-        className="document-summary-strip"
+        className="xl:grid-cols-4"
         items={[
           { label: t("console.users.accounts_total"), value: developers.length },
           { label: t("console.users.keys"), value: totalIssuedKeys },
@@ -216,7 +218,7 @@ export function ConsoleUsers() {
           { label: t("console.users.total_daily_limit"), value: totalDailyLimit },
         ]}
       />
-      <div className="dense-list compact-list">
+      <div className="grid gap-3">
         {developers.length ? (
           developers.map((developer) => {
             const draft = developerDrafts[developer.user_id] ?? {
@@ -233,173 +235,179 @@ export function ConsoleUsers() {
             const dailyLimit = panel.usage?.daily_limit ?? developer.daily_limit;
 
             return (
-              <article key={developer.user_id} className="developer-card-stack developer-user-card">
-                <div className="developer-user-shell developer-user-shell-compact">
-                  <div className="developer-user-topline">
-                    <div className="row-primary">
-                      <strong>{developer.username}</strong>
-                      <div className="row-meta row-meta-tight console-users-identity">
-                        <code>{developer.user_id}</code>
-                        <span>{t("console.users.created_at", { createdAt: developer.created_at })}</span>
-                      </div>
-                    </div>
-                    <div className="developer-user-summary">
-                      <div className="developer-user-summary-item">
-                        <span>{t("console.users.daily_limit")}</span>
-                        <strong>{dailyLimit}</strong>
-                      </div>
-                      <div className="developer-user-summary-item">
-                        <span>{t("console.users.usage_today")}</span>
-                        <strong>{usageToday}</strong>
-                      </div>
-                      <div className="developer-user-summary-item">
-                        <span>{t("console.users.keys")}</span>
-                        <strong>{keyTotal}</strong>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="developer-user-forms">
-                    <form
-                      className="inline-form form-fields developer-user-form"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void handleSaveDeveloperQuota(developer);
-                      }}
-                    >
-                      <FieldShell
-                        className="compact-field"
-                        label={t("console.users.daily_limit")}
-                        hint={t("console.users.quota_label", { username: developer.username })}
-                      >
-                        <Input
-                          aria-label={t("console.users.quota_label", { username: developer.username })}
-                          value={draft.daily_limit}
-                          onChange={(event) =>
-                            setDeveloperDrafts((current) => ({
-                              ...current,
-                              [developer.user_id]: {
-                                ...draft,
-                                daily_limit: event.target.value,
-                              },
-                            }))
-                          }
-                          placeholder={t("console.users.quota_placeholder")}
-                        />
-                      </FieldShell>
-                      <Button type="submit" disabled={busy}>
-                        {t("console.users.save")}
-                      </Button>
-                    </form>
-
-                    <form
-                      className="inline-form form-fields developer-user-form"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void handleSaveDeveloperPassword(developer);
-                      }}
-                    >
-                      <FieldShell
-                        className="compact-field field-group-wide"
-                        label={t("console.users.password_label")}
-                        hint={t("console.users.password_hint")}
-                      >
-                        <Input
-                          type="password"
-                          aria-label={t("console.users.password_label")}
-                          value={draft.password}
-                          onChange={(event) =>
-                            setDeveloperDrafts((current) => ({
-                              ...current,
-                              [developer.user_id]: {
-                                ...draft,
-                                password: event.target.value,
-                              },
-                            }))
-                          }
-                          placeholder={t("console.users.password_placeholder")}
-                        />
-                      </FieldShell>
-                      <Button type="submit" disabled={busy}>
-                        {t("console.users.update_password")}
-                      </Button>
-                    </form>
-
-                    <div className="row-actions developer-user-actions">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        disabled={busy || panel.loading}
-                        onClick={() => void handleToggleKeyPanel(developer)}
-                      >
-                        {isExpanded ? t("console.users.hide_keys") : t("console.users.manage_keys")}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        disabled={busy}
-                        onClick={() => void handleDeleteDeveloper(developer)}
-                      >
-                        {t("console.users.delete_user")}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-                {isExpanded ? (
-                  <div className="developer-key-panel">
-                    <div className="flex flex-col gap-2 border-b border-stone-200 pb-3 sm:flex-row sm:items-end sm:justify-between">
-                      <div className="space-y-1">
-                        <h3 className="text-base font-semibold text-stone-950">{t("console.users.key_panel_title", { username: developer.username })}</h3>
-                        <p className="text-sm text-stone-500">{t("console.users.key_panel_hint")}</p>
-                      </div>
-                      <span className="text-sm text-stone-500">{t("console.users.key_total", { count: keyTotal })}</span>
-                    </div>
-
-                    <div className="developer-key-summary">
-                      <span>{t("console.users.daily_limit_summary")} <strong>{dailyLimit}</strong></span>
-                      <span>{t("console.users.used_today_summary")} <strong>{usageToday}</strong></span>
-                    </div>
-
-                    {panel.loading && !panel.usage ? <div className="list-row">{t("console.users.loading_keys")}</div> : null}
-
-                    {panel.usage?.keys.length ? (
-                      <div className="dense-list compact-list">
-                        {panel.usage.keys.map((key) => (
-                          <div className="list-row developer-key-row" key={key.id}>
-                            <div className="row-primary">
-                              <strong>{key.name}</strong>
-                              <span>{key.preview}</span>
-                            </div>
-                            <div className="row-meta">
-                              <span>{t("console.users.created_at", { createdAt: key.created_at })}</span>
-                              <span className={key.revoked_at ? "status-pill status-pill-muted" : "status-pill"}>
-                                {key.revoked_at ? t("console.users.revoked_at", { revokedAt: key.revoked_at }) : t("console.users.active")}
-                              </span>
-                            </div>
-                            <div className="row-actions">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                disabled={busy || panel.loading || Boolean(key.revoked_at)}
-                                onClick={() => void handleRevokeKey(developer, key.id)}
-                              >
-                                {t("console.users.revoke")}
-                              </Button>
-                            </div>
+              <article key={developer.user_id} className="grid gap-3">
+                <Card className="rounded-2xl">
+                  <CardContent className="grid gap-4 p-4">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="grid gap-2">
+                        <div className="grid gap-1">
+                          <strong>{developer.username}</strong>
+                          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                            <code>{developer.user_id}</code>
+                            <span>{t("console.users.created_at", { createdAt: developer.created_at })}</span>
                           </div>
-                        ))}
+                        </div>
                       </div>
-                    ) : panel.loading ? null : (
-                      <div className="list-row">{t("console.users.no_keys")}</div>
-                    )}
-                  </div>
+                      <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[360px]">
+                        <div className="rounded-xl border border-border bg-muted/40 p-4">
+                          <span>{t("console.users.daily_limit")}</span>
+                          <strong className="mt-2 block text-base font-semibold text-foreground">{dailyLimit}</strong>
+                        </div>
+                        <div className="rounded-xl border border-border bg-muted/40 p-4">
+                          <span>{t("console.users.usage_today")}</span>
+                          <strong className="mt-2 block text-base font-semibold text-foreground">{usageToday}</strong>
+                        </div>
+                        <div className="rounded-xl border border-border bg-muted/40 p-4">
+                          <span>{t("console.users.keys")}</span>
+                          <strong className="mt-2 block text-base font-semibold text-foreground">{keyTotal}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3">
+                      <form
+                        className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void handleSaveDeveloperQuota(developer);
+                        }}
+                      >
+                        <FieldShell label={t("console.users.daily_limit")} hint={t("console.users.quota_label", { username: developer.username })}>
+                          <Input
+                            aria-label={t("console.users.quota_label", { username: developer.username })}
+                            value={draft.daily_limit}
+                            onChange={(event) =>
+                              setDeveloperDrafts((current) => ({
+                                ...current,
+                                [developer.user_id]: {
+                                  ...draft,
+                                  daily_limit: event.target.value,
+                                },
+                              }))
+                            }
+                            placeholder={t("console.users.quota_placeholder")}
+                          />
+                        </FieldShell>
+                        <Button className="lg:self-end" type="submit" disabled={busy}>
+                          {t("console.users.save")}
+                        </Button>
+                      </form>
+
+                      <form
+                        className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void handleSaveDeveloperPassword(developer);
+                        }}
+                      >
+                        <FieldShell label={t("console.users.password_label")} hint={t("console.users.password_hint")}>
+                          <Input
+                            type="password"
+                            aria-label={t("console.users.password_label")}
+                            value={draft.password}
+                            onChange={(event) =>
+                              setDeveloperDrafts((current) => ({
+                                ...current,
+                                [developer.user_id]: {
+                                  ...draft,
+                                  password: event.target.value,
+                                },
+                              }))
+                            }
+                            placeholder={t("console.users.password_placeholder")}
+                          />
+                        </FieldShell>
+                        <Button className="lg:self-end" type="submit" disabled={busy}>
+                          {t("console.users.update_password")}
+                        </Button>
+                      </form>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={busy || panel.loading}
+                          onClick={() => void handleToggleKeyPanel(developer)}
+                        >
+                          {isExpanded ? t("console.users.hide_keys") : t("console.users.manage_keys")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          disabled={busy}
+                          onClick={() => void handleDeleteDeveloper(developer)}
+                        >
+                          {t("console.users.delete_user")}
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                {isExpanded ? (
+                  <Card className="rounded-2xl border-dashed">
+                    <CardContent className="grid gap-4 p-4">
+                      <div className="flex flex-col gap-2 border-b border-border pb-3 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="space-y-1">
+                          <h3 className="text-base font-semibold text-foreground">{t("console.users.key_panel_title", { username: developer.username })}</h3>
+                          <p className="text-sm text-muted-foreground">{t("console.users.key_panel_hint")}</p>
+                        </div>
+                        <span className="text-sm text-muted-foreground">{t("console.users.key_total", { count: keyTotal })}</span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                        <span>{t("console.users.daily_limit_summary")} <strong className="text-foreground">{dailyLimit}</strong></span>
+                        <span>{t("console.users.used_today_summary")} <strong className="text-foreground">{usageToday}</strong></span>
+                      </div>
+
+                      {panel.loading && !panel.usage ? (
+                        <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                          {t("console.users.loading_keys")}
+                        </div>
+                      ) : null}
+
+                      {panel.usage?.keys.length ? (
+                        <div className="grid gap-3">
+                          {panel.usage.keys.map((key) => (
+                            <div className="grid gap-3 rounded-2xl border border-border bg-muted/30 p-4" key={key.id}>
+                              <div className="grid gap-1">
+                                <strong>{key.name}</strong>
+                                <span className="text-sm text-muted-foreground">{key.preview}</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                                <span>{t("console.users.created_at", { createdAt: key.created_at })}</span>
+                                <Badge variant={key.revoked_at ? "outline" : "success"}>
+                                  {key.revoked_at ? t("console.users.revoked_at", { revokedAt: key.revoked_at }) : t("console.users.active")}
+                                </Badge>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={busy || panel.loading || Boolean(key.revoked_at)}
+                                  onClick={() => void handleRevokeKey(developer, key.id)}
+                                >
+                                  {t("console.users.revoke")}
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : panel.loading ? null : (
+                        <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                          {t("console.users.no_keys")}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
                 ) : null}
               </article>
             );
           })
         ) : (
-          <div className="list-row">{t("console.users.no_users")}</div>
+          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+            {t("console.users.no_users")}
+          </div>
         )}
       </div>
     </PanelSection>

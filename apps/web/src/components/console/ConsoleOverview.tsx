@@ -1,6 +1,8 @@
 import { useConsole } from "./ConsoleContext";
 import { useTranslation } from "react-i18next";
 import { PanelSection, StatStrip } from "../common/PanelPrimitives";
+import { Badge } from "../ui/badge";
+import { Card, CardContent } from "../ui/card";
 
 const ONLINE_THRESHOLD_MS = 90 * 1000;
 
@@ -41,23 +43,23 @@ export function ConsoleOverview() {
         <div className="grid gap-3">
           {recentEvents.length ? (
             recentEvents.map((event) => (
-              <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm" key={event.id}>
-                <div className="flex flex-wrap items-center gap-2 text-sm text-stone-500">
-                  <strong className="text-stone-950">{event.kind}</strong>
-                  <span className={event.status === "ok" ? "status-pill" : "status-pill status-pill-muted"}>
-                    {event.status}
-                  </span>
+              <Card key={event.id} className="rounded-2xl">
+                <CardContent className="grid gap-3 p-4">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                  <strong className="text-foreground">{event.kind}</strong>
+                  <Badge variant={event.status === "ok" ? "success" : "outline"}>{event.status}</Badge>
                   <span>{event.created_at}</span>
                   {event.crawler_id ? <code>{event.crawler_id}</code> : null}
                 </div>
                 <div className="mt-3 grid gap-2">
-                  <span className="text-sm text-stone-700">{event.message}</span>
+                  <span className="text-sm text-foreground">{event.message}</span>
                   {event.url ? <code>{event.url}</code> : null}
                 </div>
-              </div>
+                </CardContent>
+              </Card>
             ))
           ) : (
-            <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">{t("console.overview.no_events")}</div>
+            <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">{t("console.overview.no_events")}</div>
           )}
         </div>
       </PanelSection>

@@ -1,7 +1,13 @@
 import { GlobeIcon } from "@radix-ui/react-icons";
 import { useTranslation } from "react-i18next";
 
-import { AppSelect } from "./common/AppSelect";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+} from "./ui/select";
 
 const LANGUAGE_OPTIONS = [
   { value: "en", label: "English", buttonLabel: "EN" },
@@ -9,29 +15,33 @@ const LANGUAGE_OPTIONS = [
   { value: "ja", label: "日本語", buttonLabel: "日" },
 ];
 
-export function LanguageSwitcher(props: { theme: "light" | "dark" }) {
+export function LanguageSwitcher() {
   const { i18n, t } = useTranslation();
   const currentLanguage = i18n.resolvedLanguage ?? i18n.language;
-  const selectedLanguage = LANGUAGE_OPTIONS.some((option) => option.value === currentLanguage)
-    ? currentLanguage
-    : "en";
+  const selectedLanguage =
+    LANGUAGE_OPTIONS.find((option) => option.value === currentLanguage) ?? LANGUAGE_OPTIONS[0];
 
   return (
-    <AppSelect
-      ariaLabel={t("language.label")}
-      theme={props.theme}
-      value={selectedLanguage}
-      prefix={<GlobeIcon className="size-4" />}
-      options={LANGUAGE_OPTIONS.map((option) => ({
-        value: option.value,
-        label: option.label,
-        triggerLabel: option.buttonLabel,
-      }))}
-      triggerClassName="w-auto rounded-full px-3.5"
+    <Select
+      value={selectedLanguage.value}
       onValueChange={(nextLanguage) => {
         void i18n.changeLanguage(nextLanguage);
         localStorage.setItem("findverse_lang", nextLanguage);
       }}
-    />
+    >
+      <SelectTrigger aria-label={t("language.label")} className="h-10 w-auto min-w-0 rounded-full px-3.5">
+        <GlobeIcon data-icon="inline-start" />
+        <span>{selectedLanguage.buttonLabel}</span>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {LANGUAGE_OPTIONS.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
   );
 }

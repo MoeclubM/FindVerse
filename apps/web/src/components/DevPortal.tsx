@@ -19,6 +19,12 @@ import {
 import { AppTopbar, TopbarActionButton, TopbarBadge } from "./common/AppTopbar";
 import { FieldShell, SectionHeader, StatStrip } from "./common/PanelPrimitives";
 import type { ThemeMode } from "./ThemeSwitcher";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Checkbox } from "./ui/checkbox";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
 
 const DEV_SESSION_KEY = "findverse_dev_session";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
@@ -298,12 +304,12 @@ export function DevPortalPage(props: {
   }
 
   if (loadingSession) {
-    return <div className="portal-loading">Checking developer session...</div>;
+    return <div className="grid min-h-screen place-items-center bg-background text-foreground">Checking developer session...</div>;
   }
 
   if (!session || !sessionToken) {
     return (
-      <div className="portal-page">
+      <div className="min-h-screen bg-background text-foreground">
         <AppTopbar
           theme={props.theme}
           themeMode={props.themeMode}
@@ -311,11 +317,10 @@ export function DevPortalPage(props: {
           title={`${SITE_NAME} · Developer Portal`}
           onTitleClick={props.onNavigateSearch}
           beforeControls={
-            props.devToken ? <TopbarBadge theme={props.theme}>Key</TopbarBadge> : null
+            props.devToken ? <TopbarBadge>Key</TopbarBadge> : null
           }
           afterControls={
             <TopbarActionButton
-              theme={props.theme}
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateSearch}
             >
@@ -323,74 +328,73 @@ export function DevPortalPage(props: {
             </TopbarActionButton>
           }
         />
-        <main className="portal-auth-shell">
-          <section className="portal-auth-card">
-            <div className="auth-mode-switch">
-              <button
-                type="button"
-                className={mode === "login" ? "active" : ""}
-                onClick={() => setMode("login")}
-              >
-                Sign in
-              </button>
-              <button
-                type="button"
-                className={mode === "register" ? "active" : ""}
-                onClick={() => setMode("register")}
-              >
-                Register
-              </button>
-            </div>
-            <h1>{mode === "register" ? "Create developer account" : "Developer sign in"}</h1>
-            <form onSubmit={handleAuthSubmit}>
-              <input
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                placeholder="Username"
-                autoComplete="username"
-              />
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Password"
-                autoComplete={mode === "register" ? "new-password" : "current-password"}
-              />
-              <button type="submit" disabled={busy}>
-                {busy ? "Submitting..." : mode === "register" ? "Create account" : "Sign in"}
-              </button>
-            </form>
-            {flash ? <p className="search-error">{flash}</p> : null}
-            <p className="dev-hint">
-              Create an account, generate an <code>fvk_</code> key, inspect a domain property, and
-              submit URLs for crawl without leaving the portal.
-            </p>
-          </section>
+        <main className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-md items-center px-4 py-10">
+          <Card className="w-full rounded-3xl">
+            <CardHeader className="gap-4 pb-4">
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant={mode === "login" ? "default" : "outline"} onClick={() => setMode("login")}>
+                  Sign in
+                </Button>
+                <Button type="button" variant={mode === "register" ? "default" : "outline"} onClick={() => setMode("register")}>
+                  Register
+                </Button>
+              </div>
+              <div className="space-y-1">
+                <CardTitle>{mode === "register" ? "Create developer account" : "Developer sign in"}</CardTitle>
+                <CardDescription>
+                  Create an account, generate an <code>fvk_</code> key, inspect a domain property, and submit URLs for crawl without leaving the portal.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form className="grid gap-3" onSubmit={handleAuthSubmit}>
+                <Input
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="Username"
+                  autoComplete="username"
+                />
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Password"
+                  autoComplete={mode === "register" ? "new-password" : "current-password"}
+                />
+                <Button type="submit" disabled={busy}>
+                  {busy ? "Submitting..." : mode === "register" ? "Create account" : "Sign in"}
+                </Button>
+              </form>
+              {flash ? (
+                <div className="rounded-2xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  {flash}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         </main>
       </div>
     );
   }
 
   return (
-    <div className="portal-page">
+    <div className="min-h-screen bg-background text-foreground">
       <AppTopbar
         theme={props.theme}
         themeMode={props.themeMode}
         onThemeModeChange={props.onThemeModeChange}
         title={`${SITE_NAME} · Developer Portal`}
         onTitleClick={props.onNavigateSearch}
-        beforeControls={props.devToken ? <TopbarBadge theme={props.theme}>Key</TopbarBadge> : null}
+        beforeControls={props.devToken ? <TopbarBadge>Key</TopbarBadge> : null}
         afterControls={
           <>
             <TopbarActionButton
-              theme={props.theme}
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateSearch}
             >
               Search
             </TopbarActionButton>
             <TopbarActionButton
-              theme={props.theme}
               leading={<ExitIcon className="size-4" />}
               disabled={busy}
               onClick={() => void handleSignOut()}
@@ -401,347 +405,401 @@ export function DevPortalPage(props: {
         }
       />
 
-      {flash ? <div className="portal-flash">{flash}</div> : null}
-
-      <main className="portal-main">
-        <section className="panel panel-wide property-panel">
-          <SectionHeader
-            title="Site Console"
-            meta="Inspect a property, review crawl coverage, then submit URLs with the shared crawler."
-            actions={propertyInsight ? <span className="status-pill status-pill-muted">{propertyInsight.domain}</span> : null}
-          />
-
-          <form className="property-toolbar" onSubmit={handleAnalyzeProperty}>
-            <FieldShell className="field-group-wide property-toolbar-field" label="Domain or URL">
-              <input
-                id="property-query"
-                value={propertyQuery}
-                onChange={(event) => setPropertyQuery(event.target.value)}
-                placeholder="example.com or https://example.com/docs"
-              />
-            </FieldShell>
-            <button type="submit" disabled={propertyLoading || !propertyQuery.trim()}>
-              {propertyLoading ? "Analyzing..." : "Analyze property"}
-            </button>
-          </form>
-
-          {propertyInsight ? (
-            <>
-              <StatStrip
-                className="property-summary-strip"
-                items={[
-                  { label: "Indexed docs", value: propertyInsight.indexed_documents },
-                  { label: "Duplicates", value: propertyInsight.duplicate_documents },
-                  { label: "Pending crawl", value: propertyInsight.pending_jobs },
-                  { label: "Indexed jobs", value: propertyInsight.successful_jobs },
-                  { label: "Filtered jobs", value: propertyInsight.filtered_jobs },
-                  { label: "Failures", value: propertyInsight.failed_jobs + propertyInsight.blocked_jobs },
-                  { label: "Last indexed", value: formatPortalTimestamp(propertyInsight.last_indexed_at) },
-                  { label: "Last crawl activity", value: formatPortalTimestamp(propertyInsight.last_crawled_at) },
-                ]}
-              />
-
-              <div className="property-grid">
-                <div className="property-stack">
-                  <section className="property-card">
-                    <SectionHeader
-                      className="property-card-header"
-                      heading="h3"
-                      title="Recent indexed pages"
-                      meta={`${propertyInsight.recent_documents.length} rows`}
-                    />
-                    <div className="dense-list">
-                      {propertyInsight.recent_documents.length ? (
-                        propertyInsight.recent_documents.map((document) => (
-                          <div className="list-row stacked property-row" key={document.id}>
-                            <div className="property-row-head">
-                              <a href={document.url} target="_blank" rel="noreferrer">
-                                {document.title}
-                              </a>
-                              {document.duplicate_of ? (
-                                <span className="status-pill status-pill-muted">Duplicate</span>
-                              ) : null}
-                            </div>
-                            <div className="property-row-meta">
-                              <span>{document.display_url}</span>
-                              <span>{document.language || "unknown"}</span>
-                              <span>{document.content_type}</span>
-                              <span>{document.word_count} words</span>
-                              <span>{formatPortalTimestamp(document.last_crawled_at)}</span>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="list-row">No indexed pages for this property yet.</div>
-                      )}
-                    </div>
-                  </section>
-
-                  <section className="property-card">
-                    <SectionHeader
-                      className="property-card-header"
-                      heading="h3"
-                      title="Coverage facets"
-                      meta="Top distributions from indexed docs"
-                    />
-                    <div className="property-facet-grid">
-                      <div className="property-facet-panel">
-                        <h4>Languages</h4>
-                        <div className="dense-list">
-                          {propertyInsight.top_languages.length ? (
-                            propertyInsight.top_languages.map((facet) => (
-                              <div className="list-row property-facet-row" key={`lang-${facet.label}`}>
-                                <span>{facet.label}</span>
-                                <strong>{facet.count}</strong>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="list-row">No language data yet.</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="property-facet-panel">
-                        <h4>Content types</h4>
-                        <div className="dense-list">
-                          {propertyInsight.top_content_types.length ? (
-                            propertyInsight.top_content_types.map((facet) => (
-                              <div className="list-row property-facet-row" key={`type-${facet.label}`}>
-                                <span>{facet.label}</span>
-                                <strong>{facet.count}</strong>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="list-row">No content type data yet.</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="property-card">
-                    <SectionHeader
-                      className="property-card-header"
-                      heading="h3"
-                      title="Recent crawl activity"
-                      meta={`${propertyInsight.recent_jobs.length} rows`}
-                    />
-                    <div className="dense-list">
-                      {propertyInsight.recent_jobs.length ? (
-                        propertyInsight.recent_jobs.map((job) => (
-                          <div className="list-row stacked property-row" key={job.id}>
-                            <div className="property-row-head">
-                              <a href={job.url} target="_blank" rel="noreferrer">
-                                {job.url}
-                              </a>
-                              <span
-                                className={
-                                  job.status === "succeeded" && job.accepted_document_id
-                                    ? "status-pill"
-                                    : "status-pill status-pill-muted"
-                                }
-                              >
-                                {job.status}
-                              </span>
-                            </div>
-                            <div className="property-row-meta">
-                              <span>depth {job.depth}</span>
-                              <span>{job.http_status ? `HTTP ${job.http_status}` : "no status"}</span>
-                              <span>{formatPortalTimestamp(job.finished_at ?? job.discovered_at)}</span>
-                              {job.failure_kind ? <span>{job.failure_kind}</span> : null}
-                              {job.failure_message ? <span>{job.failure_message}</span> : null}
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="list-row">No crawl history for this property yet.</div>
-                      )}
-                    </div>
-                  </section>
-                </div>
-
-                <section className="property-submit-panel">
-                  <SectionHeader
-                    className="property-card-header"
-                    heading="h3"
-                    title="Submit URLs"
-                    meta="Queue homepage, sitemap, or a focused URL set for this property."
-                  />
-                  <form onSubmit={handleSubmitProperty}>
-                    <FieldShell label="Property">
-                      <input
-                        id="submit-domain"
-                        value={submitDomain}
-                        onChange={(event) => setSubmitDomain(event.target.value)}
-                        placeholder="example.com"
-                      />
-                    </FieldShell>
-                    <div className="topbar-actions property-quick-actions">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const domain = submitDomain || propertyInsight.domain;
-                          setSubmitDomain(domain);
-                          setSubmitUrls(`https://${domain}/`);
-                        }}
-                      >
-                        Homepage only
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const domain = submitDomain || propertyInsight.domain;
-                          setSubmitDomain(domain);
-                          setSubmitUrls(buildSeedSuggestions(domain));
-                        }}
-                      >
-                        Homepage + sitemap
-                      </button>
-                    </div>
-                    <FieldShell label="URL list">
-                      <textarea
-                        id="submit-urls"
-                        rows={8}
-                        value={submitUrls}
-                        onChange={(event) => setSubmitUrls(event.target.value)}
-                        placeholder="One URL per line"
-                      />
-                    </FieldShell>
-                    <div className="property-submit-grid">
-                      <FieldShell label="Crawl depth">
-                        <input
-                          id="submit-depth"
-                          type="number"
-                          min={0}
-                          max={10}
-                          value={submitDepth}
-                          onChange={(event) => setSubmitDepth(event.target.value)}
-                        />
-                      </FieldShell>
-                      <FieldShell label="Page budget">
-                        <input
-                          id="submit-pages"
-                          type="number"
-                          min={1}
-                          max={10000}
-                          value={submitMaxPages}
-                          onChange={(event) => setSubmitMaxPages(event.target.value)}
-                        />
-                      </FieldShell>
-                      <FieldShell label="Same-origin concurrency">
-                        <input
-                          id="submit-origin-concurrency"
-                          type="number"
-                          min={1}
-                          max={32}
-                          value={submitSameOriginConcurrency}
-                          onChange={(event) => setSubmitSameOriginConcurrency(event.target.value)}
-                        />
-                      </FieldShell>
-                    </div>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={submitRevisit}
-                        onChange={(event) => setSubmitRevisit(event.target.checked)}
-                      />
-                      Allow revisit for URLs already seen before
-                    </label>
-                    <button type="submit" disabled={propertySubmitting || !submitUrls.trim()}>
-                      {propertySubmitting ? "Submitting..." : "Queue property crawl"}
-                    </button>
-                  </form>
-                  <p className="dev-hint">
-                    This portal uses the shared crawler owner. It is designed as a lightweight
-                    search-console workflow, not a fully isolated multi-tenant crawl pipeline.
-                  </p>
-                </section>
-              </div>
-            </>
-          ) : (
-            <div className="property-empty">
-              Enter a domain or URL above to inspect indexed pages, crawl coverage, and submission
-              controls for that property.
-            </div>
-          )}
-        </section>
-
-        <section className="panel">
-          <h2>Account</h2>
-          <div className="stats-grid single-column-stats">
-            <div>
-              <span>User</span>
-              <strong>{session.username}</strong>
-            </div>
-            <div>
-              <span>Daily quota</span>
-              <strong>{usage?.daily_limit ?? 0}</strong>
-            </div>
-            <div>
-              <span>Used today</span>
-              <strong>{usage?.used_today ?? 0}</strong>
-            </div>
+      {flash ? (
+        <div className="mx-auto mt-4 w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+            {flash}
           </div>
-        </section>
+        </div>
+      ) : null}
 
-        <section className="panel">
-          <h2>Create API key</h2>
-          <form onSubmit={handleCreateKey}>
-            <input
-              value={keyName}
-              onChange={(event) => setKeyName(event.target.value)}
-              placeholder="Key name"
+      <main className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-5 sm:px-6 lg:grid-cols-2 lg:px-8">
+        <Card className="rounded-3xl lg:col-span-2">
+          <CardHeader className="gap-4 pb-4">
+            <SectionHeader
+              title="Site Console"
+              meta="Inspect a property, review crawl coverage, then submit URLs with the shared crawler."
+              actions={propertyInsight ? <Badge variant="outline">{propertyInsight.domain}</Badge> : null}
             />
-            <button type="submit" disabled={busy}>
-              {busy ? "Creating..." : "Create key"}
-            </button>
-          </form>
-          <p className="dev-hint">Raw keys are only shown once. Save them before leaving this page.</p>
-          {latestKey ? (
-            <div className="key-reveal">
-              <pre>{latestKey.token}</pre>
-              <div className="topbar-actions">
-                <button type="button" onClick={() => handleUseSearchKey(latestKey.token)}>
-                  Use for search
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </section>
+            <form className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]" onSubmit={handleAnalyzeProperty}>
+              <FieldShell label="Domain or URL">
+                <Input
+                  id="property-query"
+                  value={propertyQuery}
+                  onChange={(event) => setPropertyQuery(event.target.value)}
+                  placeholder="example.com or https://example.com/docs"
+                />
+              </FieldShell>
+              <Button className="lg:self-end" type="submit" disabled={propertyLoading || !propertyQuery.trim()}>
+                {propertyLoading ? "Analyzing..." : "Analyze property"}
+              </Button>
+            </form>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {propertyInsight ? (
+              <>
+                <StatStrip
+                  className="xl:grid-cols-4"
+                  items={[
+                    { label: "Indexed docs", value: propertyInsight.indexed_documents },
+                    { label: "Duplicates", value: propertyInsight.duplicate_documents },
+                    { label: "Pending crawl", value: propertyInsight.pending_jobs },
+                    { label: "Indexed jobs", value: propertyInsight.successful_jobs },
+                    { label: "Filtered jobs", value: propertyInsight.filtered_jobs },
+                    { label: "Failures", value: propertyInsight.failed_jobs + propertyInsight.blocked_jobs },
+                    { label: "Last indexed", value: formatPortalTimestamp(propertyInsight.last_indexed_at) },
+                    { label: "Last crawl activity", value: formatPortalTimestamp(propertyInsight.last_crawled_at) },
+                  ]}
+                />
 
-        <section className="panel panel-wide">
-          <h2>API keys</h2>
-          <div className="list">
-            {usage?.keys.length ? (
-              usage.keys.map((key) => (
-                <div className="list-row stacked" key={key.id}>
-                  <div className="user-row-header">
-                    <strong>{key.name}</strong>
-                    <div className="topbar-actions">
-                      {activePreview === key.preview ? <span className="status-pill">Active</span> : null}
-                      {latestKey?.id === key.id ? (
-                        <button type="button" onClick={() => handleUseSearchKey(latestKey.token)}>
-                          Use for search
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="plain-link"
-                        disabled={busy || Boolean(key.revoked_at)}
-                        onClick={() => void handleRevokeKey(key.id, key.preview)}
-                      >
-                        {key.revoked_at ? "Revoked" : "Revoke"}
-                      </button>
-                    </div>
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.9fr)]">
+                  <div className="grid gap-4">
+                    <Card className="rounded-2xl shadow-none">
+                      <CardHeader className="pb-4">
+                        <SectionHeader
+                          heading="h3"
+                          title="Recent indexed pages"
+                          meta={`${propertyInsight.recent_documents.length} rows`}
+                        />
+                      </CardHeader>
+                      <CardContent className="grid gap-3">
+                        {propertyInsight.recent_documents.length ? (
+                          propertyInsight.recent_documents.map((document) => (
+                            <Card key={document.id} className="rounded-2xl bg-muted/30 shadow-none">
+                              <CardContent className="grid gap-3 p-4">
+                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                  <a
+                                    href={document.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-sm font-semibold text-foreground underline-offset-4 hover:underline"
+                                  >
+                                    {document.title}
+                                  </a>
+                                  {document.duplicate_of ? <Badge variant="outline">Duplicate</Badge> : null}
+                                </div>
+                                <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
+                                  <span>{document.display_url}</span>
+                                  <span>{document.language || "unknown"}</span>
+                                  <span>{document.content_type}</span>
+                                  <span>{document.word_count} words</span>
+                                  <span>{formatPortalTimestamp(document.last_crawled_at)}</span>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                            No indexed pages for this property yet.
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card className="rounded-2xl shadow-none">
+                      <CardHeader className="pb-4">
+                        <SectionHeader
+                          heading="h3"
+                          title="Coverage facets"
+                          meta="Top distributions from indexed docs"
+                        />
+                      </CardHeader>
+                      <CardContent className="grid gap-4 md:grid-cols-2">
+                        <Card className="rounded-2xl bg-muted/30 shadow-none">
+                          <CardHeader className="pb-4">
+                            <CardTitle className="text-base">Languages</CardTitle>
+                          </CardHeader>
+                          <CardContent className="grid gap-3">
+                            {propertyInsight.top_languages.length ? (
+                              propertyInsight.top_languages.map((facet) => (
+                                <div key={`lang-${facet.label}`} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                                  <span className="text-sm text-foreground">{facet.label}</span>
+                                  <strong className="text-sm font-semibold text-foreground">{facet.count}</strong>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+                                No language data yet.
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                        <Card className="rounded-2xl bg-muted/30 shadow-none">
+                          <CardHeader className="pb-4">
+                            <CardTitle className="text-base">Content types</CardTitle>
+                          </CardHeader>
+                          <CardContent className="grid gap-3">
+                            {propertyInsight.top_content_types.length ? (
+                              propertyInsight.top_content_types.map((facet) => (
+                                <div key={`type-${facet.label}`} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                                  <span className="text-sm text-foreground">{facet.label}</span>
+                                  <strong className="text-sm font-semibold text-foreground">{facet.count}</strong>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+                                No content type data yet.
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </CardContent>
+                    </Card>
+
+                    <Card className="rounded-2xl shadow-none">
+                      <CardHeader className="pb-4">
+                        <SectionHeader
+                          heading="h3"
+                          title="Recent crawl activity"
+                          meta={`${propertyInsight.recent_jobs.length} rows`}
+                        />
+                      </CardHeader>
+                      <CardContent className="grid gap-3">
+                        {propertyInsight.recent_jobs.length ? (
+                          propertyInsight.recent_jobs.map((job) => (
+                            <Card key={job.id} className="rounded-2xl bg-muted/30 shadow-none">
+                              <CardContent className="grid gap-3 p-4">
+                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                  <a
+                                    href={job.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="break-all text-sm font-semibold text-foreground underline-offset-4 hover:underline"
+                                  >
+                                    {job.url}
+                                  </a>
+                                  <Badge
+                                    variant={
+                                      job.status === "succeeded" && job.accepted_document_id
+                                        ? "success"
+                                        : "outline"
+                                    }
+                                  >
+                                    {job.status}
+                                  </Badge>
+                                </div>
+                                <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground">
+                                  <span>depth {job.depth}</span>
+                                  <span>{job.http_status ? `HTTP ${job.http_status}` : "no status"}</span>
+                                  <span>{formatPortalTimestamp(job.finished_at ?? job.discovered_at)}</span>
+                                  {job.failure_kind ? <span>{job.failure_kind}</span> : null}
+                                  {job.failure_message ? <span>{job.failure_message}</span> : null}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          ))
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                            No crawl history for this property yet.
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
                   </div>
-                  <div>{key.preview}</div>
-                  <div>{key.revoked_at ? `revoked ${key.revoked_at}` : `created ${key.created_at}`}</div>
+
+                  <Card className="rounded-2xl shadow-none">
+                    <CardHeader className="pb-4">
+                      <SectionHeader
+                        heading="h3"
+                        title="Submit URLs"
+                        meta="Queue homepage, sitemap, or a focused URL set for this property."
+                      />
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <form className="grid gap-4" onSubmit={handleSubmitProperty}>
+                        <FieldShell label="Property">
+                          <Input
+                            id="submit-domain"
+                            value={submitDomain}
+                            onChange={(event) => setSubmitDomain(event.target.value)}
+                            placeholder="example.com"
+                          />
+                        </FieldShell>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              const domain = submitDomain || propertyInsight.domain;
+                              setSubmitDomain(domain);
+                              setSubmitUrls(`https://${domain}/`);
+                            }}
+                          >
+                            Homepage only
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              const domain = submitDomain || propertyInsight.domain;
+                              setSubmitDomain(domain);
+                              setSubmitUrls(buildSeedSuggestions(domain));
+                            }}
+                          >
+                            Homepage + sitemap
+                          </Button>
+                        </div>
+                        <FieldShell label="URL list">
+                          <Textarea
+                            id="submit-urls"
+                            rows={8}
+                            value={submitUrls}
+                            onChange={(event) => setSubmitUrls(event.target.value)}
+                            placeholder="One URL per line"
+                          />
+                        </FieldShell>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <FieldShell label="Crawl depth">
+                            <Input
+                              id="submit-depth"
+                              type="number"
+                              min={0}
+                              max={10}
+                              value={submitDepth}
+                              onChange={(event) => setSubmitDepth(event.target.value)}
+                            />
+                          </FieldShell>
+                          <FieldShell label="Page budget">
+                            <Input
+                              id="submit-pages"
+                              type="number"
+                              min={1}
+                              max={10000}
+                              value={submitMaxPages}
+                              onChange={(event) => setSubmitMaxPages(event.target.value)}
+                            />
+                          </FieldShell>
+                          <FieldShell label="Same-origin concurrency">
+                            <Input
+                              id="submit-origin-concurrency"
+                              type="number"
+                              min={1}
+                              max={32}
+                              value={submitSameOriginConcurrency}
+                              onChange={(event) => setSubmitSameOriginConcurrency(event.target.value)}
+                            />
+                          </FieldShell>
+                        </div>
+                        <label className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+                          <Checkbox
+                            checked={submitRevisit}
+                            onCheckedChange={(checked) => setSubmitRevisit(checked === true)}
+                          />
+                          Allow revisit for URLs already seen before
+                        </label>
+                        <Button type="submit" disabled={propertySubmitting || !submitUrls.trim()}>
+                          {propertySubmitting ? "Submitting..." : "Queue property crawl"}
+                        </Button>
+                      </form>
+                      <p className="text-sm text-muted-foreground">
+                        This portal uses the shared crawler owner. It is designed as a lightweight
+                        search-console workflow, not a fully isolated multi-tenant crawl pipeline.
+                      </p>
+                    </CardContent>
+                  </Card>
                 </div>
-              ))
+              </>
             ) : (
-              <div className="list-row">No API keys yet.</div>
+              <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                Enter a domain or URL above to inspect indexed pages, crawl coverage, and
+                submission controls for that property.
+              </div>
             )}
-          </div>
-        </section>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl">
+          <CardHeader className="pb-4">
+            <CardTitle>Account</CardTitle>
+            <CardDescription>Current developer session and daily usage.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <StatStrip
+              className="grid-cols-1"
+              items={[
+                { label: "User", value: session.username },
+                { label: "Daily quota", value: usage?.daily_limit ?? 0 },
+                { label: "Used today", value: usage?.used_today ?? 0 },
+              ]}
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl">
+          <CardHeader className="pb-4">
+            <CardTitle>Create API key</CardTitle>
+            <CardDescription>Raw keys are only shown once. Save them before leaving this page.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={handleCreateKey}>
+              <Input
+                value={keyName}
+                onChange={(event) => setKeyName(event.target.value)}
+                placeholder="Key name"
+              />
+              <Button type="submit" disabled={busy}>
+                {busy ? "Creating..." : "Create key"}
+              </Button>
+            </form>
+            {latestKey ? (
+              <div className="space-y-3 rounded-2xl border border-border bg-muted/40 p-4">
+                <pre>{latestKey.token}</pre>
+                <Button type="button" variant="outline" onClick={() => handleUseSearchKey(latestKey.token)}>
+                  Use for search
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl lg:col-span-2">
+          <CardHeader className="pb-4">
+            <CardTitle>API keys</CardTitle>
+            <CardDescription>Manage search keys for this developer account.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3">
+              {usage?.keys.length ? (
+                usage.keys.map((key) => (
+                  <Card key={key.id} className="rounded-2xl bg-muted/30 shadow-none">
+                    <CardContent className="grid gap-3 p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="grid gap-1">
+                          <strong className="text-sm font-semibold text-foreground">{key.name}</strong>
+                          <span className="text-sm text-muted-foreground">{key.preview}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {activePreview === key.preview ? <Badge>Active</Badge> : null}
+                          {latestKey?.id === key.id ? (
+                            <Button type="button" variant="outline" size="sm" onClick={() => handleUseSearchKey(latestKey.token)}>
+                              Use for search
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant={key.revoked_at ? "outline" : "ghost"}
+                            size="sm"
+                            disabled={busy || Boolean(key.revoked_at)}
+                            onClick={() => void handleRevokeKey(key.id, key.preview)}
+                          >
+                            {key.revoked_at ? "Revoked" : "Revoke"}
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {key.revoked_at ? `revoked ${key.revoked_at}` : `created ${key.created_at}`}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                  No API keys yet.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </main>
     </div>
   );

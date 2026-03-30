@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Toaster } from "sonner";
 
 import { ConsolePage } from "./components/ConsolePage";
 import { DevPortalPage } from "./components/DevPortal";
@@ -57,8 +58,21 @@ export function App() {
     setDevToken(token);
   }
 
+  let page = (
+    <SearchPage
+      devToken={devToken}
+      theme={theme}
+      themeMode={themeMode}
+      onThemeModeChange={setThemeMode}
+      onNavigateDev={() => navigate("/dev", setPath)}
+      onTokenExpired={() => {
+        handleDevToken(null);
+      }}
+    />
+  );
+
   if (path.startsWith("/console")) {
-    return (
+    page = (
       <ConsolePage
         theme={theme}
         themeMode={themeMode}
@@ -69,7 +83,7 @@ export function App() {
   }
 
   if (path.startsWith("/dev")) {
-    return (
+    page = (
       <DevPortalPage
         devToken={devToken}
         theme={theme}
@@ -82,15 +96,9 @@ export function App() {
   }
 
   return (
-    <SearchPage
-      devToken={devToken}
-      theme={theme}
-      themeMode={themeMode}
-      onThemeModeChange={setThemeMode}
-      onNavigateDev={() => navigate("/dev", setPath)}
-      onTokenExpired={() => {
-        handleDevToken(null);
-      }}
-    />
+    <>
+      {page}
+      <Toaster closeButton richColors theme={theme} />
+    </>
   );
 }

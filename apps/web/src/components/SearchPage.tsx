@@ -9,10 +9,20 @@ import { FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { searchWithParams, suggestSearch, type SearchResponse } from "../api";
-import { AppSelect } from "./common/AppSelect";
 import { AppTopbar, TopbarActionButton, TopbarBadge } from "./common/AppTopbar";
 import { FieldShell } from "./common/PanelPrimitives";
 import type { ThemeMode } from "./ThemeSwitcher";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
 
@@ -317,13 +327,8 @@ export function SearchPage(props: {
   const inputTone = "text-[var(--fv-text)] placeholder:text-[var(--fv-text-soft)]";
   const mutedTone = "text-[var(--fv-text-muted)]";
   const secondaryTextTone = "text-[var(--fv-text-soft)]";
-  const primaryButtonTone =
-    "border-[var(--fv-accent)] bg-[var(--fv-accent)] text-white hover:border-[var(--fv-accent-hover)] hover:bg-[var(--fv-accent-hover)]";
-  const secondaryButtonTone =
-    "border-[var(--fv-border)] bg-[var(--fv-panel)] text-[var(--fv-text)] hover:-translate-y-px hover:bg-[var(--fv-panel-soft)]";
   const badgeTone =
     "border-[var(--fv-border)] bg-[var(--fv-accent-soft)] text-[var(--fv-text-muted)]";
-  const focusBorderTone = "focus:border-[var(--fv-accent)]";
   const labelTone =
     "text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--fv-text-muted)]";
   const homeBrandTone = "text-[var(--fv-text)]";
@@ -359,10 +364,9 @@ export function SearchPage(props: {
             ) : undefined
           }
           onTitleClick={resultsMode ? handleGoHome : undefined}
-          beforeControls={props.devToken ? <TopbarBadge theme={props.theme}>Dev</TopbarBadge> : null}
+          beforeControls={props.devToken ? <TopbarBadge>Dev</TopbarBadge> : null}
           afterControls={
             <TopbarActionButton
-              theme={props.theme}
               leading={<CodeIcon className="size-4" />}
               onClick={props.onNavigateDev}
             >
@@ -397,30 +401,32 @@ export function SearchPage(props: {
               >
                 <div className="flex min-h-12 flex-1 items-center gap-3">
                   <MagnifyingGlassIcon className={`size-4 shrink-0 ${mutedTone}`} />
-                  <input
+                  <Input
                     aria-label={t("search.button")}
-                    className={`h-full min-h-12 flex-1 border-0 bg-transparent text-base outline-none ${inputTone}`}
+                    className={`h-full min-h-12 flex-1 border-0 bg-transparent px-0 py-0 text-base shadow-none focus-visible:ring-0 ${inputTone}`}
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder={t("search.placeholder")}
                   />
                 </div>
-                <button
+                <Button
                   type="submit"
                   aria-label={t("search.button")}
-                  className={`inline-flex size-11 shrink-0 items-center justify-center rounded-full border transition-colors ${primaryButtonTone}`}
+                  className="size-11 shrink-0 rounded-full border-[var(--fv-accent)] bg-[var(--fv-accent)] text-white hover:border-[var(--fv-accent-hover)] hover:bg-[var(--fv-accent-hover)]"
                 >
                   <MagnifyingGlassIcon className="size-4" />
-                </button>
+                </Button>
               </div>
 
               {suggestions.length > 0 ? (
                 <div className="flex flex-wrap gap-2 pt-1">
                   {suggestions.slice(0, 6).map((suggestion) => (
-                    <button
+                    <Button
                       key={suggestion}
                       type="button"
-                      className={`inline-flex items-center rounded-full border px-3 py-1.5 text-sm transition-colors ${secondaryButtonTone}`}
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)]"
                       onClick={() => {
                         setQuery(suggestion);
                         commitSearch({
@@ -434,7 +440,7 @@ export function SearchPage(props: {
                       }}
                     >
                       {suggestion}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ) : null}
@@ -442,81 +448,97 @@ export function SearchPage(props: {
               <Collapsible.Root open={filtersOpen} onOpenChange={setFiltersOpen}>
                 <div className="flex flex-wrap items-center gap-2">
                   <Collapsible.Trigger asChild>
-                    <button
+                    <Button
                       type="button"
-                      className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-sm transition-colors ${secondaryButtonTone}`}
+                      variant="outline"
+                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)]"
                     >
                       <MixerHorizontalIcon className="size-4" />
                       <span>
                         {t(filtersOpen ? "search.filters_hide" : "search.filters_show")}
                       </span>
-                      <span className={`rounded-full border px-2 py-0.5 text-xs ${badgeTone}`}>
+                      <Badge variant="outline" className={badgeTone}>
                         {activeFilterCount > 0
                           ? t("search.filters_active", { count: activeFilterCount })
                           : t("search.filters_none")}
-                      </span>
-                    </button>
+                      </Badge>
+                    </Button>
                   </Collapsible.Trigger>
                   {activeFilterCount > 0 ? (
-                    <button
+                    <Button
                       type="button"
-                      className={`inline-flex h-10 items-center rounded-full border px-4 text-sm transition-colors ${secondaryButtonTone}`}
+                      variant="outline"
+                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)]"
                       onClick={handleClearFilters}
                     >
                       {t("search.clear_filters")}
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
 
                 <Collapsible.Content className="pt-2">
                   <div className={`grid gap-3 rounded-[24px] border p-4 md:grid-cols-2 xl:grid-cols-4 ${panelTone}`}>
                     <FieldShell className="gap-1.5" label={<span className={labelTone}>{t("search.site_label")}</span>}>
-                      <input
+                      <Input
                         aria-label={t("search.site_label")}
-                        className={`h-10 rounded-2xl border px-3 text-sm outline-none transition-colors ${focusBorderTone} ${
-                          "border-[var(--fv-border)] bg-[var(--fv-panel-soft)]"
-                        } ${inputTone}`}
+                        className={`h-10 rounded-2xl border-[var(--fv-border)] bg-[var(--fv-panel-soft)] text-sm ${inputTone}`}
                         value={siteFilter}
                         onChange={(event) => setSiteFilter(event.target.value)}
                         placeholder={t("search.site_placeholder")}
                       />
                     </FieldShell>
                     <FieldShell className="gap-1.5" label={<span className={labelTone}>{t("search.lang_label")}</span>}>
-                      <input
+                      <Input
                         aria-label={t("search.lang_label")}
-                        className={`h-10 rounded-2xl border px-3 text-sm outline-none transition-colors ${focusBorderTone} ${
-                          "border-[var(--fv-border)] bg-[var(--fv-panel-soft)]"
-                        } ${inputTone}`}
+                        className={`h-10 rounded-2xl border-[var(--fv-border)] bg-[var(--fv-panel-soft)] text-sm ${inputTone}`}
                         value={langFilter}
                         onChange={(event) => setLangFilter(event.target.value)}
                         placeholder={t("search.lang_placeholder")}
                       />
                     </FieldShell>
                     <FieldShell className="gap-1.5" label={<span className={labelTone}>{t("search.freshness_label")}</span>}>
-                      <AppSelect
-                        ariaLabel={t("search.freshness_label")}
-                        theme={props.theme}
+                      <Select
                         value={freshnessFilter}
-                        triggerClassName="w-full rounded-2xl"
-                        options={freshnessOptions}
                         onValueChange={(value) =>
                           setFreshnessFilter(
                             value === "24h" || value === "7d" || value === "30d" ? value : "all",
                           )
                         }
-                      />
+                      >
+                        <SelectTrigger aria-label={t("search.freshness_label")} className="w-full rounded-2xl">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {freshnessOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
                     </FieldShell>
                     <FieldShell className="gap-1.5" label={<span className={labelTone}>{t("search.network_label")}</span>}>
-                      <AppSelect
-                        ariaLabel={t("search.network_label")}
-                        theme={props.theme}
+                      <Select
                         value={networkFilter ?? "all"}
-                        triggerClassName="w-full rounded-2xl"
-                        options={networkOptions}
                         onValueChange={(value) =>
                           setNetworkFilter(value === "clearnet" || value === "tor" ? value : null)
                         }
-                      />
+                      >
+                        <SelectTrigger aria-label={t("search.network_label")} className="w-full rounded-2xl">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {networkOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
                     </FieldShell>
                   </div>
                 </Collapsible.Content>
@@ -603,25 +625,27 @@ export function SearchPage(props: {
 
                 {(submittedSearch.offset > 0 || results.next_offset != null) && (
                   <div className="flex items-center justify-between gap-3 pt-2">
-                    <button
+                    <Button
                       type="button"
-                      className={`inline-flex h-10 items-center rounded-full border px-4 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${secondaryButtonTone}`}
+                      variant="outline"
+                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)] disabled:opacity-40"
                       disabled={submittedSearch.offset === 0}
                       onClick={handlePrevPage}
                     >
                       {t("search.previous")}
-                    </button>
+                    </Button>
                     <span className={`text-sm ${mutedTone}`}>
                       {t("search.page", { page: Math.floor(submittedSearch.offset / 10) + 1 })}
                     </span>
-                    <button
+                    <Button
                       type="button"
-                      className={`inline-flex h-10 items-center rounded-full border px-4 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${secondaryButtonTone}`}
+                      variant="outline"
+                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)] disabled:opacity-40"
                       disabled={results.next_offset == null}
                       onClick={handleNextPage}
                     >
                       {t("search.next")}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </section>

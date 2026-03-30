@@ -48,13 +48,14 @@ export function StatStrip(props: {
   return (
     <div className={cn("grid gap-3 sm:grid-cols-2 xl:grid-cols-4", props.className)}>
       {props.items.map((item, index) => (
-        <div
-          key={index}
-          className="rounded-xl border border-border bg-muted/60 px-4 py-3 shadow-sm"
-        >
-          <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{item.label}</span>
-          <div className="mt-2 text-2xl font-semibold text-foreground">{item.value}</div>
-        </div>
+        <Card key={index} className="rounded-xl bg-muted/40 shadow-none">
+          <CardContent className="px-4 py-3">
+            <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              {item.label}
+            </span>
+            <div className="mt-2 text-2xl font-semibold text-foreground">{item.value}</div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { deleteDocument, listDocuments, purgeSite } from "../../api";
 import { DetailDialog, FieldShell, PanelSection, StatStrip } from "../common/PanelPrimitives";
 import { Button } from "../ui/button";
+import { Card, CardContent } from "../ui/card";
 import { Input } from "../ui/input";
 import { useConsole } from "./ConsoleContext";
 
@@ -128,7 +129,7 @@ export function ConsoleDocuments() {
         contentClassName="space-y-5"
     >
       <StatStrip
-        className="document-summary-strip"
+        className="xl:grid-cols-4"
         items={[
           { label: t("console.overview.indexed_docs"), value: displayDocuments?.total_estimate ?? 0 },
           { label: t("console.documents.visible"), value: visibleDocuments.length },
@@ -137,14 +138,14 @@ export function ConsoleDocuments() {
         ]}
       />
       <div className="grid gap-4 md:grid-cols-2">
-        <FieldShell className="compact-field" label={t("console.documents.search_label")}>
+        <FieldShell label={t("console.documents.search_label")}>
           <Input
             value={documentQuery}
             onChange={(event) => setDocumentQuery(event.target.value)}
             placeholder={t("console.documents.query_placeholder")}
           />
         </FieldShell>
-        <FieldShell className="compact-field" label={t("console.documents.site_label")}>
+        <FieldShell label={t("console.documents.site_label")}>
           <Input
             value={documentSite}
             onChange={(event) => setDocumentSite(event.target.value)}
@@ -153,7 +154,7 @@ export function ConsoleDocuments() {
         </FieldShell>
       </div>
       <form className="grid gap-4 lg:grid-cols-[1fr_auto]" onSubmit={handlePurgeSite}>
-        <FieldShell className="compact-field field-group-wide" label={t("console.documents.purge_site")}>
+        <FieldShell label={t("console.documents.purge_site")}>
           <Input
             value={purgeSiteInput}
             onChange={(event) => setPurgeSiteInput(event.target.value)}
@@ -167,14 +168,15 @@ export function ConsoleDocuments() {
       <div className="grid gap-3">
         {visibleDocuments.length ? (
           visibleDocuments.map((document) => (
-            <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm" key={document.id}>
-              <div className="document-toolbar">
-                <div className="document-title-group">
-                  <div className="row-primary">
-                    <strong>{document.title}</strong>
-                    <span>{document.display_url}</span>
+            <Card key={document.id} className="rounded-2xl">
+              <CardContent className="grid gap-4 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="grid min-w-0 gap-1">
+                  <div className="grid gap-1">
+                    <strong className="text-sm font-semibold text-foreground">{document.title}</strong>
+                    <span className="break-all text-sm text-muted-foreground">{document.display_url}</span>
                   </div>
-                  <div className="row-meta row-meta-tight">
+                  <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                     <span>{document.language}</span>
                     <span>{formatTimestamp(document.last_crawled_at)}</span>
                     <span>{t("console.documents.authority_value", { value: document.site_authority.toFixed(2) })}</span>
@@ -189,11 +191,12 @@ export function ConsoleDocuments() {
                   {t("console.actions.details")}
                 </Button>
               </div>
-              <p className="document-snippet">{document.snippet}</p>
-            </div>
+              <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{document.snippet}</p>
+              </CardContent>
+            </Card>
           ))
         ) : (
-          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 px-4 py-8 text-center text-sm text-stone-500">{t("console.documents.no_documents")}</div>
+          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">{t("console.documents.no_documents")}</div>
         )}
       </div>
       <div className="flex items-center gap-3">
@@ -205,7 +208,7 @@ export function ConsoleDocuments() {
         >
           {t("search.previous")}
         </Button>
-        <span className="text-sm text-stone-500">{t("console.documents.offset", { offset: documentOffset })}</span>
+        <span className="text-sm text-muted-foreground">{t("console.documents.offset", { offset: documentOffset })}</span>
         <Button
           type="button"
           variant="outline"
@@ -231,48 +234,48 @@ export function ConsoleDocuments() {
         }
       >
         {selectedDocument ? (
-          <div className="detail-stack">
-            <div className="detail-block">
-              <span className="field-label">{t("console.documents.host_label")}</span>
+          <div className="grid gap-4">
+            <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
+              <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.host_label")}</span>
               <code>{selectedDocument.canonical_url}</code>
             </div>
-            <div className="metadata-grid compact-metadata-wide detail-grid">
-              <div>
-                <span>{t("console.documents.language")}</span>
-                <strong>{selectedDocument.language}</strong>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.language")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedDocument.language}</strong>
               </div>
-              <div>
-                <span>{t("console.documents.content_type_label")}</span>
-                <strong>{selectedDocument.content_type}</strong>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.content_type_label")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedDocument.content_type}</strong>
               </div>
-              <div>
-                <span>{t("console.documents.word_count")}</span>
-                <strong>{selectedDocument.word_count}</strong>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.word_count")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedDocument.word_count}</strong>
               </div>
-              <div>
-                <span>{t("console.documents.authority")}</span>
-                <strong>{selectedDocument.site_authority.toFixed(2)}</strong>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.authority")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedDocument.site_authority.toFixed(2)}</strong>
               </div>
-              <div>
-                <span>{t("console.documents.last_crawled")}</span>
-                <strong>{formatTimestamp(selectedDocument.last_crawled_at)}</strong>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.last_crawled")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{formatTimestamp(selectedDocument.last_crawled_at)}</strong>
               </div>
-              <div>
-                <span>{t("console.documents.host_label")}</span>
-                <strong>{selectedDocument.host}</strong>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.host_label")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedDocument.host}</strong>
               </div>
-              <div>
-                <span>{t("console.documents.job_label")}</span>
-                <strong>{selectedDocument.source_job_id ?? "-"}</strong>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.job_label")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedDocument.source_job_id ?? "-"}</strong>
               </div>
-              <div>
-                <span>{t("console.documents.versions_label")}</span>
-                <strong>{`s${selectedDocument.schema_version} · p${selectedDocument.parser_version} · i${selectedDocument.index_version}`}</strong>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.versions_label")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">{`s${selectedDocument.schema_version} · p${selectedDocument.parser_version} · i${selectedDocument.index_version}`}</strong>
               </div>
             </div>
-            <div className="detail-block">
-              <span className="field-label">{t("console.documents.summary_label")}</span>
-              <p className="detail-paragraph">{selectedDocument.snippet}</p>
+            <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
+              <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.documents.summary_label")}</span>
+              <p className="text-sm leading-6 text-muted-foreground whitespace-pre-wrap">{selectedDocument.snippet}</p>
             </div>
           </div>
         ) : null}
