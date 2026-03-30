@@ -481,7 +481,7 @@
       "title": "Settings",
       "worker_setup": "Worker setup",
       "crawler_config_section": "Crawler Configuration",
-      "runtime_hint": "Saved concurrency updates apply on the crawler's next claim cycle, and the install command below stays in sync.",
+      "runtime_hint": "Saved concurrency updates apply on the crawler's next claim cycle. No reinstall is required.",
       "summary": {
         "auth": "Auth",
         "total": "Total concurrency",
@@ -495,7 +495,7 @@
       "js_render_concurrency_label": "Browser render concurrency",
       "claim_timeout_label": "Claim timeout (seconds)",
       "max_attempts_label": "Max retry attempts",
-      "install_hint": "For new nodes, you can copy the install command below. It already includes the current concurrency values.",
+      "install_hint": "The install command only connects a node. Concurrency is pushed from the console.",
       "tor_section": "Tor Crawling",
       "tor_enabled_label": "Enable Tor crawling",
       "tor_proxy_url_label": "Tor SOCKS5 proxy URL",

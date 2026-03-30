@@ -85,7 +85,7 @@ export function ConsoleSettings() {
   );
 
   const installCommand = crawlerAuthKey.trim()
-    ? `curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server ${installServer} --crawler-key ${crawlerAuthKey.trim()} --channel release --concurrency ${nextWorkerConcurrency} --js-render-concurrency ${nextJsRenderConcurrency}`
+    ? `curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server ${installServer} --crawler-key ${crawlerAuthKey.trim()} --channel release`
     : "";
 
   async function handleSaveCrawlerConfig() {
