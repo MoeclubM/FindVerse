@@ -120,7 +120,7 @@ export function ConsoleWorkers() {
                   setEditName(crawler.name);
                   setSelectedCrawlerId(crawler.id);
                 }}
-                className="grid gap-4 rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/40"
+                className="grid w-full gap-4 rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/40"
               >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="space-y-2">
