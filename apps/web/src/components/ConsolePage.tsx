@@ -16,7 +16,6 @@ import {
   logout,
 } from "../api";
 import { AppTopbar, TopbarActionButton } from "./common/AppTopbar";
-import { PanelSection, StatStrip } from "./common/PanelPrimitives";
 import { ConsoleProvider, type ConsoleContextValue } from "./console/ConsoleContext";
 import { ConsoleOverview } from "./console/ConsoleOverview";
 import { ConsoleUsers } from "./console/ConsoleUsers";
@@ -33,17 +32,14 @@ import { Input } from "./ui/input";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarInset,
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
 
@@ -327,51 +323,33 @@ export function ConsolePage(props: {
   ];
 
   const sidebar = (
-    <>
-      <SidebarHeader>
-        <div className="rounded-2xl border border-border bg-card p-4 shadow-none">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{t("console.live_refresh")}</p>
-          <div className="mt-3 flex flex-col gap-1">
-            <h2 className="text-xl font-semibold text-foreground">{t("console.title")}</h2>
-            <p className="text-sm text-muted-foreground">{session?.username}</p>
-          </div>
-        </div>
-      </SidebarHeader>
-      <SidebarSeparator />
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>{t("console.title")}</SidebarGroupLabel>
-          <SidebarMenu>
-            {tabItems.map((item) => {
-              const Icon = item.icon;
-              const active = activeTab === item.key;
-              return (
-                <SidebarMenuItem key={item.key}>
-                  <SidebarMenuButton
-                    isActive={active}
-                    onClick={() => {
-                      setActiveTab(item.key);
-                    }}
-                  >
-                    <span className="flex items-center gap-3">
-                      <Icon data-icon="inline-start" />
-                      <span className="font-medium">{item.label}</span>
-                    </span>
-                    {item.badge != null ? <SidebarMenuBadge>{item.badge}</SidebarMenuBadge> : null}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              );
-            })}
-          </SidebarMenu>
-        </SidebarGroup>
-      </SidebarContent>
-      <SidebarSeparator />
-      <SidebarFooter>
-        <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-          {t("console.live_refresh")}
-        </div>
-      </SidebarFooter>
-    </>
+    <SidebarContent>
+      <SidebarGroup>
+        <SidebarGroupLabel>{t("console.title")}</SidebarGroupLabel>
+        <SidebarMenu>
+          {tabItems.map((item) => {
+            const Icon = item.icon;
+            const active = activeTab === item.key;
+            return (
+              <SidebarMenuItem key={item.key}>
+                <SidebarMenuButton
+                  isActive={active}
+                  onClick={() => {
+                    setActiveTab(item.key);
+                  }}
+                >
+                  <span className="flex items-center gap-3">
+                    <Icon data-icon="inline-start" />
+                    <span className="font-medium">{item.label}</span>
+                  </span>
+                  {item.badge != null ? <SidebarMenuBadge>{item.badge}</SidebarMenuBadge> : null}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            );
+          })}
+        </SidebarMenu>
+      </SidebarGroup>
+    </SidebarContent>
   );
 
   if (authLoading) {
@@ -468,24 +446,6 @@ export function ConsolePage(props: {
                 <div className="flex items-center justify-between md:hidden">
                   <SidebarTrigger>{t("console.title")}</SidebarTrigger>
                 </div>
-                <PanelSection
-                  title={tabItems.find((item) => item.key === activeTab)?.label}
-                  meta={t("console.live_refresh")}
-                  contentClassName="pt-0"
-                >
-                  <StatStrip
-                    items={[
-                      { label: t("console.summary.indexed_docs"), value: overview?.indexed_documents ?? 0 },
-                      { label: t("console.summary.queued_jobs"), value: overview?.frontier_depth ?? 0 },
-                      { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
-                      { label: t("console.summary.workers"), value: activeCrawlerCount },
-                      { label: t("console.overview.active_rules"), value: enabledRuleCount },
-                      { label: t("console.summary.failures"), value: overview?.terminal_failures ?? 0 },
-                    ]}
-                    className="xl:grid-cols-6"
-                  />
-                </PanelSection>
-
                 {activeTab === "overview" && <ConsoleOverview />}
                 {activeTab === "users" && <ConsoleUsers />}
                 {activeTab === "tasks" && <ConsoleCrawlTasks />}

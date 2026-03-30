@@ -64,7 +64,7 @@ export function AppTopbar(props: {
   );
 
   return (
-    <header className={`border-b ${borderTone}`}>
+    <header className={`sticky top-0 z-40 border-b bg-background/92 backdrop-blur ${borderTone}`}>
       <div
         className={
           props.containerClassName ??

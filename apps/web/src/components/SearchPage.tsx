@@ -408,35 +408,35 @@ export function SearchPage(props: {
 
   return (
     <div className={`min-h-screen ${shellTone}`}>
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
-        <AppTopbar
-          theme={props.theme}
-          themeMode={props.themeMode}
-          onThemeModeChange={props.onThemeModeChange}
-          containerClassName={
-            resultsMode
-              ? "flex min-h-10 w-full flex-col gap-4 pb-4 sm:min-h-14 sm:flex-row sm:items-center sm:justify-between"
-              : "flex min-h-10 w-full items-center justify-end pb-4 sm:min-h-14"
-          }
-          title={
-            resultsMode ? (
-              <span className={`fv-brand-mark fv-brand-mark-compact ${homeBrandTone}`}>
-                {SITE_NAME}
-              </span>
-            ) : undefined
-          }
-          onTitleClick={resultsMode ? handleGoHome : undefined}
-          beforeControls={props.devToken ? <TopbarBadge>{t("search.dev_badge")}</TopbarBadge> : null}
-          afterControls={
-            <TopbarActionButton
-              leading={<CodeIcon className="size-4" />}
-              onClick={props.onNavigateDev}
-            >
-              {t("search.developer_portal")}
-            </TopbarActionButton>
-          }
-        />
+      <AppTopbar
+        theme={props.theme}
+        themeMode={props.themeMode}
+        onThemeModeChange={props.onThemeModeChange}
+        containerClassName={
+          resultsMode
+            ? "mx-auto flex min-h-10 w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:min-h-14 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8"
+            : "mx-auto flex min-h-10 w-full max-w-7xl items-center justify-end px-4 py-4 sm:min-h-14 sm:px-6 lg:px-8"
+        }
+        title={
+          resultsMode ? (
+            <span className={`fv-brand-mark fv-brand-mark-compact ${homeBrandTone}`}>
+              {SITE_NAME}
+            </span>
+          ) : undefined
+        }
+        onTitleClick={resultsMode ? handleGoHome : undefined}
+        beforeControls={props.devToken ? <TopbarBadge>{t("search.dev_badge")}</TopbarBadge> : null}
+        afterControls={
+          <TopbarActionButton
+            leading={<CodeIcon className="size-4" />}
+            onClick={props.onNavigateDev}
+          >
+            {t("search.developer_portal")}
+          </TopbarActionButton>
+        }
+      />
 
+      <div className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
         <main
           className={`flex w-full flex-1 ${
             resultsMode ? "items-start justify-center py-6" : "items-start justify-center pt-[11vh] pb-14"
