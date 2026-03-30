@@ -906,15 +906,7 @@ impl CrawlerStore {
         request: ClaimJobsRequest,
     ) -> Result<ClaimJobsResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
-        let worker_concurrency = parse_positive_usize_config(
-            self.get_system_config("crawler.total_concurrency").await,
-            request.worker_concurrency.max(1),
-        );
-        let js_render_concurrency = parse_positive_usize_config(
-            self.get_system_config("crawler.js_render_concurrency").await,
-            request.js_render_concurrency.max(1),
-        );
-        let max_jobs = worker_concurrency as i64;
+        let max_jobs = request.max_jobs.clamp(1, 100) as i64;
         let now = Utc::now();
 
         let crawler = self
@@ -1072,8 +1064,6 @@ impl CrawlerStore {
         Ok(ClaimJobsResponse {
             crawler_id: crawler_id.to_string(),
             frontier_depth: frontier_depth as usize,
-            worker_concurrency,
-            js_render_concurrency,
             jobs,
         })
     }
@@ -1768,7 +1758,7 @@ impl CrawlerStore {
         crawler_name: Option<&str>,
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
-    ) -> Result<(), ApiError> {
+    ) -> Result<crate::models::CrawlerHeartbeatResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
         self.validate_crawler_auth(
             crawler_id,
@@ -1785,7 +1775,16 @@ impl CrawlerStore {
             .await
             .map_err(|e| ApiError::Internal(e.into()))?;
 
-        Ok(())
+        Ok(crate::models::CrawlerHeartbeatResponse {
+            worker_concurrency: parse_positive_usize_config(
+                self.get_system_config("crawler.total_concurrency").await,
+                16,
+            ),
+            js_render_concurrency: parse_positive_usize_config(
+                self.get_system_config("crawler.js_render_concurrency").await,
+                1,
+            ),
+        })
     }
 
     async fn schedule_adaptive_recrawl(&self, _now: DateTime<Utc>) -> Result<(), ApiError> {

@@ -62,6 +62,11 @@ async fn main() -> anyhow::Result<()> {
                     "--stealth-ua is deprecated and ignored; FindVerse always identifies as a public crawler now"
                 );
             }
+            if max_jobs != concurrency {
+                warn!(
+                    "--max-jobs is ignored; claim batch now follows heartbeat-delivered worker concurrency"
+                );
+            }
 
             let parsed_domains: Vec<String> = allowed_domains
                 .map(|d| {
@@ -79,7 +84,6 @@ async fn main() -> anyhow::Result<()> {
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty()),
                 auth_token: crawler_key,
-                max_jobs: max_jobs.max(concurrency),
                 poll_interval_secs,
                 once,
                 concurrency,

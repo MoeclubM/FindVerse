@@ -1,14 +1,15 @@
 use axum::{
     Json,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
 };
 
 use crate::{
     ControlState,
     error::ApiError,
     models::{
-        ClaimJobsRequest, ClaimJobsResponse, SubmitCrawlReportRequest, SubmitCrawlReportResponse,
+        ClaimJobsRequest, ClaimJobsResponse, CrawlerHeartbeatResponse, SubmitCrawlReportRequest,
+        SubmitCrawlReportResponse,
     },
 };
 
@@ -62,21 +63,22 @@ pub async fn submit_crawl_report(
 pub async fn heartbeat_crawler(
     State(state): State<ControlState>,
     headers: HeaderMap,
-) -> Result<StatusCode, ApiError> {
+) -> Result<Json<CrawlerHeartbeatResponse>, ApiError> {
     let crawler_id = crawler_id_from_headers(&headers)?;
     let crawler_name = crawler_name_from_headers(&headers);
-    state
-        .crawler_store
-        .heartbeat_crawler(
-            &crawler_id,
-            crawler_name.as_deref(),
-            headers
-                .get("authorization")
-                .and_then(|value| value.to_str().ok()),
-            &state.default_crawler_owner_id,
-        )
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(
+        state
+            .crawler_store
+            .heartbeat_crawler(
+                &crawler_id,
+                crawler_name.as_deref(),
+                headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok()),
+                &state.default_crawler_owner_id,
+            )
+            .await?,
+    ))
 }
 
 fn crawler_id_from_headers(headers: &HeaderMap) -> Result<String, ApiError> {

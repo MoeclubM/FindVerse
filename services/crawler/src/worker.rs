@@ -12,7 +12,7 @@ use futures::stream::{self, StreamExt};
 use reqwest::header::CONTENT_TYPE;
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
-use tokio::sync::{Mutex, Notify, Semaphore};
+use tokio::sync::{Mutex, Notify, RwLock, Semaphore};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -25,8 +25,8 @@ use crate::fetch::{
 use crate::js_render::{needs_js_rendering, render_with_js};
 use crate::llm_filter::evaluate_page;
 use crate::models::{
-    ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, LlmFilterConfig,
-    SubmitCrawlReportRequest, SubmitCrawlReportResponse, WorkerConfig,
+    ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, CrawlerHeartbeatResponse,
+    LlmFilterConfig, SubmitCrawlReportRequest, SubmitCrawlReportResponse, WorkerConfig,
 };
 use crate::sitemap::fetch_and_parse_sitemap;
 use crate::url_normalize::normalize_url_advanced;
@@ -38,6 +38,21 @@ const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 struct NetworkClients {
     page: reqwest::Client,
     meta: reqwest::Client,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RuntimeConcurrencyConfig {
+    worker_concurrency: usize,
+    js_render_concurrency: usize,
+}
+
+impl RuntimeConcurrencyConfig {
+    fn from_worker_config(config: &WorkerConfig) -> Self {
+        Self {
+            worker_concurrency: config.concurrency.max(1),
+            js_render_concurrency: config.js_render_concurrency.max(1),
+        }
+    }
 }
 
 fn build_fetch_client(
@@ -104,8 +119,17 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
     };
 
     let state = Arc::new(Mutex::new(WorkerState::new()));
+    let runtime_config = Arc::new(RwLock::new(RuntimeConcurrencyConfig::from_worker_config(
+        &config,
+    )));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let shutdown_notify = Arc::new(Notify::new());
+    if let Err(error) = sync_runtime_config(&api_client, &config, &runtime_config).await {
+        warn!(
+            ?error,
+            "initial crawler heartbeat/config sync failed; using local concurrency defaults"
+        );
+    }
     tokio::spawn({
         let shutdown_requested = Arc::clone(&shutdown_requested);
         let shutdown_notify = Arc::clone(&shutdown_notify);
@@ -121,6 +145,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
     tokio::spawn({
         let api_client = api_client.clone();
         let config = config.clone();
+        let runtime_config = Arc::clone(&runtime_config);
         let shutdown_requested = Arc::clone(&shutdown_requested);
         let shutdown_notify = Arc::clone(&shutdown_notify);
         async move {
@@ -132,7 +157,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                 if shutdown_requested.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Err(error) = heartbeat_crawler(&api_client, &config).await {
+                if let Err(error) = sync_runtime_config(&api_client, &config, &runtime_config).await {
                     warn!(?error, "crawler heartbeat failed");
                 }
             }
@@ -145,7 +170,8 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             break;
         }
 
-        let claim = claim_jobs(&api_client, &config).await?;
+        let current_runtime = *runtime_config.read().await;
+        let claim = claim_jobs(&api_client, &config, current_runtime.worker_concurrency).await?;
         if claim.jobs.is_empty() {
             info!(
                 "crawler {} received no jobs, frontier depth {}",
@@ -164,8 +190,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             continue;
         }
 
-        let worker_concurrency = claim.worker_concurrency.max(1);
-        let js_render_limiter = Arc::new(Semaphore::new(claim.js_render_concurrency.max(1)));
+        let js_render_limiter = Arc::new(Semaphore::new(current_runtime.js_render_concurrency));
         let results: Vec<CrawlResultReport> = stream::iter(claim.jobs)
             .map(|job| {
                 let clearnet_clients = clearnet_clients.clone();
@@ -212,7 +237,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                     .await
                 }
             })
-            .buffer_unordered(worker_concurrency)
+            .buffer_unordered(current_runtime.worker_concurrency)
             .collect()
             .await;
 
@@ -268,6 +293,7 @@ fn is_onion_url(url: &str) -> bool {
 async fn claim_jobs(
     client: &reqwest::Client,
     config: &WorkerConfig,
+    max_jobs: usize,
 ) -> anyhow::Result<ClaimJobsResponse> {
     let response = client
         .post(format!(
@@ -281,9 +307,7 @@ async fn claim_jobs(
         )
         .bearer_auth(&config.auth_token)
         .json(&ClaimJobsRequest {
-            max_jobs: config.max_jobs,
-            worker_concurrency: config.concurrency,
-            js_render_concurrency: config.js_render_concurrency,
+            max_jobs: max_jobs.max(1),
         })
         .send()
         .await?;
@@ -322,7 +346,11 @@ async fn submit_report(
     Ok(response.json().await?)
 }
 
-async fn heartbeat_crawler(client: &reqwest::Client, config: &WorkerConfig) -> anyhow::Result<()> {
+async fn sync_runtime_config(
+    client: &reqwest::Client,
+    config: &WorkerConfig,
+    runtime_config: &Arc<RwLock<RuntimeConcurrencyConfig>>,
+) -> anyhow::Result<()> {
     let response = client
         .post(format!(
             "{}/internal/crawlers/heartbeat",
@@ -339,6 +367,21 @@ async fn heartbeat_crawler(client: &reqwest::Client, config: &WorkerConfig) -> a
 
     if !response.status().is_success() {
         anyhow::bail!("heartbeat failed with status {}", response.status());
+    }
+
+    let next: CrawlerHeartbeatResponse = response.json().await?;
+    let next = RuntimeConcurrencyConfig {
+        worker_concurrency: next.worker_concurrency.max(1),
+        js_render_concurrency: next.js_render_concurrency.max(1),
+    };
+    let mut current = runtime_config.write().await;
+    if *current != next {
+        info!(
+            worker_concurrency = next.worker_concurrency,
+            js_render_concurrency = next.js_render_concurrency,
+            "updated crawler runtime concurrency from heartbeat"
+        );
+        *current = next;
     }
 
     Ok(())

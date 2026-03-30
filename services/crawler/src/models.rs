@@ -176,17 +176,19 @@ pub fn default_network() -> String {
 #[derive(Debug, Serialize)]
 pub struct ClaimJobsRequest {
     pub max_jobs: usize,
-    pub worker_concurrency: usize,
-    pub js_render_concurrency: usize,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ClaimJobsResponse {
     pub crawler_id: String,
     pub frontier_depth: usize,
+    pub jobs: Vec<CrawlJob>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CrawlerHeartbeatResponse {
     pub worker_concurrency: usize,
     pub js_render_concurrency: usize,
-    pub jobs: Vec<CrawlJob>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -264,7 +266,6 @@ pub struct WorkerConfig {
     pub crawler_id: String,
     pub crawler_name: Option<String>,
     pub auth_token: String,
-    pub max_jobs: usize,
     pub poll_interval_secs: u64,
     pub once: bool,
     pub concurrency: usize,
