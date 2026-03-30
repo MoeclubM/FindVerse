@@ -45,19 +45,19 @@ export function ConsoleOverview() {
           {recentEvents.length ? (
             recentEvents.map((event) => (
               <Card key={event.id} className="rounded-2xl">
-                <CardContent className="grid gap-3 p-4">
-                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <strong className="text-foreground">{getConsoleEventKindLabel(t, event.kind)}</strong>
-                  <Badge variant={event.status === "ok" ? "success" : "outline"}>
-                    {getConsoleEventStatusLabel(t, event.status)}
-                  </Badge>
-                  <span>{event.created_at}</span>
-                  {event.crawler_id ? <code>{event.crawler_id}</code> : null}
-                </div>
-                <div className="mt-3 grid gap-2">
-                  <span className="text-sm text-foreground">{event.message}</span>
-                  {event.url ? <code>{event.url}</code> : null}
-                </div>
+                <CardContent className="grid min-w-0 gap-3 p-4">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <strong className="text-foreground">{getConsoleEventKindLabel(t, event.kind)}</strong>
+                    <Badge variant={event.status === "ok" ? "success" : "outline"}>
+                      {getConsoleEventStatusLabel(t, event.status)}
+                    </Badge>
+                    <span>{event.created_at}</span>
+                    {event.crawler_id ? <code className="max-w-full break-all text-xs">{event.crawler_id}</code> : null}
+                  </div>
+                  <div className="mt-3 grid min-w-0 gap-2">
+                    <span className="break-words text-sm text-foreground">{event.message}</span>
+                    {event.url ? <code className="max-w-full break-all text-xs">{event.url}</code> : null}
+                  </div>
                 </CardContent>
               </Card>
             ))

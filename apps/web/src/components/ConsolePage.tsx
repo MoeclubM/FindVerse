@@ -412,11 +412,12 @@ export function ConsolePage(props: {
   return (
     <ConsoleProvider value={contextValue}>
       <SidebarProvider>
-        <div className="min-h-screen bg-background text-foreground">
+        <div className="min-h-screen min-w-0 flex-1 bg-background text-foreground">
           <AppTopbar
             theme={props.theme}
             themeMode={props.themeMode}
             onThemeModeChange={props.onThemeModeChange}
+            containerClassName="flex w-full flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8 xl:px-10"
             title={`${SITE_NAME} · ${consoleLabel}`}
             onTitleClick={props.onNavigateHome}
             afterControls={
@@ -437,7 +438,7 @@ export function ConsolePage(props: {
             }
           />
           <div className="bg-background">
-            <div className="mx-auto flex w-full max-w-7xl px-4 pb-8 pt-4 lg:px-6">
+            <div className="flex w-full px-4 pb-8 pt-4 sm:px-6 lg:px-8 xl:px-10">
               <Sidebar className="md:sticky md:top-[73px] md:h-[calc(100svh-73px)]">
                 {sidebar}
               </Sidebar>
