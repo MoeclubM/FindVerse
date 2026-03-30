@@ -1,5 +1,5 @@
 import { ExitIcon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
-import { Menu, Settings, Users, Bot, FileText, ListTodo, LayoutDashboard, Orbit } from "lucide-react";
+import { Settings, Users, Bot, FileText, ListTodo, LayoutDashboard, Orbit } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -26,11 +26,26 @@ import { ConsoleDocuments } from "./console/ConsoleDocuments";
 import { ConsoleJobs } from "./console/ConsoleJobs";
 import { ConsoleSettings } from "./console/ConsoleSettings";
 import type { ThemeMode } from "./ThemeSwitcher";
+import { Alert, AlertDescription } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { cn } from "../lib/utils";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarSeparator,
+  SidebarTrigger,
+} from "./ui/sidebar";
 
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
@@ -110,7 +125,6 @@ export function ConsolePage(props: {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const consoleLabel = t("console.title").startsWith(SITE_NAME)
     ? t("console.title").slice(SITE_NAME.length).trim()
@@ -313,51 +327,51 @@ export function ConsolePage(props: {
   ];
 
   const sidebar = (
-    <div className="flex h-full flex-col gap-4">
-      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{t("console.live_refresh")}</p>
-        <div className="mt-3 space-y-1">
-          <h2 className="text-xl font-semibold text-foreground">{t("console.title")}</h2>
-          <p className="text-sm text-muted-foreground">{session?.username}</p>
+    <>
+      <SidebarHeader>
+        <div className="rounded-2xl border border-border bg-card p-4 shadow-none">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{t("console.live_refresh")}</p>
+          <div className="mt-3 flex flex-col gap-1">
+            <h2 className="text-xl font-semibold text-foreground">{t("console.title")}</h2>
+            <p className="text-sm text-muted-foreground">{session?.username}</p>
+          </div>
         </div>
-      </div>
-      <nav className="flex flex-col gap-2">
-        {tabItems.map((item) => {
-          const Icon = item.icon;
-          const active = activeTab === item.key;
-          return (
-            <button
-              key={item.key}
-              className={cn(
-                "flex min-h-12 items-center justify-between rounded-xl border px-4 py-3 text-left transition-colors",
-                active
-                  ? "border-primary bg-primary text-primary-foreground shadow-sm"
-                  : "border-border bg-card text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-              )}
-              onClick={() => {
-                setActiveTab(item.key);
-                setSidebarOpen(false);
-              }}
-            >
-              <span className="flex items-center gap-3">
-                <Icon />
-                <span className="font-medium">{item.label}</span>
-              </span>
-              {item.badge != null ? (
-                <span
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-xs font-semibold",
-                    active ? "bg-primary-foreground/15 text-primary-foreground" : "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {item.badge}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-      </nav>
-    </div>
+      </SidebarHeader>
+      <SidebarSeparator />
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("console.title")}</SidebarGroupLabel>
+          <SidebarMenu>
+            {tabItems.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.key;
+              return (
+                <SidebarMenuItem key={item.key}>
+                  <SidebarMenuButton
+                    isActive={active}
+                    onClick={() => {
+                      setActiveTab(item.key);
+                    }}
+                  >
+                    <span className="flex items-center gap-3">
+                      <Icon data-icon="inline-start" />
+                      <span className="font-medium">{item.label}</span>
+                    </span>
+                    {item.badge != null ? <SidebarMenuBadge>{item.badge}</SidebarMenuBadge> : null}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarSeparator />
+      <SidebarFooter>
+        <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+          {t("console.live_refresh")}
+        </div>
+      </SidebarFooter>
+    </>
   );
 
   if (authLoading) {
@@ -405,7 +419,11 @@ export function ConsolePage(props: {
                   {busy ? t("console.login.submitting") : t("console.login.submit")}
                 </Button>
               </form>
-              {loginError ? <p className="mt-3 text-sm text-destructive">{loginError}</p> : null}
+              {loginError ? (
+                <Alert variant="destructive" className="mt-4">
+                  <AlertDescription>{loginError}</AlertDescription>
+                </Alert>
+              ) : null}
             </CardContent>
           </Card>
         </main>
@@ -415,79 +433,71 @@ export function ConsolePage(props: {
 
   return (
     <ConsoleProvider value={contextValue}>
-      <div className="min-h-screen bg-background text-foreground">
-        <AppTopbar
-          theme={props.theme}
-          themeMode={props.themeMode}
-          onThemeModeChange={props.onThemeModeChange}
-          title={`${SITE_NAME} · ${consoleLabel}`}
-          onTitleClick={props.onNavigateHome}
-          afterControls={
-            <>
-              <TopbarActionButton
-                leading={<MagnifyingGlassIcon className="size-4" />}
-                onClick={props.onNavigateHome}
-              >
-                {t("console.search")}
-              </TopbarActionButton>
-              <TopbarActionButton
-                leading={<ExitIcon className="size-4" />}
-                onClick={() => void handleLogout()}
-              >
-                {t("console.logout")}
-              </TopbarActionButton>
-            </>
-          }
-        />
-        <div className="bg-background">
-          <div className="mx-auto flex w-full max-w-7xl gap-4 px-4 pb-8 pt-4 lg:px-6">
-            <aside className="hidden w-72 shrink-0 lg:block">{sidebar}</aside>
+      <SidebarProvider>
+        <div className="min-h-screen bg-background text-foreground">
+          <AppTopbar
+            theme={props.theme}
+            themeMode={props.themeMode}
+            onThemeModeChange={props.onThemeModeChange}
+            title={`${SITE_NAME} · ${consoleLabel}`}
+            onTitleClick={props.onNavigateHome}
+            afterControls={
+              <>
+                <TopbarActionButton
+                  leading={<MagnifyingGlassIcon className="size-4" />}
+                  onClick={props.onNavigateHome}
+                >
+                  {t("console.search")}
+                </TopbarActionButton>
+                <TopbarActionButton
+                  leading={<ExitIcon className="size-4" />}
+                  onClick={() => void handleLogout()}
+                >
+                  {t("console.logout")}
+                </TopbarActionButton>
+              </>
+            }
+          />
+          <div className="bg-background">
+            <div className="mx-auto flex w-full max-w-7xl px-4 pb-8 pt-4 lg:px-6">
+              <Sidebar className="md:sticky md:top-[73px] md:h-[calc(100svh-73px)]">
+                {sidebar}
+              </Sidebar>
 
-            <main className="min-w-0 flex-1 space-y-4">
-              <div className="flex items-center justify-between lg:hidden">
-                <Button variant="outline" size="sm" onClick={() => setSidebarOpen(true)}>
-                  <Menu data-icon="inline-start" />
-                  {t("console.title")}
-                </Button>
-              </div>
+              <SidebarInset className="flex flex-1 flex-col gap-4 pl-0 md:pl-4">
+                <div className="flex items-center justify-between md:hidden">
+                  <SidebarTrigger>{t("console.title")}</SidebarTrigger>
+                </div>
+                <PanelSection
+                  title={tabItems.find((item) => item.key === activeTab)?.label}
+                  meta={t("console.live_refresh")}
+                  contentClassName="pt-0"
+                >
+                  <StatStrip
+                    items={[
+                      { label: t("console.summary.indexed_docs"), value: overview?.indexed_documents ?? 0 },
+                      { label: t("console.summary.queued_jobs"), value: overview?.frontier_depth ?? 0 },
+                      { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
+                      { label: t("console.summary.workers"), value: activeCrawlerCount },
+                      { label: t("console.overview.active_rules"), value: enabledRuleCount },
+                      { label: t("console.summary.failures"), value: overview?.terminal_failures ?? 0 },
+                    ]}
+                    className="xl:grid-cols-6"
+                  />
+                </PanelSection>
 
-              <PanelSection
-                title={tabItems.find((item) => item.key === activeTab)?.label}
-                meta={t("console.live_refresh")}
-                contentClassName="pt-0"
-              >
-                <StatStrip
-                  items={[
-                    { label: t("console.summary.indexed_docs"), value: overview?.indexed_documents ?? 0 },
-                    { label: t("console.summary.queued_jobs"), value: overview?.frontier_depth ?? 0 },
-                    { label: t("console.overview.in_flight"), value: overview?.in_flight_jobs ?? 0 },
-                    { label: t("console.summary.workers"), value: activeCrawlerCount },
-                    { label: t("console.overview.active_rules"), value: enabledRuleCount },
-                    { label: t("console.summary.failures"), value: overview?.terminal_failures ?? 0 },
-                  ]}
-                  className="xl:grid-cols-6"
-                />
-              </PanelSection>
-
-              {activeTab === "overview" && <ConsoleOverview />}
-              {activeTab === "users" && <ConsoleUsers />}
-              {activeTab === "tasks" && <ConsoleCrawlTasks />}
-              {activeTab === "jobs" && <ConsoleJobs />}
-              {activeTab === "documents" && <ConsoleDocuments />}
-              {activeTab === "workers" && <ConsoleWorkers />}
-              {activeTab === "settings" && <ConsoleSettings />}
-            </main>
+                {activeTab === "overview" && <ConsoleOverview />}
+                {activeTab === "users" && <ConsoleUsers />}
+                {activeTab === "tasks" && <ConsoleCrawlTasks />}
+                {activeTab === "jobs" && <ConsoleJobs />}
+                {activeTab === "documents" && <ConsoleDocuments />}
+                {activeTab === "workers" && <ConsoleWorkers />}
+                {activeTab === "settings" && <ConsoleSettings />}
+              </SidebarInset>
+            </div>
           </div>
         </div>
-        <Dialog open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <DialogContent className="left-0 top-0 h-full max-h-none w-[88vw] max-w-sm translate-x-0 translate-y-0 rounded-none border-r border-border p-4">
-            <DialogHeader className="sr-only">
-              <DialogTitle>{t("console.title")}</DialogTitle>
-            </DialogHeader>
-            {sidebar}
-          </DialogContent>
-        </Dialog>
-      </div>
+      </SidebarProvider>
     </ConsoleProvider>
   );
 }

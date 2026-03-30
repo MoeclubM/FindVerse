@@ -19,6 +19,7 @@ import {
 import { AppTopbar, TopbarActionButton, TopbarBadge } from "./common/AppTopbar";
 import { FieldShell, SectionHeader, StatStrip } from "./common/PanelPrimitives";
 import type { ThemeMode } from "./ThemeSwitcher";
+import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -366,9 +367,9 @@ export function DevPortalPage(props: {
                 </Button>
               </form>
               {flash ? (
-                <div className="rounded-2xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                  {flash}
-                </div>
+                <Alert>
+                  <AlertDescription>{flash}</AlertDescription>
+                </Alert>
               ) : null}
             </CardContent>
           </Card>
@@ -407,9 +408,9 @@ export function DevPortalPage(props: {
 
       {flash ? (
         <div className="mx-auto mt-4 w-full max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
-            {flash}
-          </div>
+          <Alert>
+            <AlertDescription>{flash}</AlertDescription>
+          </Alert>
         </div>
       ) : null}
 

@@ -12,6 +12,7 @@ import { searchWithParams, suggestSearch, type SearchResponse } from "../api";
 import { AppTopbar, TopbarActionButton, TopbarBadge } from "./common/AppTopbar";
 import { FieldShell } from "./common/PanelPrimitives";
 import type { ThemeMode } from "./ThemeSwitcher";
+import { Alert, AlertDescription } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -552,13 +553,9 @@ export function SearchPage(props: {
             ) : null}
 
             {error ? (
-              <div
-                className={`rounded-[20px] border px-4 py-3 text-sm ${
-                  "border-[rgba(182,92,61,0.22)] bg-[rgba(182,92,61,0.08)] text-[var(--fv-danger)]"
-                }`}
-              >
-                {error}
-              </div>
+              <Alert variant="destructive" className="rounded-[20px] border-[rgba(182,92,61,0.22)] bg-[rgba(182,92,61,0.08)]">
+                <AlertDescription className="text-[var(--fv-danger)]">{error}</AlertDescription>
+              </Alert>
             ) : null}
 
             {results ? (
@@ -577,9 +574,11 @@ export function SearchPage(props: {
                   {results.did_you_mean ? (
                     <span className={secondaryTextTone}>
                       {t("search.did_you_mean")}{" "}
-                      <button
+                      <Button
                         type="button"
-                        className="font-medium underline underline-offset-4"
+                        variant="link"
+                        size="sm"
+                        className="h-auto px-0 text-sm font-medium text-[var(--fv-text)]"
                         onClick={() => {
                           setQuery(results.did_you_mean ?? "");
                           commitSearch({
@@ -593,7 +592,7 @@ export function SearchPage(props: {
                         }}
                       >
                         {results.did_you_mean}
-                      </button>
+                      </Button>
                       ?
                     </span>
                   ) : null}
