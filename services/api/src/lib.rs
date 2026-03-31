@@ -1,6 +1,8 @@
 pub mod admin;
 pub mod auth_support;
+pub mod blob_store;
 pub mod config;
+pub mod crawl;
 pub mod crawler;
 pub mod db;
 pub mod dev_auth;
@@ -181,7 +183,11 @@ fn spawn_maintenance_loop(state: ControlState, config: &Config) {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(default_claim_timeout_secs);
         let claim_timeout = Duration::from_secs(timeout_secs.max(1));
-        if let Err(error) = state.crawler_store.run_maintenance(claim_timeout).await {
+        if let Err(error) = state
+            .crawler_store
+            .run_maintenance(claim_timeout, &state.query.search_index)
+            .await
+        {
             error!(?error, "initial crawler maintenance pass failed");
         }
 
@@ -195,7 +201,11 @@ fn spawn_maintenance_loop(state: ControlState, config: &Config) {
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(default_claim_timeout_secs);
             let claim_timeout = Duration::from_secs(timeout_secs.max(1));
-            if let Err(error) = state.crawler_store.run_maintenance(claim_timeout).await {
+            if let Err(error) = state
+                .crawler_store
+                .run_maintenance(claim_timeout, &state.query.search_index)
+                .await
+            {
                 error!(?error, "crawler maintenance pass failed");
             }
         }
@@ -245,7 +255,7 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
         )
         .route(
             "/v1/admin/crawlers/{id}",
-            patch(handlers::admin::admin_rename_crawler)
+            patch(handlers::admin::admin_update_crawler)
                 .delete(handlers::admin::admin_delete_crawler),
         )
         .route(
@@ -297,6 +307,10 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             get(handlers::admin::admin_list_origins),
         )
         .route(
+            "/v1/admin/domains/inspect",
+            get(handlers::admin::admin_domain_insight),
+        )
+        .route(
             "/v1/admin/crawl/jobs/retry",
             post(handlers::admin::admin_retry_failed_jobs),
         )
@@ -307,6 +321,10 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
         .route(
             "/v1/admin/crawl/jobs/completed",
             delete(handlers::admin::admin_cleanup_completed_jobs),
+        )
+        .route(
+            "/v1/admin/crawl/jobs/failed",
+            delete(handlers::admin::admin_cleanup_failed_jobs),
         )
         .route("/v1/dev/register", post(handlers::developer::dev_register))
         .route("/v1/dev/login", post(handlers::developer::dev_login))

@@ -66,6 +66,16 @@ pub fn default_network() -> String {
     "clearnet".to_string()
 }
 
+pub fn default_render_mode() -> String {
+    "static".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlerCapabilities {
+    #[serde(default)]
+    pub js_render: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchParams {
     pub q: String,
@@ -241,6 +251,7 @@ pub struct DeveloperDomainJob {
     pub failure_kind: Option<String>,
     pub failure_message: Option<String>,
     pub accepted_document_id: Option<String>,
+    pub render_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -270,8 +281,10 @@ pub struct DeveloperDomainSubmitResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct RenameCrawlerRequest {
-    pub name: String,
+pub struct UpdateCrawlerRequest {
+    pub name: Option<String>,
+    pub worker_concurrency: Option<usize>,
+    pub js_render_concurrency: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -285,6 +298,9 @@ pub struct CrawlerMetadata {
     pub last_claimed_at: Option<DateTime<Utc>>,
     pub jobs_claimed: u64,
     pub jobs_reported: u64,
+    pub supports_js_render: bool,
+    pub worker_concurrency: usize,
+    pub js_render_concurrency: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -442,6 +458,7 @@ pub struct CrawlJob {
 #[derive(Debug, Clone, Serialize)]
 pub struct ClaimJobsResponse {
     pub crawler_id: String,
+    pub lease_id: Option<String>,
     pub frontier_depth: usize,
     pub jobs: Vec<CrawlJob>,
 }
@@ -454,10 +471,11 @@ pub struct CrawlerHeartbeatResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubmitCrawlReportRequest {
+    pub lease_id: String,
     pub results: Vec<CrawlResultInput>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CrawlResultInput {
     pub job_id: String,
     pub url: String,
@@ -499,16 +517,16 @@ pub struct CrawlResultInput {
     pub robots_status: Option<String>,
     #[serde(default)]
     pub robots_sitemaps: Vec<String>,
+    #[serde(default = "crate::models::default_render_mode")]
+    pub render_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubmitCrawlReportResponse {
-    pub accepted_documents: usize,
-    pub duplicate_documents: usize,
-    pub skipped_documents: usize,
-    pub discovered_urls: usize,
+    pub lease_id: String,
+    pub staged_results: usize,
+    pub pending_results: usize,
     pub frontier_depth: usize,
-    pub indexed_documents: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -650,6 +668,7 @@ pub struct CrawlJobDetail {
     pub failure_kind: Option<String>,
     pub failure_message: Option<String>,
     pub finished_at: Option<DateTime<Utc>>,
+    pub render_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

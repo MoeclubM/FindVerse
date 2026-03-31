@@ -10,10 +10,21 @@ import {
   updateDeveloper,
 } from "../../api";
 import { FieldShell, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { Input } from "../ui/input";
+import { Skeleton } from "../ui/skeleton";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -32,6 +43,7 @@ export function ConsoleUsers() {
   const [developerDrafts, setDeveloperDrafts] = useState<Record<string, { daily_limit: string; password: string }>>({});
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [keyPanels, setKeyPanels] = useState<Record<string, KeyPanelState>>({});
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
 
   useEffect(() => {
     setDeveloperDrafts((current) => {
@@ -159,10 +171,7 @@ export function ConsoleUsers() {
   }
 
   async function handleDeleteDeveloper(user: AdminDeveloperRecord) {
-    if (!window.confirm(t("console.users.delete_confirm", { username: user.username }))) {
-      return;
-    }
-
+    setDeleteUserId(null);
     setBusy(true);
     setFlash(null);
     try {
@@ -206,6 +215,7 @@ export function ConsoleUsers() {
   const totalIssuedKeys = developers.reduce((sum, developer) => sum + developer.key_count, 0);
   const totalUsageToday = developers.reduce((sum, developer) => sum + developer.used_today, 0);
   const totalDailyLimit = developers.reduce((sum, developer) => sum + developer.daily_limit, 0);
+  const deleteUser = developers.find((developer) => developer.user_id === deleteUserId) ?? null;
 
   return (
     <PanelSection title={t("console.users.title")} meta={t("console.users.accounts", { count: developers.length })} contentClassName="space-y-5">
@@ -335,7 +345,7 @@ export function ConsoleUsers() {
                           type="button"
                           variant="destructive"
                           disabled={busy}
-                          onClick={() => void handleDeleteDeveloper(developer)}
+                          onClick={() => setDeleteUserId(developer.user_id)}
                         >
                           {t("console.users.delete_user")}
                         </Button>
@@ -360,8 +370,18 @@ export function ConsoleUsers() {
                       </div>
 
                       {panel.loading && !panel.usage ? (
-                        <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-                          {t("console.users.loading_keys")}
+                        <div className="grid gap-3">
+                          {Array.from({ length: 2 }).map((_, index) => (
+                            <div className="grid gap-3 rounded-2xl border border-border bg-muted/30 p-4" key={index}>
+                              <Skeleton className="h-5 w-32" />
+                              <Skeleton className="h-4 w-full max-w-sm" />
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Skeleton className="h-4 w-36" />
+                                <Skeleton className="h-6 w-20 rounded-full" />
+                              </div>
+                              <Skeleton className="h-8 w-20 rounded-lg" />
+                            </div>
+                          ))}
                         </div>
                       ) : null}
 
@@ -410,6 +430,33 @@ export function ConsoleUsers() {
           </div>
         )}
       </div>
+      <AlertDialog
+        open={Boolean(deleteUser)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteUserId(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("console.users.delete_user")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteUser ? t("console.users.delete_confirm", { username: deleteUser.username }) : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>{t("console.workers.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busy || !deleteUser}
+              onClick={() => deleteUser && void handleDeleteDeveloper(deleteUser)}
+            >
+              {t("console.users.delete_user")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PanelSection>
   );
 }

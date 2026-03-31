@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  cleanupFailedJobs,
   cleanupCompletedJobs,
   getCrawlJobStats,
   listCrawlJobs,
@@ -11,6 +12,16 @@ import {
   type CrawlJobStats,
 } from "../../api";
 import { DetailDialog, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
@@ -21,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import { Skeleton } from "../ui/skeleton";
 import { useConsole } from "./ConsoleContext";
 import { getConsoleJobStatusLabel, getConsoleValueLabel } from "./consoleLabels";
 
@@ -44,6 +56,8 @@ export function ConsoleJobs() {
   const [stats, setStats] = useState<CrawlJobStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [cleanupFailedOpen, setCleanupFailedOpen] = useState(false);
+  const [stopAllOpen, setStopAllOpen] = useState(false);
 
   const selectedJob = useMemo(
     () => jobs?.jobs.find((job) => job.id === selectedJobId) ?? null,
@@ -128,11 +142,25 @@ export function ConsoleJobs() {
     }
   }
 
-  async function handleStopAll() {
-    if (!window.confirm(t("console.jobs.stop_all_confirm"))) {
-      return;
+  async function handleCleanupFailed() {
+    setCleanupFailedOpen(false);
+    setBusy(true);
+    setFlash(null);
+    try {
+      const response = await cleanupFailedJobs(token);
+      setFlash(t("console.jobs.cleanup_failed_success", { count: response.cleaned }));
+      await refreshAll();
+      setOffset(0);
+      await refreshJobs(0, true);
+    } catch (error) {
+      setFlash(getErrorMessage(error, t("console.jobs.cleanup_failed_error_action")));
+    } finally {
+      setBusy(false);
     }
+  }
 
+  async function handleStopAll() {
+    setStopAllOpen(false);
     setBusy(true);
     setFlash(null);
     try {
@@ -150,6 +178,15 @@ export function ConsoleJobs() {
       setFlash(getErrorMessage(error, t("console.jobs.stop_all_failed")));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleCopy(value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setFlash(t("console.settings.save_success"));
+    } catch {
+      setFlash(value);
     }
   }
 
@@ -199,24 +236,55 @@ export function ConsoleJobs() {
           <Button type="button" variant="outline" disabled={busy} onClick={() => void handleRetryFailed()}>
             {t("console.jobs.retry_failed")}
           </Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => setCleanupFailedOpen(true)}>
+            {t("console.jobs.cleanup_failed")}
+          </Button>
           <Button type="button" variant="outline" disabled={busy} onClick={() => void handleCleanupSucceeded()}>
             {t("console.jobs.cleanup_succeeded")}
           </Button>
-          <Button type="button" variant="destructive" disabled={busy} onClick={() => void handleStopAll()}>
+          <Button type="button" variant="destructive" disabled={busy} onClick={() => setStopAllOpen(true)}>
             {t("console.jobs.stop_all")}
           </Button>
         </div>
 
         <div className="grid gap-3">
           {loading ? (
-            <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">{t("console.jobs.loading")}</div>
+            Array.from({ length: 3 }).map((_, index) => (
+              <Card key={index} className="rounded-2xl">
+                <CardContent className="grid gap-4 p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="grid min-w-0 flex-1 gap-2">
+                      <Skeleton className="h-4 w-full max-w-2xl" />
+                      <Skeleton className="h-4 w-40" />
+                    </div>
+                    <Skeleton className="h-8 w-20 rounded-lg" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Skeleton className="h-6 w-24 rounded-full" />
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-4 w-24" />
+                    <Skeleton className="h-4 w-28" />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Skeleton className="h-20 rounded-xl" />
+                    <Skeleton className="h-20 rounded-xl" />
+                    <Skeleton className="h-20 rounded-xl" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))
           ) : jobs?.jobs.length ? (
             jobs.jobs.map((job) => (
               <Card key={job.id} className="rounded-2xl">
-                <CardContent className="grid gap-4 p-4">
+                <CardContent className="grid min-w-0 gap-4 p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div className="grid gap-1">
-                    <strong className="text-sm font-semibold text-foreground">{job.final_url ?? job.url}</strong>
+                  <div className="grid min-w-0 flex-1 gap-1">
+                    <strong
+                      className="truncate text-sm font-semibold text-foreground"
+                      title={job.final_url ?? job.url}
+                    >
+                      {job.final_url ?? job.url}
+                    </strong>
                     <span className="text-sm text-muted-foreground">{job.source}</span>
                   </div>
                   <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedJobId(job.id)}>
@@ -226,6 +294,11 @@ export function ConsoleJobs() {
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <Badge variant={job.status === "succeeded" ? "success" : "outline"}>
                     {getConsoleJobStatusLabel(t, job.status)}
+                  </Badge>
+                  <Badge variant={job.render_mode === "browser" ? "warning" : "outline"}>
+                    {job.render_mode === "browser"
+                      ? t("console.jobs.browser_rendered")
+                      : t("console.jobs.static_rendered")}
                   </Badge>
                   {job.http_status != null ? <span>HTTP {job.http_status}</span> : null}
                   <span>{t("console.jobs.attempt_progress", { current: job.attempt_count, max: job.max_attempts })}</span>
@@ -275,9 +348,43 @@ export function ConsoleJobs() {
         </div>
       </PanelSection>
 
+      <AlertDialog open={cleanupFailedOpen} onOpenChange={setCleanupFailedOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("console.jobs.cleanup_failed")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("console.jobs.cleanup_failed_confirm")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>{t("console.workers.cancel")}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={busy} onClick={() => void handleCleanupFailed()}>
+              {t("console.jobs.cleanup_failed")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={stopAllOpen} onOpenChange={setStopAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("console.jobs.stop_all")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("console.jobs.stop_all_confirm")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>{t("console.workers.cancel")}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={busy} onClick={() => void handleStopAll()}>
+              {t("console.jobs.stop_all")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <DetailDialog
         open={Boolean(selectedJob)}
-        title={selectedJob?.final_url ?? selectedJob?.url ?? t("console.jobs.title")}
+        title={
+          <span className="block max-w-full truncate">
+            {selectedJob?.final_url ?? selectedJob?.url ?? t("console.jobs.title")}
+          </span>
+        }
         meta={selectedJob?.source}
         closeLabel={t("console.actions.close")}
         onClose={() => setSelectedJobId(null)}
@@ -318,14 +425,24 @@ export function ConsoleJobs() {
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{formatTimestamp(selectedJob.finished_at)}</strong>
               </div>
             </div>
-            <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
-              <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.url")}</span>
-              <code>{selectedJob.url}</code>
+            <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.url")}</span>
+                <Button type="button" variant="outline" size="sm" onClick={() => void handleCopy(selectedJob.url)}>
+                  {t("console.actions.copy")}
+                </Button>
+              </div>
+              <code className="max-w-full break-all text-xs">{selectedJob.url}</code>
             </div>
             {selectedJob.final_url ? (
-              <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
-                <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.final_url")}</span>
-                <code>{selectedJob.final_url}</code>
+              <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.final_url")}</span>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void handleCopy(selectedJob.final_url!)}>
+                    {t("console.actions.copy")}
+                  </Button>
+                </div>
+                <code className="max-w-full break-all text-xs">{selectedJob.final_url}</code>
               </div>
             ) : null}
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -345,6 +462,14 @@ export function ConsoleJobs() {
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.score")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {selectedJob.llm_relevance_score != null ? selectedJob.llm_relevance_score.toFixed(2) : "-"}
+                </strong>
+              </div>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.render_mode")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {selectedJob.render_mode === "browser"
+                    ? t("console.jobs.browser_rendered")
+                    : t("console.jobs.static_rendered")}
                 </strong>
               </div>
             </div>

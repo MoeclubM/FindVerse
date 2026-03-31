@@ -14,10 +14,11 @@ use crate::{
     models::{
         AdminDeveloperRecord, AdminLoginRequest, AdminSessionResponse, CrawlJobListParams,
         CrawlJobListResponse, CrawlJobStats, CrawlOriginState, CrawlOverviewResponse, CrawlRule,
-        CreateCrawlRuleRequest, CreateKeyRequest, CreatedKeyResponse, DeveloperUsageResponse,
-        DocumentListParams, DocumentListResponse, PurgeSiteRequest, PurgeSiteResponse,
-        RenameCrawlerRequest, SeedFrontierRequest, SeedFrontierResponse, SetSystemConfigRequest,
-        SystemConfigResponse, UpdateCrawlRuleRequest, UpdateDeveloperRequest,
+        CreateCrawlRuleRequest, CreateKeyRequest, CreatedKeyResponse, DeveloperDomainInsightQuery,
+        DeveloperDomainInsightResponse, DeveloperUsageResponse, DocumentListParams,
+        DocumentListResponse, PurgeSiteRequest, PurgeSiteResponse, SeedFrontierRequest,
+        SeedFrontierResponse, SetSystemConfigRequest, SystemConfigResponse, UpdateCrawlRuleRequest,
+        UpdateCrawlerRequest, UpdateDeveloperRequest,
     },
     store::DeveloperStore,
 };
@@ -126,16 +127,16 @@ pub async fn admin_revoke_developer_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn admin_rename_crawler(
+pub async fn admin_update_crawler(
     State(state): State<ControlState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(request): Json<RenameCrawlerRequest>,
+    Json(request): Json<UpdateCrawlerRequest>,
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     state
         .crawler_store
-        .rename_crawler(&state.default_crawler_owner_id, &id, &request.name)
+        .update_crawler(&state.default_crawler_owner_id, &id, request)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -196,7 +197,10 @@ pub async fn admin_create_rule(
     if created.enabled {
         state
             .crawler_store
-            .run_maintenance(Duration::from_secs(state.crawler_claim_timeout_secs))
+            .run_maintenance(
+                Duration::from_secs(state.crawler_claim_timeout_secs),
+                &state.query.search_index,
+            )
             .await?;
     }
     Ok((StatusCode::CREATED, Json(created)))
@@ -478,6 +482,17 @@ pub async fn admin_list_origins(
     ))
 }
 
+pub async fn admin_domain_insight(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Query(query): Query<DeveloperDomainInsightQuery>,
+) -> Result<Json<DeveloperDomainInsightResponse>, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    Ok(Json(
+        state.crawler_store.domain_insight(&query.domain).await?,
+    ))
+}
+
 pub async fn admin_retry_failed_jobs(
     State(state): State<ControlState>,
     headers: HeaderMap,
@@ -498,6 +513,18 @@ pub async fn admin_cleanup_completed_jobs(
     let count = state
         .crawler_store
         .cleanup_completed_jobs(&state.default_crawler_owner_id)
+        .await?;
+    Ok(Json(serde_json::json!({ "cleaned": count })))
+}
+
+pub async fn admin_cleanup_failed_jobs(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    let count = state
+        .crawler_store
+        .cleanup_failed_jobs(&state.default_crawler_owner_id)
         .await?;
     Ok(Json(serde_json::json!({ "cleaned": count })))
 }

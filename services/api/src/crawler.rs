@@ -3,17 +3,25 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use findverse_common::{DiscoveryScope, host_matches_scope, origin_key};
 use sqlx::PgPool;
+use tracing::error;
 use uuid::Uuid;
 
 use crate::{
+    blob_store::BlobStore,
+    crawl::{
+        frontier::FrontierService,
+        ingest::{IngestService, PendingIngestItem},
+        projection::ProjectionRunner,
+    },
     error::ApiError,
     models::{
-        ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJob, CrawlJobDetail,
-        CrawlJobListResponse, CrawlJobStats, CrawlOverviewResponse, CrawlResultInput, CrawlRule,
+        ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJobDetail, CrawlJobListResponse,
+        CrawlJobStats, CrawlOverviewResponse, CrawlResultInput, CrawlRule, CrawlerCapabilities,
         CrawlerMetadata, CreateCrawlRuleRequest, DeveloperDomainDocument, DeveloperDomainFacet,
         DeveloperDomainInsightResponse, DeveloperDomainJob, DeveloperDomainSubmitRequest,
         DeveloperDomainSubmitResponse, IndexedDocument, SeedFrontierRequest, SeedFrontierResponse,
         SubmitCrawlReportRequest, SubmitCrawlReportResponse, UpdateCrawlRuleRequest,
+        UpdateCrawlerRequest,
     },
     store::{
         CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, SearchIndex,
@@ -25,11 +33,24 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct CrawlerStore {
     pg_pool: PgPool,
+    frontier: FrontierService,
+    ingest: IngestService,
+    projection: ProjectionRunner,
 }
 
 impl CrawlerStore {
     pub fn new(pg_pool: PgPool) -> Self {
-        Self { pg_pool }
+        let frontier = FrontierService::new(pg_pool.clone());
+        let blob_store = BlobStore::new(pg_pool.clone());
+        let ingest = IngestService::new(pg_pool.clone(), blob_store.clone());
+        let projection = ProjectionRunner::new(ingest.clone(), blob_store);
+
+        Self {
+            pg_pool,
+            frontier,
+            ingest,
+            projection,
+        }
     }
 
     pub async fn rename_crawler(
@@ -71,6 +92,86 @@ impl CrawlerStore {
         Ok(())
     }
 
+    pub async fn update_crawler(
+        &self,
+        developer_id: &str,
+        crawler_id: &str,
+        request: UpdateCrawlerRequest,
+    ) -> Result<(), ApiError> {
+        let worker_concurrency = match request.worker_concurrency {
+            Some(0) => {
+                return Err(ApiError::BadRequest(
+                    "worker_concurrency must be a positive integer".to_string(),
+                ));
+            }
+            Some(value) => Some(value),
+            None => None,
+        };
+        let js_render_concurrency = match request.js_render_concurrency {
+            Some(0) => {
+                return Err(ApiError::BadRequest(
+                    "js_render_concurrency must be a positive integer".to_string(),
+                ));
+            }
+            Some(value) => Some(value),
+            None => None,
+        };
+        let has_runtime_update = worker_concurrency.is_some() || js_render_concurrency.is_some();
+
+        if request.name.is_none() && !has_runtime_update {
+            return Err(ApiError::BadRequest(
+                "no crawler fields provided".to_string(),
+            ));
+        }
+
+        if let Some(name) = request.name.as_deref() {
+            self.rename_crawler(developer_id, crawler_id, name).await?;
+        }
+
+        if !has_runtime_update {
+            return Ok(());
+        }
+
+        let mut metadata_patch = serde_json::Map::new();
+        if let Some(value) = worker_concurrency {
+            metadata_patch.insert("worker_concurrency".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = js_render_concurrency {
+            metadata_patch.insert(
+                "js_render_concurrency".to_string(),
+                serde_json::json!(value),
+            );
+        }
+
+        let result = sqlx::query(
+            "update crawlers
+             set metadata = metadata || $3::jsonb
+             where id = $1 and owner_developer_id = $2",
+        )
+        .bind(crawler_id)
+        .bind(developer_id)
+        .bind(serde_json::Value::Object(metadata_patch))
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(ApiError::NotFound("crawler not found".to_string()));
+        }
+
+        self.push_event(
+            developer_id,
+            "crawler-runtime-updated",
+            "ok",
+            format!("updated runtime config for crawler {crawler_id}"),
+            None,
+            Some(crawler_id.to_string()),
+        )
+        .await?;
+
+        Ok(())
+    }
+
     pub async fn delete_crawler(
         &self,
         developer_id: &str,
@@ -91,7 +192,7 @@ impl CrawlerStore {
         let claimed_job_exists: Option<String> = sqlx::query_scalar(
             "select id
              from crawl_jobs
-             where claimed_by = $1 and status = 'claimed'
+             where claimed_by = $1 and status in ('claimed', 'ingesting')
              limit 1",
         )
         .bind(crawler_id)
@@ -373,8 +474,17 @@ impl CrawlerStore {
         developer_id: &str,
         indexed_documents: usize,
     ) -> Result<CrawlOverviewResponse, ApiError> {
+        let default_worker_concurrency = parse_positive_usize_config(
+            self.get_system_config("crawler.total_concurrency").await,
+            16,
+        );
+        let default_js_render_concurrency = parse_positive_usize_config(
+            self.get_system_config("crawler.js_render_concurrency")
+                .await,
+            1,
+        );
         let crawlers: Vec<CrawlerMetadata> = sqlx::query_as::<_, CrawlerMetadataRow>(
-            "select id, name, preview, created_at, revoked_at, last_seen_at, last_claimed_at, jobs_claimed, jobs_reported
+            "select id, name, preview, created_at, revoked_at, last_seen_at, last_claimed_at, jobs_claimed, jobs_reported, metadata
              from crawlers where owner_developer_id = $1
              order by created_at desc",
         )
@@ -383,16 +493,28 @@ impl CrawlerStore {
         .await
         .map_err(|e| ApiError::Internal(e.into()))?
         .into_iter()
-        .map(|r| CrawlerMetadata {
-            id: r.id,
-            name: r.name,
-            preview: r.preview,
-            created_at: r.created_at,
-            revoked_at: r.revoked_at,
-            last_seen_at: r.last_seen_at,
-            last_claimed_at: r.last_claimed_at,
-            jobs_claimed: r.jobs_claimed as u64,
-            jobs_reported: r.jobs_reported as u64,
+        .map(|r| {
+            let metadata = crawler_runtime_metadata(&r.metadata);
+            CrawlerMetadata {
+                supports_js_render: metadata.js_render,
+                id: r.id,
+                name: r.name,
+                preview: r.preview,
+                created_at: r.created_at,
+                revoked_at: r.revoked_at,
+                last_seen_at: r.last_seen_at,
+                last_claimed_at: r.last_claimed_at,
+                jobs_claimed: r.jobs_claimed as u64,
+                jobs_reported: r.jobs_reported as u64,
+                worker_concurrency: metadata
+                    .worker_concurrency
+                    .filter(|value| *value > 0)
+                    .unwrap_or(default_worker_concurrency),
+                js_render_concurrency: metadata
+                    .js_render_concurrency
+                    .filter(|value| *value > 0)
+                    .unwrap_or(default_js_render_concurrency),
+            }
         })
         .collect();
 
@@ -439,7 +561,7 @@ impl CrawlerStore {
                 .unwrap_or(0);
 
         let in_flight_jobs: i64 = sqlx::query_scalar(
-            "select count(*) from crawl_jobs where owner_developer_id = $1 and status = 'claimed'",
+            "select count(*) from crawl_jobs where owner_developer_id = $1 and status in ('claimed', 'ingesting')",
         )
         .bind(developer_id)
         .fetch_one(&self.pg_pool)
@@ -548,6 +670,7 @@ impl CrawlerStore {
             failure_kind: Option<String>,
             failure_message: Option<String>,
             accepted_document_id: Option<String>,
+            render_mode: String,
         }
 
         let domain = normalize_domain_input(domain_input).ok_or_else(|| {
@@ -658,7 +781,7 @@ impl CrawlerStore {
         let job_summary_query = format!(
             r#"
             select
-                count(*) filter (where status in ('queued', 'claimed')) as pending_jobs,
+                count(*) filter (where status in ('queued', 'claimed', 'ingesting')) as pending_jobs,
                 count(*) filter (where status = 'succeeded' and accepted_document_id is not null) as successful_jobs,
                 count(*) filter (where status = 'succeeded' and accepted_document_id is null) as filtered_jobs,
                 count(*) filter (where status in ('failed', 'dead_letter')) as failed_jobs,
@@ -687,7 +810,8 @@ impl CrawlerStore {
                 finished_at,
                 failure_kind,
                 failure_message,
-                accepted_document_id
+                accepted_document_id,
+                render_mode
             from crawl_jobs
             where {job_host_expr} = $1 or {job_host_expr} like $2
             order by coalesce(finished_at, discovered_at) desc
@@ -712,6 +836,7 @@ impl CrawlerStore {
                 failure_kind: row.failure_kind,
                 failure_message: row.failure_message,
                 accepted_document_id: row.accepted_document_id,
+                render_mode: row.render_mode,
             })
             .collect();
 
@@ -809,7 +934,7 @@ impl CrawlerStore {
         let counts_query = format!(
             r#"
             select
-                count(*) filter (where status in ('queued', 'claimed')) as queued_domain_jobs,
+                count(*) filter (where status in ('queued', 'claimed', 'ingesting')) as queued_domain_jobs,
                 count(*) as known_domain_urls
             from crawl_jobs
             where {job_host_expr} = $1 or {job_host_expr} like $2
@@ -904,6 +1029,7 @@ impl CrawlerStore {
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
         request: ClaimJobsRequest,
+        capabilities: Option<&CrawlerCapabilities>,
     ) -> Result<ClaimJobsResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
         let max_jobs = request.max_jobs.clamp(1, 100) as i64;
@@ -919,105 +1045,40 @@ impl CrawlerStore {
             .await?;
 
         // Update last_seen_at and last_claimed_at
-        sqlx::query("update crawlers set last_seen_at = $2, last_claimed_at = $2 where id = $1")
+        if let Some(caps) = capabilities {
+            let caps_json = serde_json::to_value(caps).map_err(|e| ApiError::Internal(e.into()))?;
+            sqlx::query("update crawlers set last_seen_at = $2, last_claimed_at = $2, metadata = metadata || $3::jsonb where id = $1")
+                .bind(crawler_id)
+                .bind(now)
+                .bind(&caps_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+        } else {
+            sqlx::query(
+                "update crawlers set last_seen_at = $2, last_claimed_at = $2 where id = $1",
+            )
             .bind(crawler_id)
             .bind(now)
             .execute(&self.pg_pool)
             .await
             .map_err(|e| ApiError::Internal(e.into()))?;
+        }
 
-        let lease_expires = now + chrono::Duration::minutes(30);
-        let claimed_rows = sqlx::query_as::<_, ClaimedJobRow>(
-            "with active_counts as (
-                 select origin_key, count(*)::integer as active_count
-                 from crawl_jobs
-                 where owner_developer_id = $4
-                   and status = 'claimed'
-                 group by origin_key
-             ),
-             ranked_jobs as (
-                 select
-                     j.id,
-                     j.origin_key,
-                     o.next_allowed_at,
-                     j.priority,
-                     j.discovered_at,
-                     coalesce(active_counts.active_count, 0) as active_count,
-                     greatest(j.same_origin_concurrency, 1) as same_origin_concurrency,
-                     row_number() over (
-                         partition by j.origin_key
-                         order by j.priority desc, j.discovered_at asc
-                     ) as origin_rank
-                 from crawl_jobs j
-                 join crawl_origins o
-                   on o.owner_developer_id = j.owner_developer_id
-                  and o.origin_key = j.origin_key
-                 left join active_counts
-                   on active_counts.origin_key = j.origin_key
-                 where j.owner_developer_id = $4
-                   and j.status = 'queued'
-                   and (j.next_retry_at is null or j.next_retry_at <= $2)
-                   and o.next_allowed_at <= $2
-             ),
-             candidate_jobs as (
-                 select j.id, ranked_jobs.origin_key
-                 from crawl_jobs j
-                 join ranked_jobs on ranked_jobs.id = j.id
-                 where ranked_jobs.active_count + ranked_jobs.origin_rank <= ranked_jobs.same_origin_concurrency
-                 order by ranked_jobs.next_allowed_at asc, ranked_jobs.priority desc, ranked_jobs.discovered_at asc
-                 limit $5
-                 for update of j skip locked
-             ),
-             claimed as (
-                 update crawl_jobs
-                 set status = 'claimed',
-                     claimed_by = $1,
-                     claimed_at = $2,
-                     lease_expires_at = $3,
-                     attempt_count = attempt_count + 1
-                 where id in (select id from candidate_jobs)
-                 returning id, url, origin_key, source, depth, max_depth, attempt_count, discovered_at, network
-             ),
-             touched_origins as (
-                 update crawl_origins origin
-                 set in_flight_count = origin.in_flight_count + touched.claimed_count,
-                     updated_at = $2
-                 from (
-                     select origin_key, count(*)::integer as claimed_count
-                     from claimed
-                     group by origin_key
-                 ) touched
-                 where origin.owner_developer_id = $4
-                   and origin.origin_key = touched.origin_key
-             )
-             select id, url, origin_key, source, depth, max_depth, attempt_count, discovered_at, network
-             from claimed",
-        )
-        .bind(crawler_id)
-        .bind(now)
-        .bind(lease_expires)
-        .bind(&crawler.owner_developer_id)
-        .bind(max_jobs)
-        .fetch_all(&self.pg_pool)
-        .await
-        .map_err(|e| ApiError::Internal(e.into()))?;
+        let crawler_has_js_render = capabilities.map(|c| c.js_render).unwrap_or(false);
 
-        let mut jobs: Vec<CrawlJob> = claimed_rows
-            .iter()
-            .map(|r| CrawlJob {
-                job_id: r.id.clone(),
-                url: r.url.clone(),
-                origin_key: r.origin_key.clone(),
-                source: r.source.clone(),
-                depth: r.depth as u32,
-                max_depth: r.max_depth as u32,
-                attempt_count: r.attempt_count as u32,
-                discovered_at: r.discovered_at,
-                network: r.network.clone(),
-                etag: None,
-                last_modified: None,
-            })
-            .collect();
+        let claim = self
+            .frontier
+            .claim_jobs(
+                &crawler.owner_developer_id,
+                crawler_id,
+                max_jobs as usize,
+                crawler_has_js_render,
+                now,
+            )
+            .await?;
+        let lease_id = claim.lease_id;
+        let mut jobs = claim.jobs;
 
         // Enrich jobs with conditional request headers from existing documents
         for job in &mut jobs {
@@ -1063,6 +1124,7 @@ impl CrawlerStore {
 
         Ok(ClaimJobsResponse {
             crawler_id: crawler_id.to_string(),
+            lease_id: (!jobs.is_empty()).then_some(lease_id),
             frontier_depth: frontier_depth as usize,
             jobs,
         })
@@ -1078,7 +1140,6 @@ impl CrawlerStore {
         search_index: &SearchIndex,
     ) -> Result<SubmitCrawlReportResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
-        let now = Utc::now();
 
         let crawler = self
             .validate_crawler_auth(
@@ -1091,665 +1152,824 @@ impl CrawlerStore {
 
         sqlx::query("update crawlers set last_seen_at = $2 where id = $1")
             .bind(crawler_id)
-            .bind(now)
+            .bind(Utc::now())
             .execute(&self.pg_pool)
             .await
             .map_err(|e| ApiError::Internal(e.into()))?;
 
-        let mut documents = Vec::new();
-        let mut discovered_urls = 0usize;
-        let mut reported = 0i64;
-
-        for result in request.results {
-            let in_flight = sqlx::query_as::<_, InFlightJobRow>(
-                "select id, url, origin_key, depth, max_depth, max_pages, budget_id, rule_id, attempt_count, max_attempts, discovery_scope, discovery_host, same_origin_concurrency, max_discovered_urls_per_page from crawl_jobs
-                 where id = $1 and claimed_by = $2 and status = 'claimed'",
-            )
-            .bind(&result.job_id)
-            .bind(crawler_id)
-            .fetch_optional(&self.pg_pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.into()))?;
-
-            let Some(in_flight) = in_flight else {
-                continue;
-            };
-
-            if in_flight.url != result.url {
-                return Err(ApiError::BadRequest(
-                    "crawl report contained a job not assigned to this crawler".to_string(),
-                ));
-            }
-
-            reported += 1;
-            let finalized_url = result
-                .final_url
-                .clone()
-                .unwrap_or_else(|| result.url.clone());
-            let discovery_scope = DiscoveryScope::from_db_value(&in_flight.discovery_scope);
-            let scoped_discovered_urls = filter_discovered_urls(
-                result.discovered_urls.clone(),
-                discovery_scope,
-                in_flight.discovery_host.as_deref(),
-                in_flight.max_discovered_urls_per_page.max(1) as usize,
-            );
-            let discovered_count = scoped_discovered_urls.len() as i32;
-            let http_status = result.status_code as i32;
-            let content_type = result.content_type.clone();
-            let llm_decision = summarize_llm_decision(&result);
-            let redirect_chain_json = serde_json::to_value(&result.redirect_chain)
-                .map_err(|e| ApiError::Internal(e.into()))?;
-
-            match classify_job_outcome(&result, &in_flight) {
-                JobOutcome::Succeeded(document) => {
-                    sqlx::query(
-                        "update crawl_jobs
-                         set status = 'succeeded',
-                             failure_kind = null,
-                             failure_message = null,
-                             next_retry_at = null,
-                             finished_at = $2,
-                             final_url = $3,
-                             content_type = $4,
-                             http_status = $5,
-                             discovered_urls_count = $6,
-                             accepted_document_id = $7,
-                             llm_decision = $8,
-                             llm_reason = $9,
-                             llm_relevance_score = $10,
-                             canonical_hint = $11,
-                             canonical_source = $12,
-                             redirect_chain_json = $13
-                         where id = $1",
-                    )
-                    .bind(&result.job_id)
-                    .bind(now)
-                    .bind(&finalized_url)
-                    .bind(content_type.as_deref())
-                    .bind(http_status)
-                    .bind(discovered_count)
-                    .bind(&document.id)
-                    .bind(llm_decision.as_deref())
-                    .bind(result.llm_reason.as_deref())
-                    .bind(result.llm_relevance_score)
-                    .bind(result.canonical_hint.as_deref())
-                    .bind(result.canonical_source.as_deref())
-                    .bind(&redirect_chain_json)
-                    .execute(&self.pg_pool)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.into()))?;
-
-                    let allowed_discovery = in_flight.depth < in_flight.max_depth;
-                    if allowed_discovery {
-                        for discovered_url in &scoped_discovered_urls {
-                            let _ = sqlx::query(
-                                "update documents set inlink_count = inlink_count + 1
-                                 where canonical_url = $1",
-                            )
-                            .bind(discovered_url)
-                            .execute(&self.pg_pool)
-                            .await;
-                        }
-
-                        // Store persistent link edges
-                        for discovered_url in &scoped_discovered_urls {
-                            let _ = sqlx::query(
-                                "INSERT INTO link_edges (source_url, target_url, discovered_at)
-                                 VALUES ($1, $2, now())
-                                 ON CONFLICT (source_url, target_url) DO UPDATE SET discovered_at = now()"
-                            )
-                            .bind(&finalized_url)
-                            .bind(discovered_url)
-                            .execute(&self.pg_pool)
-                            .await;
-                        }
-
-                        discovered_urls += self
-                            .enqueue_urls(
-                                &crawler.owner_developer_id,
-                                scoped_discovered_urls.clone(),
-                                &finalized_url,
-                                &in_flight.budget_id,
-                                in_flight.depth + 1,
-                                in_flight.max_depth,
-                                in_flight.max_pages,
-                                in_flight.same_origin_concurrency,
-                                Some(&crawler.owner_developer_id),
-                                in_flight.rule_id.as_deref(),
-                                discovery_scope,
-                                in_flight.discovery_host.as_deref(),
-                                in_flight.max_discovered_urls_per_page,
-                                false,
-                            )
-                            .await?;
-                    }
-
-                    if let Some(ref domain) = extract_host(&finalized_url) {
-                        // Compare content_hash with existing document to detect change
-                        let content_changed = if let Some(ref body) = result.body {
-                            let new_hash = content_hash(body);
-                            let existing_hash: Option<String> = sqlx::query_scalar(
-                                "SELECT content_hash FROM documents WHERE canonical_url = $1",
-                            )
-                            .bind(&finalized_url)
-                            .fetch_optional(&self.pg_pool)
-                            .await
-                            .ok()
-                            .flatten();
-                            existing_hash.as_deref() != Some(&new_hash)
-                        } else {
-                            false
-                        };
-
-                        let _ = sqlx::query(
-                            "INSERT INTO domain_crawl_stats (domain, total_pages_indexed, last_success_at, consecutive_failures, updated_at)
-                             VALUES ($1, 1, now(), 0, now())
-                             ON CONFLICT (domain) DO UPDATE SET
-                                 total_pages_indexed = domain_crawl_stats.total_pages_indexed + 1,
-                                 last_success_at = now(),
-                                 consecutive_failures = 0,
-                                 health_status = 'healthy',
-                                 updated_at = now()"
-                        ).bind(domain).execute(&self.pg_pool).await;
-
-                        // Update domain change frequency
-                        let _ = sqlx::query(
-                            "UPDATE domain_crawl_stats SET
-                                content_checks = content_checks + 1,
-                                content_changes = content_changes + CASE WHEN $2 THEN 1 ELSE 0 END,
-                                avg_change_frequency_hours = CASE
-                                    WHEN content_checks > 0 THEN
-                                        (content_changes::real + CASE WHEN $2 THEN 1 ELSE 0 END) /
-                                        (content_checks::real + 1) * 168.0
-                                    ELSE NULL
-                                END,
-                                updated_at = now()
-                             WHERE domain = $1",
-                        )
-                        .bind(domain)
-                        .bind(content_changed)
-                        .execute(&self.pg_pool)
-                        .await;
-                    }
-
-                    self.push_event(
-                        &crawler.owner_developer_id,
-                        "job-succeeded",
-                        "ok",
-                        format!(
-                            "indexed {finalized_url} on attempt {}",
-                            in_flight.attempt_count
-                        ),
-                        Some(finalized_url.clone()),
-                        Some(crawler_id.to_string()),
-                    )
-                    .await?;
-
-                    documents.push(document);
-
-                    // Store conditional request headers for future 304 support
-                    if result.http_etag.is_some() || result.http_last_modified.is_some() {
-                        let doc_url = result.final_url.as_ref().unwrap_or(&result.url);
-                        let doc_id = stable_document_id(doc_url);
-                        let _ = sqlx::query(
-                            "UPDATE documents SET http_etag = $2, http_last_modified = $3 WHERE id = $1"
-                        )
-                        .bind(&doc_id)
-                        .bind(result.http_etag.as_deref())
-                        .bind(result.http_last_modified.as_deref())
-                        .execute(&self.pg_pool).await;
-                    }
-                }
-                JobOutcome::Filtered { reason } => {
-                    sqlx::query(
-                        "update crawl_jobs
-                         set status = 'succeeded',
-                             failure_kind = null,
-                             failure_message = null,
-                             next_retry_at = null,
-                             finished_at = $2,
-                             final_url = $3,
-                             content_type = $4,
-                             http_status = $5,
-                             discovered_urls_count = $6,
-                             accepted_document_id = null,
-                             llm_decision = $7,
-                             llm_reason = $8,
-                             llm_relevance_score = $9,
-                             canonical_hint = $10,
-                             canonical_source = $11,
-                             redirect_chain_json = $12
-                         where id = $1",
-                    )
-                    .bind(&result.job_id)
-                    .bind(now)
-                    .bind(&finalized_url)
-                    .bind(content_type.as_deref())
-                    .bind(http_status)
-                    .bind(discovered_count)
-                    .bind(llm_decision.as_deref())
-                    .bind(result.llm_reason.as_deref())
-                    .bind(result.llm_relevance_score)
-                    .bind(result.canonical_hint.as_deref())
-                    .bind(result.canonical_source.as_deref())
-                    .bind(&redirect_chain_json)
-                    .execute(&self.pg_pool)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.into()))?;
-
-                    let allowed_discovery = in_flight.depth < in_flight.max_depth;
-                    if allowed_discovery {
-                        discovered_urls += self
-                            .enqueue_urls(
-                                &crawler.owner_developer_id,
-                                scoped_discovered_urls.clone(),
-                                &finalized_url,
-                                &in_flight.budget_id,
-                                in_flight.depth + 1,
-                                in_flight.max_depth,
-                                in_flight.max_pages,
-                                in_flight.same_origin_concurrency,
-                                Some(&crawler.owner_developer_id),
-                                in_flight.rule_id.as_deref(),
-                                discovery_scope,
-                                in_flight.discovery_host.as_deref(),
-                                in_flight.max_discovered_urls_per_page,
-                                false,
-                            )
-                            .await?;
-                    }
-
-                    self.push_event(
-                        &crawler.owner_developer_id,
-                        "job-filtered",
-                        "ok",
-                        format!("skipped indexing {finalized_url}: {reason}"),
-                        Some(finalized_url.clone()),
-                        Some(crawler_id.to_string()),
-                    )
-                    .await?;
-
-                    // For 304 responses, update last_crawled_at on the existing document
-                    if result.status_code == 304 {
-                        let doc_url = result.final_url.as_ref().unwrap_or(&result.url);
-                        let doc_id = stable_document_id(doc_url);
-                        let _ =
-                            sqlx::query("UPDATE documents SET last_crawled_at = $2 WHERE id = $1")
-                                .bind(&doc_id)
-                                .bind(now)
-                                .execute(&self.pg_pool)
-                                .await;
-                    }
-                }
-                JobOutcome::Retryable {
-                    failure_kind,
-                    failure_message,
-                    next_retry_at,
-                } => {
-                    sqlx::query(
-                        "update crawl_jobs
-                         set status = 'queued',
-                             claimed_by = null,
-                             claimed_at = null,
-                             lease_expires_at = null,
-                             next_retry_at = $2,
-                             failure_kind = $3,
-                             failure_message = $4,
-                             finished_at = null,
-                             final_url = $5,
-                             content_type = $6,
-                             http_status = $7,
-                             discovered_urls_count = $8,
-                             accepted_document_id = null,
-                             llm_decision = $9,
-                             llm_reason = $10,
-                             llm_relevance_score = $11,
-                             canonical_hint = $12,
-                             canonical_source = $13,
-                             redirect_chain_json = $14
-                         where id = $1",
-                    )
-                    .bind(&result.job_id)
-                    .bind(next_retry_at)
-                    .bind(&failure_kind)
-                    .bind(&failure_message)
-                    .bind(&finalized_url)
-                    .bind(content_type.as_deref())
-                    .bind(http_status)
-                    .bind(discovered_count)
-                    .bind(llm_decision.as_deref())
-                    .bind(result.llm_reason.as_deref())
-                    .bind(result.llm_relevance_score)
-                    .bind(result.canonical_hint.as_deref())
-                    .bind(result.canonical_source.as_deref())
-                    .bind(&redirect_chain_json)
-                    .execute(&self.pg_pool)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.into()))?;
-
-                    self.push_event(
-                        &crawler.owner_developer_id,
-                        "job-requeued",
-                        "error",
-                        format!(
-                            "{}; retrying at {}",
-                            failure_message,
-                            next_retry_at.to_rfc3339()
-                        ),
-                        Some(finalized_url.clone()),
-                        Some(crawler_id.to_string()),
-                    )
-                    .await?;
-                }
-                JobOutcome::Blocked {
-                    failure_kind,
-                    failure_message,
-                } => {
-                    sqlx::query(
-                        "update crawl_jobs
-                         set status = 'blocked',
-                             failure_kind = $2,
-                             failure_message = $3,
-                             next_retry_at = null,
-                             finished_at = $4,
-                             final_url = $5,
-                             content_type = $6,
-                             http_status = $7,
-                             discovered_urls_count = $8,
-                             accepted_document_id = null,
-                             llm_decision = $9,
-                             llm_reason = $10,
-                             llm_relevance_score = $11,
-                             canonical_hint = $12,
-                             canonical_source = $13,
-                             redirect_chain_json = $14
-                         where id = $1",
-                    )
-                    .bind(&result.job_id)
-                    .bind(&failure_kind)
-                    .bind(&failure_message)
-                    .bind(now)
-                    .bind(&finalized_url)
-                    .bind(content_type.as_deref())
-                    .bind(http_status)
-                    .bind(discovered_count)
-                    .bind(llm_decision.as_deref())
-                    .bind(result.llm_reason.as_deref())
-                    .bind(result.llm_relevance_score)
-                    .bind(result.canonical_hint.as_deref())
-                    .bind(result.canonical_source.as_deref())
-                    .bind(&redirect_chain_json)
-                    .execute(&self.pg_pool)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.into()))?;
-
-                    self.push_event(
-                        &crawler.owner_developer_id,
-                        "job-blocked",
-                        "error",
-                        failure_message,
-                        Some(finalized_url.clone()),
-                        Some(crawler_id.to_string()),
-                    )
-                    .await?;
-                }
-                JobOutcome::Failed {
-                    failure_kind,
-                    failure_message,
-                } => {
-                    sqlx::query(
-                        "update crawl_jobs
-                         set status = 'failed',
-                             failure_kind = $2,
-                             failure_message = $3,
-                             next_retry_at = null,
-                             finished_at = $4,
-                             final_url = $5,
-                             content_type = $6,
-                             http_status = $7,
-                             discovered_urls_count = $8,
-                             accepted_document_id = null,
-                             llm_decision = $9,
-                             llm_reason = $10,
-                             llm_relevance_score = $11,
-                             canonical_hint = $12,
-                             canonical_source = $13,
-                             redirect_chain_json = $14
-                         where id = $1",
-                    )
-                    .bind(&result.job_id)
-                    .bind(&failure_kind)
-                    .bind(&failure_message)
-                    .bind(now)
-                    .bind(&finalized_url)
-                    .bind(content_type.as_deref())
-                    .bind(http_status)
-                    .bind(discovered_count)
-                    .bind(llm_decision.as_deref())
-                    .bind(result.llm_reason.as_deref())
-                    .bind(result.llm_relevance_score)
-                    .bind(result.canonical_hint.as_deref())
-                    .bind(result.canonical_source.as_deref())
-                    .bind(&redirect_chain_json)
-                    .execute(&self.pg_pool)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.into()))?;
-
-                    if let Some(ref domain) = extract_host(&finalized_url) {
-                        let _ = sqlx::query(
-                            "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
-                             VALUES ($1, 1, now(), 1, now())
-                             ON CONFLICT (domain) DO UPDATE SET
-                                 total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
-                                 last_failure_at = now(),
-                                 consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
-                                 health_status = CASE
-                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
-                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
-                                     ELSE domain_crawl_stats.health_status
-                                 END,
-                                 updated_at = now()"
-                        ).bind(domain).execute(&self.pg_pool).await;
-                    }
-
-                    self.push_event(
-                        &crawler.owner_developer_id,
-                        "job-failed",
-                        "error",
-                        failure_message,
-                        Some(finalized_url.clone()),
-                        Some(crawler_id.to_string()),
-                    )
-                    .await?;
-                }
-                JobOutcome::DeadLetter {
-                    failure_kind,
-                    failure_message,
-                } => {
-                    sqlx::query(
-                        "update crawl_jobs
-                         set status = 'dead_letter',
-                             failure_kind = $2,
-                             failure_message = $3,
-                             next_retry_at = null,
-                             finished_at = $4,
-                             final_url = $5,
-                             content_type = $6,
-                             http_status = $7,
-                             discovered_urls_count = $8,
-                             accepted_document_id = null,
-                             llm_decision = $9,
-                             llm_reason = $10,
-                             llm_relevance_score = $11,
-                             canonical_hint = $12,
-                             canonical_source = $13,
-                             redirect_chain_json = $14
-                         where id = $1",
-                    )
-                    .bind(&result.job_id)
-                    .bind(&failure_kind)
-                    .bind(&failure_message)
-                    .bind(now)
-                    .bind(&finalized_url)
-                    .bind(content_type.as_deref())
-                    .bind(http_status)
-                    .bind(discovered_count)
-                    .bind(llm_decision.as_deref())
-                    .bind(result.llm_reason.as_deref())
-                    .bind(result.llm_relevance_score)
-                    .bind(result.canonical_hint.as_deref())
-                    .bind(result.canonical_source.as_deref())
-                    .bind(&redirect_chain_json)
-                    .execute(&self.pg_pool)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.into()))?;
-
-                    if let Some(ref domain) = extract_host(&finalized_url) {
-                        let _ = sqlx::query(
-                            "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
-                             VALUES ($1, 1, now(), 1, now())
-                             ON CONFLICT (domain) DO UPDATE SET
-                                 total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
-                                 last_failure_at = now(),
-                                 consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
-                                 health_status = CASE
-                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
-                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
-                                     ELSE domain_crawl_stats.health_status
-                                 END,
-                                 updated_at = now()"
-                        ).bind(domain).execute(&self.pg_pool).await;
-                    }
-
-                    self.push_event(
-                        &crawler.owner_developer_id,
-                        "job-dead-lettered",
-                        "error",
-                        failure_message,
-                        Some(finalized_url.clone()),
-                        Some(crawler_id.to_string()),
-                    )
-                    .await?;
-                }
-                JobOutcome::Gone {
-                    failure_kind,
-                    failure_message,
-                } => {
-                    sqlx::query(
-                        "update crawl_jobs
-                         set status = 'failed',
-                             failure_kind = $2,
-                             failure_message = $3,
-                             next_retry_at = null,
-                             finished_at = $4,
-                             final_url = $5,
-                             content_type = $6,
-                             http_status = $7,
-                             discovered_urls_count = $8,
-                             accepted_document_id = null,
-                             llm_decision = $9,
-                             llm_reason = $10,
-                             llm_relevance_score = $11,
-                             canonical_hint = $12,
-                             canonical_source = $13,
-                             redirect_chain_json = $14
-                         where id = $1",
-                    )
-                    .bind(&result.job_id)
-                    .bind(&failure_kind)
-                    .bind(&failure_message)
-                    .bind(now)
-                    .bind(&finalized_url)
-                    .bind(content_type.as_deref())
-                    .bind(http_status)
-                    .bind(discovered_count)
-                    .bind(llm_decision.as_deref())
-                    .bind(result.llm_reason.as_deref())
-                    .bind(result.llm_relevance_score)
-                    .bind(result.canonical_hint.as_deref())
-                    .bind(result.canonical_source.as_deref())
-                    .bind(&redirect_chain_json)
-                    .execute(&self.pg_pool)
-                    .await
-                    .map_err(|e| ApiError::Internal(e.into()))?;
-
-                    // Remove document from search index for 404/410 responses
-                    let doc_id = stable_document_id(&finalized_url);
-                    let _ = search_index.delete_document(&doc_id).await;
-                    if finalized_url != result.url {
-                        let original_doc_id = stable_document_id(&result.url);
-                        let _ = search_index.delete_document(&original_doc_id).await;
-                    }
-                    if let Some(canonical_hint) = result.canonical_hint.as_deref() {
-                        let canonical_doc_id = stable_document_id(canonical_hint);
-                        let _ = search_index.delete_document(&canonical_doc_id).await;
-                    }
-
-                    if let Some(ref domain) = extract_host(&finalized_url) {
-                        let _ = sqlx::query(
-                            "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
-                             VALUES ($1, 1, now(), 1, now())
-                             ON CONFLICT (domain) DO UPDATE SET
-                                 total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
-                                 last_failure_at = now(),
-                                 consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
-                                 health_status = CASE
-                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
-                                     WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
-                                     ELSE domain_crawl_stats.health_status
-                                 END,
-                                 updated_at = now()"
-                        ).bind(domain).execute(&self.pg_pool).await;
-                    }
-
-                    self.push_event(
-                        &crawler.owner_developer_id,
-                        "job-gone",
-                        "error",
-                        format!("removed from index: {failure_message}"),
-                        Some(finalized_url.clone()),
-                        Some(crawler_id.to_string()),
-                    )
-                    .await?;
-                }
-            }
-
-            self.update_origin_after_report(
+        let SubmitCrawlReportRequest { lease_id, results } = request;
+        let reported = results.len();
+        let stage = self
+            .ingest
+            .stage_report(
+                &self.frontier,
                 &crawler.owner_developer_id,
-                &in_flight.origin_key,
-                &finalized_url,
-                &result,
-                now,
+                crawler_id,
+                &lease_id,
+                results,
             )
             .await?;
-        }
 
         if reported > 0 {
             sqlx::query("update crawlers set jobs_reported = jobs_reported + $2 where id = $1")
                 .bind(crawler_id)
-                .bind(reported)
+                .bind(reported as i64)
                 .execute(&self.pg_pool)
                 .await
                 .map_err(|e| ApiError::Internal(e.into()))?;
         }
 
-        let frontier_depth: i64 = sqlx::query_scalar(
-            "select count(*) from crawl_jobs where owner_developer_id = $1 and status = 'queued'",
-        )
-        .bind(&crawler.owner_developer_id)
-        .fetch_one(&self.pg_pool)
-        .await
-        .unwrap_or(0);
+        let frontier_depth = self
+            .frontier
+            .frontier_depth(&crawler.owner_developer_id)
+            .await;
 
-        let ingest = search_index.upsert_documents(documents).await?;
+        let worker = self.clone();
+        let index = search_index.clone();
+        tokio::spawn(async move {
+            if let Err(error) = worker.process_pending_ingests(&index, 64).await {
+                error!(?error, "staged crawl projection pass failed");
+            }
+        });
+
         Ok(SubmitCrawlReportResponse {
-            accepted_documents: ingest.accepted_documents,
-            duplicate_documents: ingest.duplicate_documents,
-            skipped_documents: ingest.skipped_documents,
-            discovered_urls,
-            frontier_depth: frontier_depth as usize,
-            indexed_documents: search_index.total_documents().await,
+            lease_id,
+            staged_results: stage.staged_results,
+            pending_results: stage.pending_results,
+            frontier_depth,
         })
+    }
+
+    pub(crate) async fn process_pending_ingests(
+        &self,
+        search_index: &SearchIndex,
+        limit: usize,
+    ) -> Result<usize, ApiError> {
+        self.projection.drain(self, search_index, limit).await
+    }
+
+    pub(crate) async fn apply_staged_result(
+        &self,
+        search_index: &SearchIndex,
+        item: &PendingIngestItem,
+        result: CrawlResultInput,
+    ) -> Result<(), ApiError> {
+        let now = Utc::now();
+        let in_flight = sqlx::query_as::<_, InFlightJobRow>(
+            "select id, url, origin_key, depth, max_depth, max_pages, budget_id, rule_id, attempt_count, max_attempts, discovery_scope, discovery_host, same_origin_concurrency, max_discovered_urls_per_page from crawl_jobs
+             where id = $1 and owner_developer_id = $2 and claimed_by = $3 and lease_id = $4 and status = 'ingesting'",
+        )
+        .bind(&item.crawl_job_id)
+        .bind(&item.owner_developer_id)
+        .bind(&item.crawler_id)
+        .bind(&item.lease_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+        .ok_or_else(|| ApiError::Conflict("staged crawl job is no longer ingesting".to_string()))?;
+
+        if in_flight.url != result.url {
+            return Err(ApiError::BadRequest(
+                "crawl report contained a job not assigned to this crawler".to_string(),
+            ));
+        }
+
+        let finalized_url = result
+            .final_url
+            .clone()
+            .unwrap_or_else(|| result.url.clone());
+        let discovery_scope = DiscoveryScope::from_db_value(&in_flight.discovery_scope);
+        let scoped_discovered_urls = filter_discovered_urls(
+            result.discovered_urls.clone(),
+            discovery_scope,
+            in_flight.discovery_host.as_deref(),
+            in_flight.max_discovered_urls_per_page.max(1) as usize,
+        );
+        let discovered_count = scoped_discovered_urls.len() as i32;
+        let http_status = result.status_code as i32;
+        let content_type = result.content_type.clone();
+        let llm_decision = summarize_llm_decision(&result);
+        let redirect_chain_json = serde_json::to_value(&result.redirect_chain)
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+        match classify_job_outcome(&result, &in_flight) {
+            JobOutcome::Succeeded(document) => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'succeeded',
+                         failure_kind = null,
+                         failure_message = null,
+                         next_retry_at = null,
+                         finished_at = $2,
+                         final_url = $3,
+                         content_type = $4,
+                         http_status = $5,
+                         discovered_urls_count = $6,
+                         accepted_document_id = $7,
+                         llm_decision = $8,
+                         llm_reason = $9,
+                         llm_relevance_score = $10,
+                         canonical_hint = $11,
+                         canonical_source = $12,
+                         render_mode = $13,
+                         redirect_chain_json = $14
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(now)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(&document.id)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                if in_flight.depth < in_flight.max_depth {
+                    for discovered_url in &scoped_discovered_urls {
+                        let _ = sqlx::query(
+                            "update documents set inlink_count = inlink_count + 1
+                             where canonical_url = $1",
+                        )
+                        .bind(discovered_url)
+                        .execute(&self.pg_pool)
+                        .await;
+                    }
+
+                    for discovered_url in &scoped_discovered_urls {
+                        let _ = sqlx::query(
+                            "INSERT INTO link_edges (source_url, target_url, discovered_at)
+                             VALUES ($1, $2, now())
+                             ON CONFLICT (source_url, target_url) DO UPDATE SET discovered_at = now()",
+                        )
+                        .bind(&finalized_url)
+                        .bind(discovered_url)
+                        .execute(&self.pg_pool)
+                        .await;
+                    }
+
+                    self.enqueue_urls(
+                        &item.owner_developer_id,
+                        scoped_discovered_urls.clone(),
+                        &finalized_url,
+                        &in_flight.budget_id,
+                        in_flight.depth + 1,
+                        in_flight.max_depth,
+                        in_flight.max_pages,
+                        in_flight.same_origin_concurrency,
+                        Some(&item.owner_developer_id),
+                        in_flight.rule_id.as_deref(),
+                        discovery_scope,
+                        in_flight.discovery_host.as_deref(),
+                        in_flight.max_discovered_urls_per_page,
+                        false,
+                    )
+                    .await?;
+                }
+
+                if let Some(ref domain) = extract_host(&finalized_url) {
+                    let content_changed = if let Some(ref body) = result.body {
+                        let new_hash = content_hash(body);
+                        let existing_hash: Option<String> = sqlx::query_scalar(
+                            "SELECT content_hash FROM documents WHERE canonical_url = $1",
+                        )
+                        .bind(&finalized_url)
+                        .fetch_optional(&self.pg_pool)
+                        .await
+                        .ok()
+                        .flatten();
+                        existing_hash.as_deref() != Some(&new_hash)
+                    } else {
+                        false
+                    };
+
+                    let _ = sqlx::query(
+                        "INSERT INTO domain_crawl_stats (domain, total_pages_indexed, last_success_at, consecutive_failures, updated_at)
+                         VALUES ($1, 1, now(), 0, now())
+                         ON CONFLICT (domain) DO UPDATE SET
+                             total_pages_indexed = domain_crawl_stats.total_pages_indexed + 1,
+                             last_success_at = now(),
+                             consecutive_failures = 0,
+                             health_status = 'healthy',
+                             updated_at = now()",
+                    )
+                    .bind(domain)
+                    .execute(&self.pg_pool)
+                    .await;
+
+                    let _ = sqlx::query(
+                        "UPDATE domain_crawl_stats SET
+                            content_checks = content_checks + 1,
+                            content_changes = content_changes + CASE WHEN $2 THEN 1 ELSE 0 END,
+                            avg_change_frequency_hours = CASE
+                                WHEN content_checks > 0 THEN
+                                    (content_changes::real + CASE WHEN $2 THEN 1 ELSE 0 END) /
+                                    (content_checks::real + 1) * 168.0
+                                ELSE NULL
+                            END,
+                            updated_at = now()
+                         WHERE domain = $1",
+                    )
+                    .bind(domain)
+                    .bind(content_changed)
+                    .execute(&self.pg_pool)
+                    .await;
+                }
+
+                search_index.upsert_documents(vec![document]).await?;
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-succeeded",
+                    "ok",
+                    format!(
+                        "indexed {finalized_url} on attempt {}",
+                        in_flight.attempt_count
+                    ),
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+
+                if result.http_etag.is_some() || result.http_last_modified.is_some() {
+                    let doc_url = result.final_url.as_ref().unwrap_or(&result.url);
+                    let doc_id = stable_document_id(doc_url);
+                    let _ = sqlx::query(
+                        "UPDATE documents SET http_etag = $2, http_last_modified = $3 WHERE id = $1",
+                    )
+                    .bind(&doc_id)
+                    .bind(result.http_etag.as_deref())
+                    .bind(result.http_last_modified.as_deref())
+                    .execute(&self.pg_pool)
+                    .await;
+                }
+            }
+            JobOutcome::Filtered { reason } => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'succeeded',
+                         failure_kind = null,
+                         failure_message = null,
+                         next_retry_at = null,
+                         finished_at = $2,
+                         final_url = $3,
+                         content_type = $4,
+                         http_status = $5,
+                         discovered_urls_count = $6,
+                         accepted_document_id = null,
+                         llm_decision = $7,
+                         llm_reason = $8,
+                         llm_relevance_score = $9,
+                         canonical_hint = $10,
+                         canonical_source = $11,
+                         render_mode = $12,
+                         redirect_chain_json = $13
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(now)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                if in_flight.depth < in_flight.max_depth {
+                    self.enqueue_urls(
+                        &item.owner_developer_id,
+                        scoped_discovered_urls.clone(),
+                        &finalized_url,
+                        &in_flight.budget_id,
+                        in_flight.depth + 1,
+                        in_flight.max_depth,
+                        in_flight.max_pages,
+                        in_flight.same_origin_concurrency,
+                        Some(&item.owner_developer_id),
+                        in_flight.rule_id.as_deref(),
+                        discovery_scope,
+                        in_flight.discovery_host.as_deref(),
+                        in_flight.max_discovered_urls_per_page,
+                        false,
+                    )
+                    .await?;
+                }
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-filtered",
+                    "ok",
+                    format!("skipped indexing {finalized_url}: {reason}"),
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+
+                if result.status_code == 304 {
+                    let doc_url = result.final_url.as_ref().unwrap_or(&result.url);
+                    let doc_id = stable_document_id(doc_url);
+                    let _ = sqlx::query("UPDATE documents SET last_crawled_at = $2 WHERE id = $1")
+                        .bind(&doc_id)
+                        .bind(now)
+                        .execute(&self.pg_pool)
+                        .await;
+                }
+            }
+            JobOutcome::Retryable {
+                failure_kind,
+                failure_message,
+                next_retry_at,
+            } => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'queued',
+                         claimed_by = null,
+                         claimed_at = null,
+                         lease_expires_at = null,
+                         lease_id = null,
+                         report_accepted_at = null,
+                         next_retry_at = $2,
+                         failure_kind = $3,
+                         failure_message = $4,
+                         finished_at = null,
+                         final_url = $5,
+                         content_type = $6,
+                         http_status = $7,
+                         discovered_urls_count = $8,
+                         accepted_document_id = null,
+                         llm_decision = $9,
+                         llm_reason = $10,
+                         llm_relevance_score = $11,
+                         canonical_hint = $12,
+                         canonical_source = $13,
+                         render_mode = $14,
+                         redirect_chain_json = $15
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(next_retry_at)
+                .bind(&failure_kind)
+                .bind(&failure_message)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-requeued",
+                    "error",
+                    format!(
+                        "{}; retrying at {}",
+                        failure_message,
+                        next_retry_at.to_rfc3339()
+                    ),
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+            }
+            JobOutcome::RequiresJsRender { failure_message } => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'queued',
+                         claimed_by = null,
+                         claimed_at = null,
+                         lease_expires_at = null,
+                         lease_id = null,
+                         report_accepted_at = null,
+                         next_retry_at = null,
+                         failure_kind = null,
+                         failure_message = null,
+                         finished_at = null,
+                         final_url = $2,
+                         content_type = $3,
+                         http_status = $4,
+                         discovered_urls_count = $5,
+                         accepted_document_id = null,
+                         llm_decision = $6,
+                         llm_reason = $7,
+                         llm_relevance_score = $8,
+                         canonical_hint = $9,
+                         canonical_source = $10,
+                         requires_js = true,
+                         render_mode = $11,
+                         redirect_chain_json = $12
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-requires-js",
+                    "ok",
+                    format!("{}; re-queuing for JS-capable node", failure_message),
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+            }
+            JobOutcome::Blocked {
+                failure_kind,
+                failure_message,
+            } => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'blocked',
+                         failure_kind = $2,
+                         failure_message = $3,
+                         next_retry_at = null,
+                         finished_at = $4,
+                         final_url = $5,
+                         content_type = $6,
+                         http_status = $7,
+                         discovered_urls_count = $8,
+                         accepted_document_id = null,
+                         llm_decision = $9,
+                         llm_reason = $10,
+                         llm_relevance_score = $11,
+                         canonical_hint = $12,
+                         canonical_source = $13,
+                         render_mode = $14,
+                         redirect_chain_json = $15
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(&failure_kind)
+                .bind(&failure_message)
+                .bind(now)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-blocked",
+                    "error",
+                    failure_message,
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+            }
+            JobOutcome::Failed {
+                failure_kind,
+                failure_message,
+            } => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'failed',
+                         failure_kind = $2,
+                         failure_message = $3,
+                         next_retry_at = null,
+                         finished_at = $4,
+                         final_url = $5,
+                         content_type = $6,
+                         http_status = $7,
+                         discovered_urls_count = $8,
+                         accepted_document_id = null,
+                         llm_decision = $9,
+                         llm_reason = $10,
+                         llm_relevance_score = $11,
+                         canonical_hint = $12,
+                         canonical_source = $13,
+                         render_mode = $14,
+                         redirect_chain_json = $15
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(&failure_kind)
+                .bind(&failure_message)
+                .bind(now)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                if let Some(ref domain) = extract_host(&finalized_url) {
+                    let _ = sqlx::query(
+                        "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
+                         VALUES ($1, 1, now(), 1, now())
+                         ON CONFLICT (domain) DO UPDATE SET
+                             total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
+                             last_failure_at = now(),
+                             consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
+                             health_status = CASE
+                                 WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
+                                 WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
+                                 ELSE domain_crawl_stats.health_status
+                             END,
+                             updated_at = now()",
+                    )
+                    .bind(domain)
+                    .execute(&self.pg_pool)
+                    .await;
+                }
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-failed",
+                    "error",
+                    failure_message,
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+            }
+            JobOutcome::DeadLetter {
+                failure_kind,
+                failure_message,
+            } => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'dead_letter',
+                         failure_kind = $2,
+                         failure_message = $3,
+                         next_retry_at = null,
+                         finished_at = $4,
+                         final_url = $5,
+                         content_type = $6,
+                         http_status = $7,
+                         discovered_urls_count = $8,
+                         accepted_document_id = null,
+                         llm_decision = $9,
+                         llm_reason = $10,
+                         llm_relevance_score = $11,
+                         canonical_hint = $12,
+                         canonical_source = $13,
+                         render_mode = $14,
+                         redirect_chain_json = $15
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(&failure_kind)
+                .bind(&failure_message)
+                .bind(now)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                if let Some(ref domain) = extract_host(&finalized_url) {
+                    let _ = sqlx::query(
+                        "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
+                         VALUES ($1, 1, now(), 1, now())
+                         ON CONFLICT (domain) DO UPDATE SET
+                             total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
+                             last_failure_at = now(),
+                             consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
+                             health_status = CASE
+                                 WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
+                                 WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
+                                 ELSE domain_crawl_stats.health_status
+                             END,
+                             updated_at = now()",
+                    )
+                    .bind(domain)
+                    .execute(&self.pg_pool)
+                    .await;
+                }
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-dead-lettered",
+                    "error",
+                    failure_message,
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+            }
+            JobOutcome::Gone {
+                failure_kind,
+                failure_message,
+            } => {
+                sqlx::query(
+                    "update crawl_jobs
+                     set status = 'failed',
+                         failure_kind = $2,
+                         failure_message = $3,
+                         next_retry_at = null,
+                         finished_at = $4,
+                         final_url = $5,
+                         content_type = $6,
+                         http_status = $7,
+                         discovered_urls_count = $8,
+                         accepted_document_id = null,
+                         llm_decision = $9,
+                         llm_reason = $10,
+                         llm_relevance_score = $11,
+                         canonical_hint = $12,
+                         canonical_source = $13,
+                         render_mode = $14,
+                         redirect_chain_json = $15
+                     where id = $1",
+                )
+                .bind(&result.job_id)
+                .bind(&failure_kind)
+                .bind(&failure_message)
+                .bind(now)
+                .bind(&finalized_url)
+                .bind(content_type.as_deref())
+                .bind(http_status)
+                .bind(discovered_count)
+                .bind(llm_decision.as_deref())
+                .bind(result.llm_reason.as_deref())
+                .bind(result.llm_relevance_score)
+                .bind(result.canonical_hint.as_deref())
+                .bind(result.canonical_source.as_deref())
+                .bind(&result.render_mode)
+                .bind(&redirect_chain_json)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?;
+
+                let doc_id = stable_document_id(&finalized_url);
+                let _ = search_index.delete_document(&doc_id).await;
+                if finalized_url != result.url {
+                    let original_doc_id = stable_document_id(&result.url);
+                    let _ = search_index.delete_document(&original_doc_id).await;
+                }
+                if let Some(canonical_hint) = result.canonical_hint.as_deref() {
+                    let canonical_doc_id = stable_document_id(canonical_hint);
+                    let _ = search_index.delete_document(&canonical_doc_id).await;
+                }
+
+                if let Some(ref domain) = extract_host(&finalized_url) {
+                    let _ = sqlx::query(
+                        "INSERT INTO domain_crawl_stats (domain, total_pages_failed, last_failure_at, consecutive_failures, updated_at)
+                         VALUES ($1, 1, now(), 1, now())
+                         ON CONFLICT (domain) DO UPDATE SET
+                             total_pages_failed = domain_crawl_stats.total_pages_failed + 1,
+                             last_failure_at = now(),
+                             consecutive_failures = domain_crawl_stats.consecutive_failures + 1,
+                             health_status = CASE
+                                 WHEN domain_crawl_stats.consecutive_failures + 1 >= 10 THEN 'unhealthy'
+                                 WHEN domain_crawl_stats.consecutive_failures + 1 >= 5 THEN 'degraded'
+                                 ELSE domain_crawl_stats.health_status
+                             END,
+                             updated_at = now()",
+                    )
+                    .bind(domain)
+                    .execute(&self.pg_pool)
+                    .await;
+                }
+
+                self.push_event(
+                    &item.owner_developer_id,
+                    "job-gone",
+                    "error",
+                    format!("removed from index: {failure_message}"),
+                    Some(finalized_url.clone()),
+                    Some(item.crawler_id.clone()),
+                )
+                .await?;
+            }
+        }
+
+        self.update_origin_after_report(
+            &item.owner_developer_id,
+            &in_flight.origin_key,
+            &finalized_url,
+            &result,
+            now,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    pub(crate) async fn mark_projection_failure(
+        &self,
+        item: &PendingIngestItem,
+        error_message: &str,
+    ) -> Result<(), ApiError> {
+        let now = Utc::now();
+        let failed = sqlx::query_as::<_, ProjectionFailureRow>(
+            "update crawl_jobs
+             set status = 'failed',
+                 claimed_by = null,
+                 claimed_at = null,
+                 lease_expires_at = null,
+                 lease_id = null,
+                 next_retry_at = null,
+                 failure_kind = 'projection_error',
+                 failure_message = $5,
+                 finished_at = $6
+             where owner_developer_id = $1
+               and id = $2
+               and claimed_by = $3
+               and lease_id = $4
+               and status = 'ingesting'
+             returning origin_key, url",
+        )
+        .bind(&item.owner_developer_id)
+        .bind(&item.crawl_job_id)
+        .bind(&item.crawler_id)
+        .bind(&item.lease_id)
+        .bind(error_message)
+        .bind(now)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        if let Some(failed) = failed {
+            sqlx::query(
+                "update crawl_origins
+                 set in_flight_count = greatest(in_flight_count - 1, 0),
+                     updated_at = $3
+                 where owner_developer_id = $1 and origin_key = $2",
+            )
+            .bind(&item.owner_developer_id)
+            .bind(&failed.origin_key)
+            .bind(now)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+
+            self.push_event(
+                &item.owner_developer_id,
+                "job-projection-failed",
+                "error",
+                error_message.to_string(),
+                Some(failed.url),
+                Some(item.crawler_id.clone()),
+            )
+            .await?;
+        }
+
+        Ok(())
     }
 
     pub async fn heartbeat_crawler(
@@ -1758,6 +1978,7 @@ impl CrawlerStore {
         crawler_name: Option<&str>,
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
+        capabilities: Option<&CrawlerCapabilities>,
     ) -> Result<crate::models::CrawlerHeartbeatResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
         self.validate_crawler_auth(
@@ -1768,22 +1989,55 @@ impl CrawlerStore {
         )
         .await?;
 
-        sqlx::query("update crawlers set last_seen_at = $2 where id = $1")
+        let metadata: serde_json::Value = if let Some(caps) = capabilities {
+            let caps_json = serde_json::to_value(caps).map_err(|e| ApiError::Internal(e.into()))?;
+            sqlx::query_scalar(
+                "update crawlers
+                 set last_seen_at = $2,
+                     metadata = metadata || $3::jsonb
+                 where id = $1
+                 returning metadata",
+            )
             .bind(crawler_id)
             .bind(Utc::now())
-            .execute(&self.pg_pool)
+            .bind(&caps_json)
+            .fetch_one(&self.pg_pool)
             .await
-            .map_err(|e| ApiError::Internal(e.into()))?;
+            .map_err(|e| ApiError::Internal(e.into()))?
+        } else {
+            sqlx::query_scalar(
+                "update crawlers
+                 set last_seen_at = $2
+                 where id = $1
+                 returning metadata",
+            )
+            .bind(crawler_id)
+            .bind(Utc::now())
+            .fetch_one(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?
+        };
+
+        let metadata = crawler_runtime_metadata(&metadata);
+        let default_worker_concurrency = parse_positive_usize_config(
+            self.get_system_config("crawler.total_concurrency").await,
+            16,
+        );
+        let default_js_render_concurrency = parse_positive_usize_config(
+            self.get_system_config("crawler.js_render_concurrency")
+                .await,
+            1,
+        );
 
         Ok(crate::models::CrawlerHeartbeatResponse {
-            worker_concurrency: parse_positive_usize_config(
-                self.get_system_config("crawler.total_concurrency").await,
-                16,
-            ),
-            js_render_concurrency: parse_positive_usize_config(
-                self.get_system_config("crawler.js_render_concurrency").await,
-                1,
-            ),
+            worker_concurrency: metadata
+                .worker_concurrency
+                .filter(|value| *value > 0)
+                .unwrap_or(default_worker_concurrency),
+            js_render_concurrency: metadata
+                .js_render_concurrency
+                .filter(|value| *value > 0)
+                .unwrap_or(default_js_render_concurrency),
         })
     }
 
@@ -1828,9 +2082,14 @@ impl CrawlerStore {
         Ok(())
     }
 
-    pub async fn run_maintenance(&self, claim_timeout: Duration) -> Result<(), ApiError> {
+    pub async fn run_maintenance(
+        &self,
+        claim_timeout: Duration,
+        search_index: &SearchIndex,
+    ) -> Result<(), ApiError> {
         let now = Utc::now();
         self.apply_due_rules(now).await?;
+        self.process_pending_ingests(search_index, 64).await?;
         self.requeue_stale_jobs(now, claim_timeout).await?;
         self.prune_stale_crawlers(now, claim_timeout).await?;
         self.trim_events().await?;
@@ -1875,7 +2134,7 @@ impl CrawlerStore {
                     source, rule_id, claimed_by, discovered_at, claimed_at, next_retry_at,
                     content_type, http_status, discovered_urls_count, accepted_document_id,
                     llm_decision, llm_reason, llm_relevance_score, canonical_hint, canonical_source,
-                    failure_kind, failure_message, finished_at
+                    failure_kind, failure_message, finished_at, render_mode
              FROM crawl_jobs
              WHERE owner_developer_id = $1
                AND ($2::text IS NULL OR status = $2)
@@ -1920,6 +2179,7 @@ impl CrawlerStore {
                 failure_kind: r.failure_kind,
                 failure_message: r.failure_message,
                 finished_at: r.finished_at,
+                render_mode: r.render_mode,
             })
             .collect();
 
@@ -1943,6 +2203,8 @@ impl CrawlerStore {
                  claimed_by = NULL,
                  claimed_at = NULL,
                  lease_expires_at = NULL,
+                 lease_id = NULL,
+                 report_accepted_at = NULL,
                  next_retry_at = NULL,
                  failure_kind = NULL,
                  failure_message = NULL,
@@ -1954,7 +2216,8 @@ impl CrawlerStore {
                  accepted_document_id = NULL,
                  llm_decision = NULL,
                  llm_reason = NULL,
-                 llm_relevance_score = NULL
+                 llm_relevance_score = NULL,
+                 render_mode = 'static'
              WHERE owner_developer_id = $1 AND status in ('failed', 'dead_letter')",
         )
         .bind(developer_id)
@@ -2005,6 +2268,34 @@ impl CrawlerStore {
         Ok(count)
     }
 
+    pub async fn cleanup_failed_jobs(&self, developer_id: &str) -> Result<usize, ApiError> {
+        let result = sqlx::query(
+            "DELETE FROM crawl_jobs
+             WHERE owner_developer_id = $1
+               AND status in ('failed', 'blocked', 'dead_letter')",
+        )
+        .bind(developer_id)
+        .execute(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        let count = result.rows_affected() as usize;
+
+        if count > 0 {
+            self.push_event(
+                developer_id,
+                "jobs-failed-cleaned",
+                "ok",
+                format!("cleaned up {count} failed jobs"),
+                None,
+                None,
+            )
+            .await?;
+        }
+
+        Ok(count)
+    }
+
     pub async fn stop_all_jobs(&self, developer_id: &str) -> Result<(usize, usize), ApiError> {
         let now = Utc::now();
         let disabled_rules = sqlx::query(
@@ -2022,7 +2313,7 @@ impl CrawlerStore {
 
         let removed_jobs = sqlx::query(
             "delete from crawl_jobs
-             where owner_developer_id = $1 and status in ('queued', 'claimed')",
+             where owner_developer_id = $1 and status in ('queued', 'claimed', 'ingesting')",
         )
         .bind(developer_id)
         .execute(&self.pg_pool)
@@ -2064,7 +2355,7 @@ impl CrawlerStore {
         let stats = sqlx::query_as::<_, JobStatsRow>(
             "SELECT
                  count(*) FILTER (WHERE status = 'queued') AS queued,
-                 count(*) FILTER (WHERE status = 'claimed') AS claimed,
+                 count(*) FILTER (WHERE status in ('claimed', 'ingesting')) AS claimed,
                  count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
                  count(*) FILTER (WHERE status = 'failed') AS failed,
                  count(*) FILTER (WHERE status = 'blocked') AS blocked,
@@ -2518,6 +2809,8 @@ impl CrawlerStore {
                      claimed_by = null,
                      claimed_at = null,
                      lease_expires_at = null,
+                     lease_id = null,
+                     report_accepted_at = null,
                      next_retry_at = $2
                  where status = 'claimed' and claimed_at < $1
                  returning id, owner_developer_id, origin_key, url, claimed_by
@@ -2664,6 +2957,7 @@ struct CrawlerMetadataRow {
     last_claimed_at: Option<DateTime<Utc>>,
     jobs_claimed: i64,
     jobs_reported: i64,
+    metadata: serde_json::Value,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2690,6 +2984,16 @@ struct CrawlRuleRow {
     last_enqueued_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+struct StoredCrawlerMetadata {
+    #[serde(default)]
+    js_render: bool,
+    #[serde(default)]
+    worker_concurrency: Option<usize>,
+    #[serde(default)]
+    js_render_concurrency: Option<usize>,
+}
+
 #[derive(sqlx::FromRow)]
 struct CrawlEventRow {
     id: String,
@@ -2699,19 +3003,6 @@ struct CrawlEventRow {
     url: Option<String>,
     crawler_id: Option<String>,
     created_at: DateTime<Utc>,
-}
-
-#[derive(sqlx::FromRow)]
-struct ClaimedJobRow {
-    id: String,
-    url: String,
-    origin_key: String,
-    source: String,
-    depth: i32,
-    max_depth: i32,
-    attempt_count: i32,
-    discovered_at: DateTime<Utc>,
-    network: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2755,6 +3046,12 @@ struct StaleJobRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct ProjectionFailureRow {
+    origin_key: String,
+    url: String,
+}
+
+#[derive(sqlx::FromRow)]
 struct StaleDocRow {
     canonical_url: String,
     host: String,
@@ -2793,6 +3090,7 @@ struct JobListRow {
     failure_kind: Option<String>,
     failure_message: Option<String>,
     finished_at: Option<DateTime<Utc>>,
+    render_mode: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2877,6 +3175,9 @@ enum JobOutcome {
         failure_message: String,
         next_retry_at: DateTime<Utc>,
     },
+    RequiresJsRender {
+        failure_message: String,
+    },
     Blocked {
         failure_kind: String,
         failure_message: String,
@@ -2941,6 +3242,12 @@ fn classify_job_outcome(result: &CrawlResultInput, job: &InFlightJobRow) -> JobO
     if is_blocked_result(result.status_code, &kind) {
         return JobOutcome::Blocked {
             failure_kind: kind,
+            failure_message: message,
+        };
+    }
+
+    if result.error_kind.as_deref() == Some("requires_js_render") {
+        return JobOutcome::RequiresJsRender {
             failure_message: message,
         };
     }
@@ -3196,6 +3503,10 @@ fn parse_positive_usize_config(value: Option<String>, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+fn crawler_runtime_metadata(value: &serde_json::Value) -> StoredCrawlerMetadata {
+    serde_json::from_value(value.clone()).unwrap_or_default()
+}
+
 #[cfg(test)]
 fn crawler_seen_within_timeout(
     last_seen_at: Option<DateTime<Utc>>,
@@ -3289,6 +3600,7 @@ mod tests {
             retry_after_secs: None,
             robots_status: None,
             robots_sitemaps: Vec::new(),
+            render_mode: "static".to_string(),
         };
 
         match classify_job_outcome(&result, &job) {
@@ -3349,6 +3661,7 @@ mod tests {
             retry_after_secs: None,
             robots_status: Some("fetched".to_string()),
             robots_sitemaps: Vec::new(),
+            render_mode: "static".to_string(),
         };
 
         assert_eq!(trusted_canonical_url(&result), None);
@@ -3387,6 +3700,7 @@ mod tests {
             retry_after_secs: Some(120),
             robots_status: Some("fetched".to_string()),
             robots_sitemaps: Vec::new(),
+            render_mode: "static".to_string(),
         };
 
         assert!(origin_ready_at(now, &result) >= now + TimeDelta::seconds(120));

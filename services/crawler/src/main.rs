@@ -11,7 +11,7 @@ mod worker;
 use clap::Parser;
 use tracing::warn;
 
-use models::{Cli, Command, LlmFilterConfig, WorkerConfig};
+use models::{Cli, Command, CrawlerCapabilities, LlmFilterConfig, WorkerConfig};
 
 // ---------------------------------------------------------------------------
 // Main
@@ -77,6 +77,15 @@ async fn main() -> anyhow::Result<()> {
                 })
                 .unwrap_or_default();
 
+            let js_capable = js_render::detect_js_capability();
+            if js_capable {
+                tracing::info!("chromium detected — JS rendering capability enabled");
+            } else {
+                tracing::warn!(
+                    "no chromium available — JS rendering capability disabled; SPA pages will be re-queued for a capable node"
+                );
+            }
+
             let config = WorkerConfig {
                 server,
                 crawler_id,
@@ -101,6 +110,9 @@ async fn main() -> anyhow::Result<()> {
                     _ => None,
                 },
                 stealth_ua,
+                capabilities: CrawlerCapabilities {
+                    js_render: js_capable,
+                },
             };
             worker::run_worker(config, proxy).await?;
         }

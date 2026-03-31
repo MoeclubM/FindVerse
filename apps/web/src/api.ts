@@ -98,6 +98,7 @@ export type DeveloperDomainInsight = {
     failure_kind: string | null;
     failure_message: string | null;
     accepted_document_id: string | null;
+    render_mode: string;
   }>;
 };
 
@@ -169,6 +170,9 @@ export type CrawlOverview = {
     last_claimed_at: string | null;
     jobs_claimed: number;
     jobs_reported: number;
+    supports_js_render: boolean;
+    worker_concurrency: number;
+    js_render_concurrency: number;
   }>;
   rules: CrawlRule[];
   recent_events: CrawlEvent[];
@@ -270,11 +274,35 @@ export function getCrawlOverview(token: string) {
   });
 }
 
-export function renameCrawler(token: string, id: string, name: string) {
+function updateCrawler(
+  token: string,
+  id: string,
+  payload: {
+    name?: string;
+    worker_concurrency?: number;
+    js_render_concurrency?: number;
+  },
+) {
   return request<void>(`/v1/admin/crawlers/${id}`, {
     method: "PATCH",
     token,
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function renameCrawler(token: string, id: string, name: string) {
+  return updateCrawler(token, id, { name });
+}
+
+export function updateCrawlerRuntime(
+  token: string,
+  id: string,
+  workerConcurrency: number,
+  jsRenderConcurrency: number,
+) {
+  return updateCrawler(token, id, {
+    worker_concurrency: workerConcurrency,
+    js_render_concurrency: jsRenderConcurrency,
   });
 }
 
@@ -447,6 +475,16 @@ export function getDeveloperDomainInsight(token: string, domain: string) {
   );
 }
 
+export function getAdminDomainInsight(token: string, domain: string) {
+  return request<DeveloperDomainInsight>(
+    `/v1/admin/domains/inspect?domain=${encodeURIComponent(domain)}`,
+    {
+      method: "GET",
+      token,
+    },
+  );
+}
+
 export function submitDeveloperDomain(
   token: string,
   payload: {
@@ -574,6 +612,7 @@ export type CrawlJobDetail = {
   failure_kind: string | null;
   failure_message: string | null;
   finished_at: string | null;
+  render_mode: string;
 };
 
 export type CrawlJobList = {
@@ -626,6 +665,13 @@ export function retryFailedJobs(token: string) {
 
 export function cleanupCompletedJobs(token: string) {
   return request<{ cleaned: number }>("/v1/admin/crawl/jobs/completed", {
+    method: "DELETE",
+    token,
+  });
+}
+
+export function cleanupFailedJobs(token: string) {
+  return request<{ cleaned: number }>("/v1/admin/crawl/jobs/failed", {
     method: "DELETE",
     token,
   });

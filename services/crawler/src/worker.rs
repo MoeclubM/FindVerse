@@ -25,8 +25,9 @@ use crate::fetch::{
 use crate::js_render::{needs_js_rendering, render_with_js};
 use crate::llm_filter::evaluate_page;
 use crate::models::{
-    ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, CrawlerHeartbeatResponse,
-    LlmFilterConfig, SubmitCrawlReportRequest, SubmitCrawlReportResponse, WorkerConfig,
+    ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, CrawlerCapabilities,
+    CrawlerHeartbeatResponse, LlmFilterConfig, SubmitCrawlReportRequest, SubmitCrawlReportResponse,
+    WorkerConfig,
 };
 use crate::sitemap::fetch_and_parse_sitemap;
 use crate::url_normalize::normalize_url_advanced;
@@ -157,7 +158,8 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                 if shutdown_requested.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Err(error) = sync_runtime_config(&api_client, &config, &runtime_config).await {
+                if let Err(error) = sync_runtime_config(&api_client, &config, &runtime_config).await
+                {
                     warn!(?error, "crawler heartbeat failed");
                 }
             }
@@ -190,7 +192,9 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             continue;
         }
 
+        let lease_id = claim.lease_id.clone();
         let js_render_limiter = Arc::new(Semaphore::new(current_runtime.js_render_concurrency));
+        let capabilities = config.capabilities.clone();
         let results: Vec<CrawlResultReport> = stream::iter(claim.jobs)
             .map(|job| {
                 let clearnet_clients = clearnet_clients.clone();
@@ -200,6 +204,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                 let js_render_limiter = Arc::clone(&js_render_limiter);
                 let allowed_domains = config.allowed_domains.clone();
                 let llm_filter = config.llm_filter.clone();
+                let capabilities = capabilities.clone();
                 async move {
                     info!(
                         "processing {} ({}) from {} depth {}/{} attempt {} discovered {}",
@@ -233,6 +238,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                         &js_render_limiter,
                         &allowed_domains,
                         network,
+                        &capabilities,
                     )
                     .await
                 }
@@ -241,16 +247,14 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             .collect()
             .await;
 
-        let report = submit_report(&api_client, &config, results).await?;
+        let report = submit_report(&api_client, &config, lease_id.as_deref(), results).await?;
         info!(
-            "crawler {} accepted {} documents (duplicates {}, skipped {}), discovered {} urls, frontier depth {}, indexed documents {}",
+            "crawler {} staged {} results for lease {}, pending ingest {}, frontier depth {}",
             config.crawler_id,
-            report.accepted_documents,
-            report.duplicate_documents,
-            report.skipped_documents,
-            report.discovered_urls,
+            report.staged_results,
+            report.lease_id,
+            report.pending_results,
             report.frontier_depth,
-            report.indexed_documents
         );
 
         if config.once || shutdown_requested.load(Ordering::Relaxed) {
@@ -295,6 +299,8 @@ async fn claim_jobs(
     config: &WorkerConfig,
     max_jobs: usize,
 ) -> anyhow::Result<ClaimJobsResponse> {
+    let caps_json = serde_json::to_string(&config.capabilities)
+        .unwrap_or_else(|_| r#"{"js_render":false}"#.to_string());
     let response = client
         .post(format!(
             "{}/internal/crawlers/claim",
@@ -305,6 +311,7 @@ async fn claim_jobs(
             "x-crawler-name",
             config.crawler_name.as_deref().unwrap_or(""),
         )
+        .header("x-crawler-capabilities", &caps_json)
         .bearer_auth(&config.auth_token)
         .json(&ClaimJobsRequest {
             max_jobs: max_jobs.max(1),
@@ -322,8 +329,10 @@ async fn claim_jobs(
 async fn submit_report(
     client: &reqwest::Client,
     config: &WorkerConfig,
+    lease_id: Option<&str>,
     results: Vec<CrawlResultReport>,
 ) -> anyhow::Result<SubmitCrawlReportResponse> {
+    let lease_id = lease_id.ok_or_else(|| anyhow::anyhow!("claim response missing lease_id"))?;
     let response = client
         .post(format!(
             "{}/internal/crawlers/report",
@@ -335,7 +344,10 @@ async fn submit_report(
             config.crawler_name.as_deref().unwrap_or(""),
         )
         .bearer_auth(&config.auth_token)
-        .json(&SubmitCrawlReportRequest { results })
+        .json(&SubmitCrawlReportRequest {
+            lease_id: lease_id.to_string(),
+            results,
+        })
         .send()
         .await?;
 
@@ -351,6 +363,8 @@ async fn sync_runtime_config(
     config: &WorkerConfig,
     runtime_config: &Arc<RwLock<RuntimeConcurrencyConfig>>,
 ) -> anyhow::Result<()> {
+    let caps_json = serde_json::to_string(&config.capabilities)
+        .unwrap_or_else(|_| r#"{"js_render":false}"#.to_string());
     let response = client
         .post(format!(
             "{}/internal/crawlers/heartbeat",
@@ -361,6 +375,7 @@ async fn sync_runtime_config(
             "x-crawler-name",
             config.crawler_name.as_deref().unwrap_or(""),
         )
+        .header("x-crawler-capabilities", &caps_json)
         .bearer_auth(&config.auth_token)
         .send()
         .await?;
@@ -400,6 +415,7 @@ async fn process_job(
     js_render_limiter: &Arc<Semaphore>,
     allowed_domains: &[String],
     network: String,
+    capabilities: &CrawlerCapabilities,
 ) -> CrawlResultReport {
     let fetched_at = Utc::now();
     let initial_robots = inspect_robots(meta_client, state, &job.url).await;
@@ -551,7 +567,36 @@ async fn process_job(
 
     let body = fetch.response.text().await.unwrap_or_default();
     let mut parsed = parse_html_document(&final_url, &body);
+    let mut render_mode = "static".to_string();
     if needs_js_rendering(&body, parsed.body.as_deref().unwrap_or("")) {
+        if !capabilities.js_render {
+            info!(
+                url = %final_url,
+                "page needs JS rendering but this node has no browser; reporting for re-queue to a capable node"
+            );
+            return CrawlResultReport {
+                status_code,
+                final_url: Some(final_url),
+                redirect_chain,
+                content_type: Some(content_type.clone()),
+                title: parsed.title,
+                snippet: parsed.snippet,
+                body: None,
+                discovered_urls: Vec::new(),
+                retryable: Some(true),
+                error_kind: Some("requires_js_render".to_string()),
+                error_message: Some(
+                    "page requires JS rendering but this crawler node has no browser".to_string(),
+                ),
+                http_etag: etag.clone(),
+                http_last_modified: last_modified_header.clone(),
+                applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+                retry_after_secs,
+                robots_status: Some(final_robots.status),
+                robots_sitemaps: final_robots.sitemap_urls,
+                ..base_report(job, fetched_at, &network)
+            };
+        }
         let _permit = js_render_limiter
             .acquire()
             .await
@@ -560,6 +605,7 @@ async fn process_job(
             Ok(rendered_html) => {
                 info!("re-parsing {} with JS rendering", final_url);
                 parsed = parse_html_document(&final_url, &rendered_html);
+                render_mode = "browser".to_string();
             }
             Err(error) => {
                 warn!(
@@ -663,6 +709,7 @@ async fn process_job(
             retry_after_secs,
             robots_status: Some(final_robots.status),
             robots_sitemaps: final_robots.sitemap_urls,
+            render_mode: render_mode.clone(),
             ..base_report(job, fetched_at, &network)
         };
     }
@@ -690,6 +737,7 @@ async fn process_job(
             retry_after_secs,
             robots_status: Some(final_robots.status),
             robots_sitemaps: final_robots.sitemap_urls,
+            render_mode: render_mode.clone(),
             ..base_report(job, fetched_at, &network)
         };
     }
@@ -753,6 +801,7 @@ async fn process_job(
         retry_after_secs,
         robots_status: Some(final_robots.status),
         robots_sitemaps: final_robots.sitemap_urls,
+        render_mode,
         ..base_report(job, fetched_at, &network)
     }
 }
@@ -792,6 +841,7 @@ fn base_report(
         retry_after_secs: None,
         robots_status: None,
         robots_sitemaps: Vec::new(),
+        render_mode: "static".to_string(),
     }
 }
 

@@ -6,6 +6,31 @@ use std::time::Duration;
 #[cfg(feature = "js-render")]
 use crate::fetch::FINDVERSE_UA;
 
+pub fn detect_js_capability() -> bool {
+    #[cfg(feature = "js-render")]
+    {
+        std::thread::spawn(|| {
+            Browser::new(LaunchOptions {
+                headless: true,
+                sandbox: false,
+                ..Default::default()
+            })
+            .map(|b| {
+                drop(b);
+                true
+            })
+            .unwrap_or(false)
+        })
+        .join()
+        .unwrap_or(false)
+    }
+
+    #[cfg(not(feature = "js-render"))]
+    {
+        false
+    }
+}
+
 pub fn needs_js_rendering(html: &str, body_text: &str) -> bool {
     let body_text = body_text.trim();
     let has_content_root = [

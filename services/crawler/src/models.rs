@@ -3,6 +3,11 @@ use findverse_common::{CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SC
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlerCapabilities {
+    pub js_render: bool,
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -181,6 +186,7 @@ pub struct ClaimJobsRequest {
 #[derive(Debug, Deserialize)]
 pub struct ClaimJobsResponse {
     pub crawler_id: String,
+    pub lease_id: Option<String>,
     pub frontier_depth: usize,
     pub jobs: Vec<CrawlJob>,
 }
@@ -211,6 +217,7 @@ pub struct CrawlJob {
 
 #[derive(Debug, Serialize)]
 pub struct SubmitCrawlReportRequest {
+    pub lease_id: String,
     pub results: Vec<CrawlResultReport>,
 }
 
@@ -245,16 +252,15 @@ pub struct CrawlResultReport {
     pub retry_after_secs: Option<u64>,
     pub robots_status: Option<String>,
     pub robots_sitemaps: Vec<String>,
+    pub render_mode: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SubmitCrawlReportResponse {
-    pub accepted_documents: usize,
-    pub duplicate_documents: usize,
-    pub skipped_documents: usize,
-    pub discovered_urls: usize,
+    pub lease_id: String,
+    pub staged_results: usize,
+    pub pending_results: usize,
     pub frontier_depth: usize,
-    pub indexed_documents: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +281,7 @@ pub struct WorkerConfig {
     pub llm_filter: Option<LlmFilterConfig>,
     #[allow(dead_code)]
     pub stealth_ua: bool,
+    pub capabilities: CrawlerCapabilities,
 }
 
 #[derive(Debug, Clone)]

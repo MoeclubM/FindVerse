@@ -2,8 +2,18 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Activity, Bot, Clock3, Trash2 } from "lucide-react";
 
-import { deleteCrawler, renameCrawler } from "../../api";
-import { DetailDialog, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import { deleteCrawler, renameCrawler, updateCrawlerRuntime } from "../../api";
+import { DetailDialog, FieldShell, PanelSection, StatStrip } from "../common/PanelPrimitives";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -47,7 +57,21 @@ export function ConsoleWorkers() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [selectedCrawlerId, setSelectedCrawlerId] = useState<string | null>(null);
+  const [deleteCrawlerId, setDeleteCrawlerId] = useState<string | null>(null);
+  const [runtimeWorkerConcurrency, setRuntimeWorkerConcurrency] = useState("");
+  const [runtimeJsRenderConcurrency, setRuntimeJsRenderConcurrency] = useState("");
   const selectedCrawler = crawlers.find((crawler) => crawler.id === selectedCrawlerId) ?? null;
+  const deleteCrawlerTarget = crawlers.find((crawler) => crawler.id === deleteCrawlerId) ?? null;
+  const nextRuntimeWorkerConcurrency = String(
+    Math.max(1, Number(runtimeWorkerConcurrency) || selectedCrawler?.worker_concurrency || 1),
+  );
+  const nextRuntimeJsRenderConcurrency = String(
+    Math.max(1, Number(runtimeJsRenderConcurrency) || selectedCrawler?.js_render_concurrency || 1),
+  );
+  const runtimeDirty = selectedCrawler
+    ? runtimeWorkerConcurrency !== String(selectedCrawler.worker_concurrency) ||
+      runtimeJsRenderConcurrency !== String(selectedCrawler.js_render_concurrency)
+    : false;
 
   function startEditing(crawlerId: string, currentName: string) {
     setEditingId(crawlerId);
@@ -72,8 +96,8 @@ export function ConsoleWorkers() {
     }
   }
 
-  async function handleDeleteCrawler(crawlerId: string, crawlerName: string) {
-    if (!window.confirm(t("console.workers.delete_confirm", { name: crawlerName }))) return;
+  async function handleDeleteCrawler(crawlerId: string) {
+    setDeleteCrawlerId(null);
     setBusy(true);
     setFlash(null);
     try {
@@ -84,6 +108,27 @@ export function ConsoleWorkers() {
       await refreshAll();
     } catch (error) {
       setFlash(getErrorMessage(error, t("console.workers.delete_failed")));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveRuntime(crawlerId: string) {
+    setBusy(true);
+    setFlash(null);
+    try {
+      await updateCrawlerRuntime(
+        token,
+        crawlerId,
+        Number(nextRuntimeWorkerConcurrency),
+        Number(nextRuntimeJsRenderConcurrency),
+      );
+      setRuntimeWorkerConcurrency(nextRuntimeWorkerConcurrency);
+      setRuntimeJsRenderConcurrency(nextRuntimeJsRenderConcurrency);
+      await refreshAll();
+      setFlash(t("console.workers.runtime_saved"));
+    } catch (error) {
+      setFlash(getErrorMessage(error, t("console.workers.runtime_save_failed")));
     } finally {
       setBusy(false);
     }
@@ -119,6 +164,8 @@ export function ConsoleWorkers() {
                   setEditingId(null);
                   setEditName(crawler.name);
                   setSelectedCrawlerId(crawler.id);
+                  setRuntimeWorkerConcurrency(String(crawler.worker_concurrency));
+                  setRuntimeJsRenderConcurrency(String(crawler.js_render_concurrency));
                 }}
                 className="grid w-full gap-4 rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/40"
               >
@@ -129,6 +176,11 @@ export function ConsoleWorkers() {
                       <Badge variant={online ? "success" : "outline"}>
                         {online ? t("console.workers.online") : t("console.workers.offline")}
                       </Badge>
+                      <Badge variant={crawler.supports_js_render ? "warning" : "outline"}>
+                        {crawler.supports_js_render
+                          ? t("console.workers.chromium_enabled")
+                          : t("console.workers.chromium_disabled")}
+                      </Badge>
                       <Badge variant="outline">{crawler.id.slice(0, 8)}</Badge>
                     </div>
                     <p className="text-sm text-muted-foreground">{crawler.preview}</p>
@@ -138,7 +190,7 @@ export function ConsoleWorkers() {
                     <strong className="text-foreground">{formatTimestamp(crawler.last_seen_at)}</strong>
                   </div>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-5">
                   <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
                     <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.workers.jobs_claimed")}</span>
                     <div className="mt-2 text-lg font-semibold text-foreground">{crawler.jobs_claimed}</div>
@@ -146,6 +198,14 @@ export function ConsoleWorkers() {
                   <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
                     <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.workers.jobs_reported")}</span>
                     <div className="mt-2 text-lg font-semibold text-foreground">{crawler.jobs_reported}</div>
+                  </div>
+                  <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
+                    <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.workers.worker_concurrency_label")}</span>
+                    <div className="mt-2 text-lg font-semibold text-foreground">{crawler.worker_concurrency}</div>
+                  </div>
+                  <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
+                    <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.workers.js_render_concurrency_label")}</span>
+                    <div className="mt-2 text-lg font-semibold text-foreground">{crawler.js_render_concurrency}</div>
                   </div>
                   <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
                     <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.workers.created")}</span>
@@ -170,7 +230,10 @@ export function ConsoleWorkers() {
         onClose={() => {
           setEditingId(null);
           setEditName("");
+          setDeleteCrawlerId(null);
           setSelectedCrawlerId(null);
+          setRuntimeWorkerConcurrency("");
+          setRuntimeJsRenderConcurrency("");
         }}
         actions={
           selectedCrawler ? (
@@ -182,7 +245,7 @@ export function ConsoleWorkers() {
                 <Button
                   variant="destructive"
                   disabled={busy}
-                  onClick={() => void handleDeleteCrawler(selectedCrawler.id, selectedCrawler.name)}
+                  onClick={() => setDeleteCrawlerId(selectedCrawler.id)}
                 >
                   <Trash2 data-icon="inline-start" />
                   {t("console.workers.delete")}
@@ -260,9 +323,74 @@ export function ConsoleWorkers() {
                 <div className="mt-2 break-all text-sm font-medium text-foreground">{selectedCrawler.id}</div>
               </div>
             </div>
+
+            <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">{t("console.workers.runtime_title")}</div>
+                  <p className="mt-1 text-sm text-muted-foreground">{t("console.workers.runtime_hint")}</p>
+                </div>
+                <Badge variant={selectedCrawler.supports_js_render ? "warning" : "outline"}>
+                  {selectedCrawler.supports_js_render
+                    ? t("console.workers.chromium_enabled")
+                    : t("console.workers.chromium_disabled")}
+                </Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+                <FieldShell label={t("console.workers.worker_concurrency_label")}>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={runtimeWorkerConcurrency}
+                    onChange={(event) => setRuntimeWorkerConcurrency(event.target.value)}
+                  />
+                </FieldShell>
+                <FieldShell label={t("console.workers.js_render_concurrency_label")}>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={runtimeJsRenderConcurrency}
+                    onChange={(event) => setRuntimeJsRenderConcurrency(event.target.value)}
+                  />
+                </FieldShell>
+                <Button
+                  disabled={busy || !runtimeDirty}
+                  onClick={() => void handleSaveRuntime(selectedCrawler.id)}
+                >
+                  {t("console.workers.save")}
+                </Button>
+              </div>
+            </div>
           </div>
         ) : null}
       </DetailDialog>
+      <AlertDialog
+        open={Boolean(deleteCrawlerTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteCrawlerId(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("console.workers.delete")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteCrawlerTarget ? t("console.workers.delete_confirm", { name: deleteCrawlerTarget.name }) : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>{t("console.workers.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={busy || !deleteCrawlerTarget}
+              onClick={() => deleteCrawlerTarget && void handleDeleteCrawler(deleteCrawlerTarget.id)}
+            >
+              {t("console.workers.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PanelSection>
   );
 }

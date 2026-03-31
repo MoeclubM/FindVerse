@@ -1,5 +1,5 @@
 import { ExitIcon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
-import { Settings, Users, Bot, FileText, ListTodo, LayoutDashboard, Orbit } from "lucide-react";
+import { Settings, Users, Bot, FileText, ListTodo, LayoutDashboard, Orbit, Globe2 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -20,6 +20,7 @@ import { ConsoleProvider, type ConsoleContextValue } from "./console/ConsoleCont
 import { ConsoleOverview } from "./console/ConsoleOverview";
 import { ConsoleUsers } from "./console/ConsoleUsers";
 import { ConsoleCrawlTasks } from "./console/ConsoleCrawlTasks";
+import { ConsoleDomains } from "./console/ConsoleDomains";
 import { ConsoleWorkers } from "./console/ConsoleWorkers";
 import { ConsoleDocuments } from "./console/ConsoleDocuments";
 import { ConsoleJobs } from "./console/ConsoleJobs";
@@ -33,7 +34,6 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarInset,
   SidebarMenu,
   SidebarMenuButton,
@@ -45,7 +45,7 @@ import {
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
 
-type ConsoleTab = "overview" | "users" | "tasks" | "jobs" | "workers" | "documents" | "settings";
+type ConsoleTab = "overview" | "users" | "tasks" | "domains" | "jobs" | "workers" | "documents" | "settings";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -304,6 +304,7 @@ export function ConsolePage(props: {
     { key: "overview" as const, label: t("console.tabs.overview"), icon: LayoutDashboard },
     { key: "users" as const, label: t("console.tabs.users"), icon: Users },
     { key: "tasks" as const, label: t("console.tabs.tasks"), icon: Orbit },
+    { key: "domains" as const, label: t("console.tabs.domains"), icon: Globe2 },
     { key: "jobs" as const, label: t("console.tabs.jobs"), icon: ListTodo },
     { key: "workers" as const, label: t("console.tabs.workers"), icon: Bot },
     { key: "documents" as const, label: t("console.tabs.documents"), icon: FileText },
@@ -311,10 +312,9 @@ export function ConsolePage(props: {
   ];
 
   const sidebar = (
-    <SidebarContent>
+    <SidebarContent className="gap-2 p-2.5">
       <SidebarGroup>
-        <SidebarGroupLabel>{t("console.title")}</SidebarGroupLabel>
-        <SidebarMenu>
+        <SidebarMenu className="gap-1">
           {tabItems.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.key;
@@ -322,6 +322,7 @@ export function ConsolePage(props: {
               <SidebarMenuItem key={item.key}>
                 <SidebarMenuButton
                   isActive={active}
+                  className="justify-start rounded-lg px-2.5 py-2.5"
                   onClick={() => {
                     setActiveTab(item.key);
                   }}
@@ -426,7 +427,7 @@ export function ConsolePage(props: {
           />
           <div className="bg-background">
             <div className="flex w-full px-4 pb-8 pt-4 sm:px-6 lg:px-8 xl:px-10">
-              <Sidebar className="md:sticky md:top-[73px] md:h-[calc(100svh-73px)]">
+              <Sidebar className="md:sticky md:top-[73px] md:h-[calc(100svh-73px)] md:w-56">
                 {sidebar}
               </Sidebar>
 
@@ -437,6 +438,7 @@ export function ConsolePage(props: {
                 {activeTab === "overview" && <ConsoleOverview />}
                 {activeTab === "users" && <ConsoleUsers />}
                 {activeTab === "tasks" && <ConsoleCrawlTasks />}
+                {activeTab === "domains" && <ConsoleDomains />}
                 {activeTab === "jobs" && <ConsoleJobs />}
                 {activeTab === "documents" && <ConsoleDocuments />}
                 {activeTab === "workers" && <ConsoleWorkers />}

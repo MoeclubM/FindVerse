@@ -1,15 +1,11 @@
-use axum::{
-    Json,
-    extract::State,
-    http::HeaderMap,
-};
+use axum::{Json, extract::State, http::HeaderMap};
 
 use crate::{
     ControlState,
     error::ApiError,
     models::{
-        ClaimJobsRequest, ClaimJobsResponse, CrawlerHeartbeatResponse, SubmitCrawlReportRequest,
-        SubmitCrawlReportResponse,
+        ClaimJobsRequest, ClaimJobsResponse, CrawlerCapabilities, CrawlerHeartbeatResponse,
+        SubmitCrawlReportRequest, SubmitCrawlReportResponse,
     },
 };
 
@@ -20,6 +16,7 @@ pub async fn claim_jobs(
 ) -> Result<Json<ClaimJobsResponse>, ApiError> {
     let crawler_id = crawler_id_from_headers(&headers)?;
     let crawler_name = crawler_name_from_headers(&headers);
+    let capabilities = capabilities_from_headers(&headers);
     Ok(Json(
         state
             .crawler_store
@@ -31,6 +28,7 @@ pub async fn claim_jobs(
                     .and_then(|value| value.to_str().ok()),
                 &state.default_crawler_owner_id,
                 request,
+                capabilities.as_ref(),
             )
             .await?,
     ))
@@ -66,6 +64,7 @@ pub async fn heartbeat_crawler(
 ) -> Result<Json<CrawlerHeartbeatResponse>, ApiError> {
     let crawler_id = crawler_id_from_headers(&headers)?;
     let crawler_name = crawler_name_from_headers(&headers);
+    let capabilities = capabilities_from_headers(&headers);
     Ok(Json(
         state
             .crawler_store
@@ -76,6 +75,7 @@ pub async fn heartbeat_crawler(
                     .get("authorization")
                     .and_then(|value| value.to_str().ok()),
                 &state.default_crawler_owner_id,
+                capabilities.as_ref(),
             )
             .await?,
     ))
@@ -98,4 +98,11 @@ fn crawler_name_from_headers(headers: &HeaderMap) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn capabilities_from_headers(headers: &HeaderMap) -> Option<CrawlerCapabilities> {
+    headers
+        .get("x-crawler-capabilities")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|s| serde_json::from_str(s).ok())
 }

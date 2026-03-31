@@ -5,8 +5,9 @@ import { Copy, KeyRound, Shield, Waypoints } from "lucide-react";
 import { getSystemConfig, setSystemConfig } from "../../api";
 import { FieldShell, PanelSection } from "../common/PanelPrimitives";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
+import { Skeleton } from "../ui/skeleton";
+import { Switch } from "../ui/switch";
 import { useConsole } from "./ConsoleContext";
 
 type ConfigMap = Record<string, string>;
@@ -149,7 +150,40 @@ export function ConsoleSettings() {
   }
 
   if (loading) {
-    return <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">{t("console.settings.loading")}</div>;
+    return (
+      <div className="grid gap-4">
+        <div className="rounded-2xl border border-border p-6">
+          <div className="grid gap-5">
+            <Skeleton className="h-5 w-56" />
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
+              <Skeleton className="h-10 rounded-lg" />
+              <Skeleton className="h-10 rounded-lg" />
+              <Skeleton className="h-10 rounded-lg" />
+              <Skeleton className="h-10 rounded-lg" />
+              <Skeleton className="h-10 rounded-lg" />
+              <Skeleton className="h-8 w-24 rounded-lg" />
+            </div>
+            <div className="grid gap-3 md:grid-cols-5">
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-24 rounded-xl" />
+            </div>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border p-6">
+          <div className="grid gap-5">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-12 rounded-xl" />
+            <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+              <Skeleton className="h-10 rounded-lg" />
+              <Skeleton className="h-8 w-24 rounded-lg" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -237,9 +271,9 @@ export function ConsoleSettings() {
       </PanelSection>
 
       <PanelSection title={t("console.settings.tor_section")} contentClassName="space-y-5">
-        <label className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
-          <Checkbox checked={torEnabled} onCheckedChange={(checked) => setTorEnabled(checked === true)} />
+        <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
           <span>{t("console.settings.tor_enabled_label")}</span>
+          <Switch checked={torEnabled} onCheckedChange={setTorEnabled} />
         </label>
         <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
           <FieldShell className="lg:col-span-1" label={t("console.settings.tor_proxy_url_label")}>
