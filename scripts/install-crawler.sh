@@ -435,8 +435,21 @@ main() {
   write_service_unit
 
   run_as_root systemctl daemon-reload
-  run_as_root systemctl enable --now "${SERVICE_NAME}.service"
-  run_as_root systemctl restart "${SERVICE_NAME}.service"
+  run_as_root systemctl enable "${SERVICE_NAME}.service"
+  if run_as_root systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+    echo "Service ${SERVICE_NAME} is already running, restart queued in background."
+    run_as_root systemctl restart --no-block "${SERVICE_NAME}.service"
+  else
+    echo "Starting ${SERVICE_NAME} service."
+    run_as_root systemctl start "${SERVICE_NAME}.service"
+  fi
+
+  echo "Service state:"
+  run_as_root systemctl show \
+    --property=ActiveState \
+    --property=SubState \
+    --property=Result \
+    "${SERVICE_NAME}.service"
 
   echo "Installed ${SERVICE_NAME} from ${SOURCE_LABEL}"
   echo "  Repo:        ${REPO}"
