@@ -102,9 +102,7 @@ pub async fn dev_domain_insight(
     Query(query): Query<DeveloperDomainInsightQuery>,
 ) -> Result<Json<DeveloperDomainInsightResponse>, ApiError> {
     let _ = authorize_dev(&state, &headers).await?;
-    Ok(Json(
-        state.crawler_store.domain_insight(&query.domain).await?,
-    ))
+    Ok(Json(state.crawl_store.domain_insight(&query.domain).await?))
 }
 
 pub async fn dev_submit_domain(
@@ -115,7 +113,7 @@ pub async fn dev_submit_domain(
     let dev = authorize_dev(&state, &headers).await?;
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .submit_domain_urls(&state.default_crawler_owner_id, &dev.user_id, request)
             .await?,
     ))

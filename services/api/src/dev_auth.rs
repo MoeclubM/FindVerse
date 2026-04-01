@@ -108,7 +108,7 @@ impl DevAuthStore {
     pub async fn login(&self, request: DevLoginRequest) -> Result<DevSessionResponse, ApiError> {
         let username = request.username.trim().to_lowercase();
         let record = sqlx::query_as::<_, UserPasswordRow>(
-            "select u.id, u.external_id, u.username, u.enabled, pc.password_hash, pc.password_scheme, pc.password_salt
+            "select u.id, u.external_id, u.username, u.enabled, pc.password_hash, pc.password_scheme
              from users u
              join password_credentials pc on pc.user_id = u.id
              where u.username = $1 and u.role = 'developer'",
@@ -122,12 +122,12 @@ impl DevAuthStore {
         if !record.enabled {
             return Err(ApiError::Unauthorized("account is disabled".to_string()));
         }
-        if !verify_password(
-            &request.password,
-            &record.password_hash,
-            &record.password_scheme,
-            record.password_salt.as_deref(),
-        )? {
+        if record.password_scheme != PASSWORD_SCHEME_ARGON2ID {
+            return Err(ApiError::Conflict(
+                "developer password credential must be migrated before login".to_string(),
+            ));
+        }
+        if !verify_password(&request.password, &record.password_hash)? {
             return Err(ApiError::Unauthorized(
                 "invalid username or password".to_string(),
             ));
@@ -140,7 +140,6 @@ impl DevAuthStore {
             .await
             .map_err(|error| ApiError::Internal(error.into()))?;
 
-        maybe_upgrade_password_tx(&mut tx, &record, &request.password, now).await?;
         let session = create_session_tx(
             &mut tx,
             record.id,
@@ -310,7 +309,6 @@ struct UserPasswordRow {
     enabled: bool,
     password_hash: String,
     password_scheme: String,
-    password_salt: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -325,30 +323,6 @@ struct DevAccountRow {
     username: String,
     created_at: DateTime<Utc>,
     enabled: bool,
-}
-
-async fn maybe_upgrade_password_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    record: &UserPasswordRow,
-    password: &str,
-    now: DateTime<Utc>,
-) -> Result<(), ApiError> {
-    if record.password_scheme == PASSWORD_SCHEME_ARGON2ID {
-        return Ok(());
-    }
-
-    let upgraded_hash = hash_password(password)?;
-    sqlx::query(
-        "update password_credentials set password_hash = $2, password_scheme = $3, password_salt = null, updated_at = $4 where user_id = $1",
-    )
-    .bind(record.id)
-    .bind(upgraded_hash)
-    .bind(PASSWORD_SCHEME_ARGON2ID)
-    .bind(now)
-    .execute(&mut **tx)
-    .await
-    .map_err(|error| ApiError::Internal(error.into()))?;
-    Ok(())
 }
 
 async fn create_session_tx(

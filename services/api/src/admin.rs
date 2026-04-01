@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use crate::{
-    auth_support::{PASSWORD_SCHEME_ARGON2ID, bearer_token, hash_password, verify_password},
+    auth_support::{PASSWORD_SCHEME_ARGON2ID, bearer_token, verify_password},
     error::ApiError,
     models::{AdminLoginRequest, AdminSessionResponse},
     store::{generate_token, hash_token},
@@ -29,7 +29,7 @@ impl AdminAuth {
     ) -> Result<AdminSessionResponse, ApiError> {
         let username = request.username.trim();
         let record = sqlx::query_as::<_, AdminPasswordRow>(
-            "select u.id, u.external_id, u.username, u.enabled, pc.password_hash, pc.password_scheme, pc.password_salt
+            "select u.id, u.external_id, u.username, u.enabled, pc.password_hash, pc.password_scheme
              from users u
              join password_credentials pc on pc.user_id = u.id
              where u.username = $1 and u.role = 'admin'",
@@ -43,12 +43,12 @@ impl AdminAuth {
         if !record.enabled {
             return Err(ApiError::Unauthorized("account is disabled".to_string()));
         }
-        if !verify_password(
-            &request.password,
-            &record.password_hash,
-            &record.password_scheme,
-            record.password_salt.as_deref(),
-        )? {
+        if record.password_scheme != PASSWORD_SCHEME_ARGON2ID {
+            return Err(ApiError::Conflict(
+                "admin password credential must be migrated before login".to_string(),
+            ));
+        }
+        if !verify_password(&request.password, &record.password_hash)? {
             return Err(ApiError::Unauthorized(
                 "invalid username or password".to_string(),
             ));
@@ -61,7 +61,6 @@ impl AdminAuth {
             .await
             .map_err(|error| ApiError::Internal(error.into()))?;
 
-        maybe_upgrade_password_tx(&mut tx, &record, &request.password, now).await?;
         let response = create_admin_session_tx(
             &mut tx,
             record.id,
@@ -127,37 +126,12 @@ struct AdminPasswordRow {
     enabled: bool,
     password_hash: String,
     password_scheme: String,
-    password_salt: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
 struct AuthorizedAdminSessionRow {
     external_id: String,
     username: String,
-}
-
-async fn maybe_upgrade_password_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    record: &AdminPasswordRow,
-    password: &str,
-    now: DateTime<Utc>,
-) -> Result<(), ApiError> {
-    if record.password_scheme == PASSWORD_SCHEME_ARGON2ID {
-        return Ok(());
-    }
-
-    let upgraded_hash = hash_password(password)?;
-    sqlx::query(
-        "update password_credentials set password_hash = $2, password_scheme = $3, password_salt = null, updated_at = $4 where user_id = $1",
-    )
-    .bind(record.id)
-    .bind(upgraded_hash)
-    .bind(PASSWORD_SCHEME_ARGON2ID)
-    .bind(now)
-    .execute(&mut **tx)
-    .await
-    .map_err(|error| ApiError::Internal(error.into()))?;
-    Ok(())
 }
 
 async fn create_admin_session_tx(

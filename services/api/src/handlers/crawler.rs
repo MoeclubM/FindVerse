@@ -19,7 +19,7 @@ pub async fn claim_jobs(
     let capabilities = capabilities_from_headers(&headers);
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .claim_jobs(
                 &crawler_id,
                 crawler_name.as_deref(),
@@ -43,7 +43,7 @@ pub async fn submit_crawl_report(
     let crawler_name = crawler_name_from_headers(&headers);
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .submit_report(
                 &crawler_id,
                 crawler_name.as_deref(),
@@ -66,7 +66,7 @@ pub async fn heartbeat_crawler(
     let capabilities = capabilities_from_headers(&headers);
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .heartbeat_crawler(
                 &crawler_id,
                 crawler_name.as_deref(),

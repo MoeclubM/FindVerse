@@ -23,11 +23,9 @@ impl ServiceKind {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub bind_addr: SocketAddr,
+    pub bind_addr: Option<SocketAddr>,
     pub index_path: PathBuf,
     pub blob_store_dir: PathBuf,
-    pub developer_store_path: PathBuf,
-    pub dev_auth_store_path: PathBuf,
     pub frontend_origin: String,
     pub local_admin_username: String,
     pub local_admin_password: String,
@@ -44,9 +42,13 @@ pub struct Config {
 
 impl Config {
     pub fn from_env(service_kind: ServiceKind) -> anyhow::Result<Self> {
-        let bind_addr = resolve_bind_addr(service_kind)?
-            .parse()
-            .with_context(|| format!("invalid bind address for {}", service_kind.as_str()))?;
+        let bind_addr =
+            match service_kind {
+                ServiceKind::Scheduler => None,
+                _ => Some(resolve_bind_addr(service_kind)?.parse().with_context(|| {
+                    format!("invalid bind address for {}", service_kind.as_str())
+                })?),
+            };
 
         let index_path = env::var("FINDVERSE_INDEX_PATH")
             .map(PathBuf::from)
@@ -55,14 +57,6 @@ impl Config {
         let blob_store_dir = env::var("FINDVERSE_BLOB_STORE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/blobs"));
-
-        let developer_store_path = env::var("FINDVERSE_DEVELOPER_STORE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("services/api/fixtures/developer_store.json"));
-
-        let dev_auth_store_path = env::var("FINDVERSE_DEV_AUTH_STORE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("services/api/fixtures/dev_auth_store.json"));
 
         let frontend_origin = env::var("FINDVERSE_FRONTEND_ORIGIN")
             .unwrap_or_else(|_| "http://localhost:3000".to_string());
@@ -116,8 +110,6 @@ impl Config {
             bind_addr,
             index_path,
             blob_store_dir,
-            developer_store_path,
-            dev_auth_store_path,
             frontend_origin,
             local_admin_username,
             local_admin_password,
@@ -145,9 +137,7 @@ fn resolve_bind_addr(service_kind: ServiceKind) -> anyhow::Result<String> {
         ServiceKind::Task => {
             env::var("FINDVERSE_TASK_API_BIND").unwrap_or_else(|_| "0.0.0.0:8082".to_string())
         }
-        ServiceKind::Scheduler => {
-            env::var("FINDVERSE_SCHEDULER_BIND").unwrap_or_else(|_| "127.0.0.1:0".to_string())
-        }
+        ServiceKind::Scheduler => unreachable!("scheduler does not listen on an HTTP bind address"),
     };
 
     if value.trim().is_empty() {

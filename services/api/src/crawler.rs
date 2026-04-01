@@ -15,12 +15,12 @@ use crate::{
     error::ApiError,
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJobDetail, CrawlJobListResponse,
-        CrawlJobStats, CrawlOverviewResponse, CrawlResultInput, CrawlRule, CrawlerCapabilities,
-        CrawlerMetadata, CreateCrawlRuleRequest, DeveloperDomainDocument, DeveloperDomainFacet,
-        DeveloperDomainInsightResponse, DeveloperDomainJob, DeveloperDomainSubmitRequest,
-        DeveloperDomainSubmitResponse, IndexedDocument, SeedFrontierRequest, SeedFrontierResponse,
-        SubmitCrawlReportRequest, SubmitCrawlReportResponse, UpdateCrawlRuleRequest,
-        UpdateCrawlerRequest,
+        CrawlJobStats, CrawlOriginState, CrawlOverviewResponse, CrawlResultInput, CrawlRule,
+        CrawlerCapabilities, CrawlerMetadata, CreateCrawlRuleRequest, DeveloperDomainDocument,
+        DeveloperDomainFacet, DeveloperDomainInsightResponse, DeveloperDomainJob,
+        DeveloperDomainSubmitRequest, DeveloperDomainSubmitResponse, IndexedDocument,
+        SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
+        SubmitCrawlReportResponse, UpdateCrawlRuleRequest, UpdateCrawlerRequest,
     },
     store::{
         CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, SearchIndex,
@@ -30,11 +30,264 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct CrawlerStore {
+pub(crate) struct CrawlerStore {
     pg_pool: PgPool,
     frontier: FrontierService,
     ingest: IngestService,
     projection: ProjectionRunner,
+}
+
+#[derive(Debug, Clone)]
+pub struct ControlCrawlerStore {
+    inner: CrawlerStore,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskCrawlerStore {
+    inner: CrawlerStore,
+}
+
+#[derive(Debug, Clone)]
+pub struct SchedulerCrawlerStore {
+    inner: CrawlerStore,
+}
+
+impl ControlCrawlerStore {
+    pub fn new(pg_pool: PgPool, blob_store: BlobStore) -> Self {
+        Self {
+            inner: CrawlerStore::new(pg_pool, blob_store),
+        }
+    }
+
+    pub async fn update_crawler(
+        &self,
+        developer_id: &str,
+        crawler_id: &str,
+        request: UpdateCrawlerRequest,
+    ) -> Result<(), ApiError> {
+        self.inner
+            .update_crawler(developer_id, crawler_id, request)
+            .await
+    }
+
+    pub async fn delete_crawler(
+        &self,
+        developer_id: &str,
+        crawler_id: &str,
+    ) -> Result<(), ApiError> {
+        self.inner.delete_crawler(developer_id, crawler_id).await
+    }
+
+    pub async fn get_all_system_config(
+        &self,
+    ) -> Result<Vec<crate::models::SystemConfigEntry>, ApiError> {
+        self.inner.get_all_system_config().await
+    }
+
+    pub async fn set_system_config(
+        &self,
+        key: &str,
+        value: Option<String>,
+    ) -> Result<(), ApiError> {
+        self.inner.set_system_config(key, value).await
+    }
+
+    pub async fn create_rule(
+        &self,
+        developer_id: &str,
+        request: CreateCrawlRuleRequest,
+    ) -> Result<CrawlRule, ApiError> {
+        self.inner.create_rule(developer_id, request).await
+    }
+
+    pub async fn update_rule(
+        &self,
+        developer_id: &str,
+        rule_id: &str,
+        request: UpdateCrawlRuleRequest,
+    ) -> Result<CrawlRule, ApiError> {
+        self.inner.update_rule(developer_id, rule_id, request).await
+    }
+
+    pub async fn delete_rule(&self, developer_id: &str, rule_id: &str) -> Result<(), ApiError> {
+        self.inner.delete_rule(developer_id, rule_id).await
+    }
+
+    pub async fn overview(
+        &self,
+        developer_id: &str,
+        total_documents: usize,
+    ) -> Result<CrawlOverviewResponse, ApiError> {
+        self.inner.overview(developer_id, total_documents).await
+    }
+
+    pub async fn domain_insight(
+        &self,
+        domain: &str,
+    ) -> Result<DeveloperDomainInsightResponse, ApiError> {
+        self.inner.domain_insight(domain).await
+    }
+
+    pub async fn submit_domain_urls(
+        &self,
+        owner_developer_id: &str,
+        submitter_id: &str,
+        request: DeveloperDomainSubmitRequest,
+    ) -> Result<DeveloperDomainSubmitResponse, ApiError> {
+        self.inner
+            .submit_domain_urls(owner_developer_id, submitter_id, request)
+            .await
+    }
+
+    pub async fn seed_frontier(
+        &self,
+        developer_id: &str,
+        request: SeedFrontierRequest,
+    ) -> Result<SeedFrontierResponse, ApiError> {
+        self.inner.seed_frontier(developer_id, request).await
+    }
+
+    pub async fn record_admin_event(
+        &self,
+        developer_id: &str,
+        kind: &str,
+        status: &str,
+        message: String,
+        host: Option<String>,
+        crawler_id: Option<String>,
+    ) -> Result<(), ApiError> {
+        self.inner
+            .record_admin_event(developer_id, kind, status, message, host, crawler_id)
+            .await
+    }
+
+    pub async fn list_jobs(
+        &self,
+        developer_id: &str,
+        status: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<CrawlJobListResponse, ApiError> {
+        self.inner
+            .list_jobs(developer_id, status, limit, offset)
+            .await
+    }
+
+    pub async fn retry_failed_jobs(&self, developer_id: &str) -> Result<usize, ApiError> {
+        self.inner.retry_failed_jobs(developer_id).await
+    }
+
+    pub async fn cleanup_completed_jobs(&self, developer_id: &str) -> Result<usize, ApiError> {
+        self.inner.cleanup_completed_jobs(developer_id).await
+    }
+
+    pub async fn cleanup_failed_jobs(&self, developer_id: &str) -> Result<usize, ApiError> {
+        self.inner.cleanup_failed_jobs(developer_id).await
+    }
+
+    pub async fn stop_all_jobs(&self, developer_id: &str) -> Result<(usize, usize), ApiError> {
+        self.inner.stop_all_jobs(developer_id).await
+    }
+
+    pub async fn job_stats(&self, developer_id: &str) -> Result<CrawlJobStats, ApiError> {
+        self.inner.job_stats(developer_id).await
+    }
+
+    pub async fn list_origins(
+        &self,
+        developer_id: &str,
+    ) -> Result<Vec<CrawlOriginState>, ApiError> {
+        self.inner.list_origins(developer_id).await
+    }
+}
+
+impl TaskCrawlerStore {
+    pub fn new(pg_pool: PgPool, blob_store: BlobStore) -> Self {
+        Self {
+            inner: CrawlerStore::new(pg_pool, blob_store),
+        }
+    }
+
+    pub async fn claim_jobs(
+        &self,
+        crawler_id: &str,
+        crawler_name: Option<&str>,
+        auth_header: Option<&str>,
+        default_owner_developer_id: &str,
+        request: ClaimJobsRequest,
+        capabilities: Option<&CrawlerCapabilities>,
+    ) -> Result<ClaimJobsResponse, ApiError> {
+        self.inner
+            .claim_jobs(
+                crawler_id,
+                crawler_name,
+                auth_header,
+                default_owner_developer_id,
+                request,
+                capabilities,
+            )
+            .await
+    }
+
+    pub async fn submit_report(
+        &self,
+        crawler_id: &str,
+        crawler_name: Option<&str>,
+        auth_header: Option<&str>,
+        default_owner_developer_id: &str,
+        request: SubmitCrawlReportRequest,
+    ) -> Result<SubmitCrawlReportResponse, ApiError> {
+        self.inner
+            .submit_report(
+                crawler_id,
+                crawler_name,
+                auth_header,
+                default_owner_developer_id,
+                request,
+            )
+            .await
+    }
+
+    pub async fn heartbeat_crawler(
+        &self,
+        crawler_id: &str,
+        crawler_name: Option<&str>,
+        auth_header: Option<&str>,
+        default_owner_developer_id: &str,
+        capabilities: Option<&CrawlerCapabilities>,
+    ) -> Result<crate::models::CrawlerHeartbeatResponse, ApiError> {
+        self.inner
+            .heartbeat_crawler(
+                crawler_id,
+                crawler_name,
+                auth_header,
+                default_owner_developer_id,
+                capabilities,
+            )
+            .await
+    }
+}
+
+impl SchedulerCrawlerStore {
+    pub fn new(pg_pool: PgPool, blob_store: BlobStore) -> Self {
+        Self {
+            inner: CrawlerStore::new(pg_pool, blob_store),
+        }
+    }
+
+    pub async fn get_system_config(&self, key: &str) -> Option<String> {
+        self.inner.get_system_config(key).await
+    }
+
+    pub async fn run_maintenance(
+        &self,
+        claim_timeout: Duration,
+        search_index: &SearchIndex,
+    ) -> Result<(), ApiError> {
+        self.inner
+            .run_maintenance(claim_timeout, search_index)
+            .await
+    }
 }
 
 impl CrawlerStore {

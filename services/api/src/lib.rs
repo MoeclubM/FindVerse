@@ -9,6 +9,7 @@ pub mod dev_auth;
 pub mod error;
 pub mod handlers;
 pub mod indexing;
+pub mod migration;
 pub mod models;
 pub mod quality;
 pub mod query;
@@ -25,7 +26,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use config::{Config, ServiceKind};
-use crawler::CrawlerStore;
+use crawler::{ControlCrawlerStore, SchedulerCrawlerStore, TaskCrawlerStore};
 use db::DatabaseBackends;
 use dev_auth::DevAuthStore;
 use sqlx::migrate;
@@ -50,7 +51,7 @@ pub struct QueryState {
 #[derive(Clone)]
 pub struct ControlState {
     pub query: QueryState,
-    pub crawler_store: CrawlerStore,
+    pub crawl_store: ControlCrawlerStore,
     pub admin_auth: AdminAuth,
     pub dev_auth: DevAuthStore,
     pub default_crawler_owner_id: String,
@@ -58,14 +59,14 @@ pub struct ControlState {
 
 #[derive(Clone)]
 pub struct TaskState {
-    pub crawler_store: CrawlerStore,
+    pub crawl_store: TaskCrawlerStore,
     pub db: DatabaseBackends,
     pub default_crawler_owner_id: String,
 }
 
 #[derive(Clone)]
 struct SchedulerState {
-    crawler_store: CrawlerStore,
+    crawl_store: SchedulerCrawlerStore,
     search_index: SearchIndex,
 }
 
@@ -91,10 +92,12 @@ pub async fn run_control_api() -> anyhow::Result<()> {
     );
     info!(
         service = ServiceKind::Control.as_str(),
-        "findverse api listening on {}", config.bind_addr
+        "findverse api listening on {}",
+        config.bind_addr.expect("control-api bind addr")
     );
 
-    let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
+    let listener =
+        tokio::net::TcpListener::bind(config.bind_addr.expect("control-api bind addr")).await?;
     axum::serve(listener, build_control_router(&config, state)).await?;
 
     Ok(())
@@ -114,10 +117,12 @@ pub async fn run_task_api() -> anyhow::Result<()> {
     );
     info!(
         service = ServiceKind::Task.as_str(),
-        "findverse api listening on {}", config.bind_addr
+        "findverse api listening on {}",
+        config.bind_addr.expect("task-api bind addr")
     );
 
-    let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
+    let listener =
+        tokio::net::TcpListener::bind(config.bind_addr.expect("task-api bind addr")).await?;
     axum::serve(listener, build_task_router(state)).await?;
 
     Ok(())
@@ -138,10 +143,12 @@ pub async fn run_query_api() -> anyhow::Result<()> {
     );
     info!(
         service = ServiceKind::Query.as_str(),
-        "findverse api listening on {}", config.bind_addr
+        "findverse api listening on {}",
+        config.bind_addr.expect("query-api bind addr")
     );
 
-    let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
+    let listener =
+        tokio::net::TcpListener::bind(config.bind_addr.expect("query-api bind addr")).await?;
     axum::serve(listener, build_query_router(&config, state)).await?;
 
     Ok(())
@@ -168,14 +175,14 @@ pub async fn run_scheduler() -> anyhow::Result<()> {
     loop {
         ticker.tick().await;
         let timeout_secs = state
-            .crawler_store
+            .crawl_store
             .get_system_config("crawler.claim_timeout_secs")
             .await
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(default_claim_timeout_secs);
         let claim_timeout = Duration::from_secs(timeout_secs.max(1));
         if let Err(error) = state
-            .crawler_store
+            .crawl_store
             .run_maintenance(claim_timeout, &state.search_index)
             .await
         {
@@ -241,7 +248,7 @@ async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState
             developer_store: DeveloperStore::new(db.pg_pool.clone()),
             db: db.clone(),
         },
-        crawler_store: CrawlerStore::new(db.pg_pool.clone(), blob_store),
+        crawl_store: ControlCrawlerStore::new(db.pg_pool.clone(), blob_store),
         admin_auth: AdminAuth::new(db.pg_pool.clone()),
         dev_auth: DevAuthStore::new(db.pg_pool.clone()),
         default_crawler_owner_id: format!("local:{}", config.local_admin_username),
@@ -254,7 +261,7 @@ async fn bootstrap_task_state(config: &Config) -> anyhow::Result<TaskState> {
     blob_store.ensure_ready().await?;
 
     Ok(TaskState {
-        crawler_store: CrawlerStore::new(db.pg_pool.clone(), blob_store),
+        crawl_store: TaskCrawlerStore::new(db.pg_pool.clone(), blob_store),
         db,
         default_crawler_owner_id: format!("local:{}", config.local_admin_username),
     })
@@ -274,7 +281,7 @@ async fn bootstrap_scheduler_state(config: &Config) -> anyhow::Result<SchedulerS
     .await?;
 
     Ok(SchedulerState {
-        crawler_store: CrawlerStore::new(db.pg_pool.clone(), blob_store),
+        crawl_store: SchedulerCrawlerStore::new(db.pg_pool.clone(), blob_store),
         search_index,
     })
 }

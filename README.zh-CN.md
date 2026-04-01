@@ -45,6 +45,8 @@ docker compose up -d --build
 
 主站数据会持久化到 `./data`，Docker 在启动时会自动创建这些目录。
 
+旧版 `dev_auth_store.json` 和 `developer_store.json` 不再在启动时自动导入。如果你还保留这两份旧数据，先执行 `findverse-control-api migrate-legacy --dev-auth-store <路径> --developer-store <路径>`，再启动新主站。
+
 ## 爬虫节点
 
 先在 `/console -> Settings` 设置一组共享 crawler 认证密钥，然后直接从 GitHub 安装或更新 crawler：

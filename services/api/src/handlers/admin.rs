@@ -87,7 +87,7 @@ pub async fn admin_create_developer_key(
         .create_developer_key(&user_id, request)
         .await?;
     state
-        .crawler_store
+        .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
             "developer-api-key-created",
@@ -112,7 +112,7 @@ pub async fn admin_revoke_developer_key(
         .revoke_developer_key(&user_id, &key_id)
         .await?;
     state
-        .crawler_store
+        .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
             "developer-api-key-revoked",
@@ -133,7 +133,7 @@ pub async fn admin_update_crawler(
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     state
-        .crawler_store
+        .crawl_store
         .update_crawler(&state.default_crawler_owner_id, &id, request)
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -146,7 +146,7 @@ pub async fn admin_delete_crawler(
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     state
-        .crawler_store
+        .crawl_store
         .delete_crawler(&state.default_crawler_owner_id, &id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -160,7 +160,7 @@ pub async fn admin_seed_frontier(
     let _admin = authorize_admin(&state, &headers).await?;
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .seed_frontier(&state.default_crawler_owner_id, request)
             .await?,
     ))
@@ -173,7 +173,7 @@ pub async fn admin_crawl_overview(
     let _admin = authorize_admin(&state, &headers).await?;
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .overview(
                 &state.default_crawler_owner_id,
                 state.query.search_index.total_documents().await,
@@ -189,7 +189,7 @@ pub async fn admin_create_rule(
 ) -> Result<impl IntoResponse, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     let created = state
-        .crawler_store
+        .crawl_store
         .create_rule(&state.default_crawler_owner_id, request)
         .await?;
     Ok((StatusCode::CREATED, Json(created)))
@@ -204,7 +204,7 @@ pub async fn admin_update_rule(
     let _admin = authorize_admin(&state, &headers).await?;
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .update_rule(&state.default_crawler_owner_id, &id, request)
             .await?,
     ))
@@ -217,7 +217,7 @@ pub async fn admin_delete_rule(
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     state
-        .crawler_store
+        .crawl_store
         .delete_rule(&state.default_crawler_owner_id, &id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -244,7 +244,7 @@ pub async fn admin_delete_document(
     }
 
     state
-        .crawler_store
+        .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
             "document-deleted",
@@ -265,7 +265,7 @@ pub async fn admin_purge_site(
     let _admin = authorize_admin(&state, &headers).await?;
     let response = state.query.search_index.purge_site(&request.site).await?;
     state
-        .crawler_store
+        .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
             "site-purged",
@@ -286,7 +286,7 @@ pub async fn admin_list_system_config(
     headers: HeaderMap,
 ) -> Result<Json<SystemConfigResponse>, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
-    let entries = state.crawler_store.get_all_system_config().await?;
+    let entries = state.crawl_store.get_all_system_config().await?;
     Ok(Json(SystemConfigResponse { entries }))
 }
 
@@ -327,7 +327,7 @@ pub async fn admin_set_system_config(
         }
     }
     state
-        .crawler_store
+        .crawl_store
         .set_system_config(&key, body.value)
         .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -411,7 +411,7 @@ pub async fn admin_delete_developer(
     let _admin = authorize_admin(&state, &headers).await?;
     state.dev_auth.delete_account(&user_id).await?;
     state
-        .crawler_store
+        .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
             "developer-deleted",
@@ -434,7 +434,7 @@ pub async fn admin_list_jobs(
     let offset = params.offset as i64;
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .list_jobs(
                 &state.default_crawler_owner_id,
                 params.status.as_deref(),
@@ -452,7 +452,7 @@ pub async fn admin_job_stats(
     let _admin = authorize_admin(&state, &headers).await?;
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .job_stats(&state.default_crawler_owner_id)
             .await?,
     ))
@@ -465,7 +465,7 @@ pub async fn admin_list_origins(
     let _admin = authorize_admin(&state, &headers).await?;
     Ok(Json(
         state
-            .crawler_store
+            .crawl_store
             .list_origins(&state.default_crawler_owner_id)
             .await?,
     ))
@@ -477,9 +477,7 @@ pub async fn admin_domain_insight(
     Query(query): Query<DeveloperDomainInsightQuery>,
 ) -> Result<Json<DeveloperDomainInsightResponse>, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
-    Ok(Json(
-        state.crawler_store.domain_insight(&query.domain).await?,
-    ))
+    Ok(Json(state.crawl_store.domain_insight(&query.domain).await?))
 }
 
 pub async fn admin_retry_failed_jobs(
@@ -488,7 +486,7 @@ pub async fn admin_retry_failed_jobs(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     let count = state
-        .crawler_store
+        .crawl_store
         .retry_failed_jobs(&state.default_crawler_owner_id)
         .await?;
     Ok(Json(serde_json::json!({ "retried": count })))
@@ -500,7 +498,7 @@ pub async fn admin_cleanup_completed_jobs(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     let count = state
-        .crawler_store
+        .crawl_store
         .cleanup_completed_jobs(&state.default_crawler_owner_id)
         .await?;
     Ok(Json(serde_json::json!({ "cleaned": count })))
@@ -512,7 +510,7 @@ pub async fn admin_cleanup_failed_jobs(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     let count = state
-        .crawler_store
+        .crawl_store
         .cleanup_failed_jobs(&state.default_crawler_owner_id)
         .await?;
     Ok(Json(serde_json::json!({ "cleaned": count })))
@@ -524,7 +522,7 @@ pub async fn admin_stop_all_jobs(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     let (disabled_rules, removed_jobs) = state
-        .crawler_store
+        .crawl_store
         .stop_all_jobs(&state.default_crawler_owner_id)
         .await?;
     Ok(Json(serde_json::json!({

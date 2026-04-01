@@ -79,10 +79,6 @@ fn build_fetch_client(
 // Worker loop
 // ---------------------------------------------------------------------------
 pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::Result<()> {
-    if config.stealth_ua {
-        warn!("--stealth-ua is ignored; FindVerse now always crawls with the public bot identity");
-    }
-
     let clearnet_clients = NetworkClients {
         page: build_fetch_client(proxy.as_deref(), Duration::from_secs(30), false)?,
         meta: build_fetch_client(proxy.as_deref(), Duration::from_secs(30), true)?,

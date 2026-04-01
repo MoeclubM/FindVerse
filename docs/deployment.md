@@ -41,6 +41,20 @@ Main service data is persisted under:
 
 After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false` in `.env` and run the same compose command again.
 
+## Legacy Data Migration
+
+Legacy developer JSON stores are no longer imported automatically during startup.
+
+If you still have the old auth store and developer store files, run the migration explicitly before starting the new stack:
+
+```bash
+findverse-control-api migrate-legacy \
+  --dev-auth-store /path/to/dev_auth_store.json \
+  --developer-store /path/to/developer_store.json
+```
+
+The command connects to `FINDVERSE_POSTGRES_URL`, imports developer records, rewrites non-argon passwords into fresh temporary passwords, and prints the generated temporary credentials as JSON. Legacy sessions are not migrated.
+
 ## Crawler Workers
 
 Crawler workers are host services, not Docker services.

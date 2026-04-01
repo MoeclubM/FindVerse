@@ -984,7 +984,9 @@ name = "findverse-control-api"
 version = "0.0.11"
 dependencies = [
  "anyhow",
+ "clap",
  "findverse-api",
+ "serde_json",
  "tokio",
 ]
 

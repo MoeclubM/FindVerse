@@ -36,7 +36,7 @@
 ## Design defaults for this phase
 
 - Keep authentication simple.
-- Keep control-plane bootstrap imports and admin/developer seed logic inside `control-api`.
+- Keep runtime auth on `argon2id` only. Legacy JSON stores and legacy password hashes are migrated explicitly, not auto-imported at startup.
 - Keep crawler task traffic out of `control-api`; it belongs to `task-api`.
 - Keep maintenance and staged ingest projection inside `scheduler`.
 - Keep local filesystem blob storage as the only blob backend for now.

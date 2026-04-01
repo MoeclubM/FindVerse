@@ -14,11 +14,7 @@ COPY services/scheduler/Cargo.toml services/scheduler/Cargo.toml
 COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
-COPY services/control-api/src services/control-api/src
 COPY services/query-api services/query-api
-COPY services/task-api/src services/task-api/src
-COPY services/scheduler/src services/scheduler/src
-COPY services/crawler/src services/crawler/src
 
 RUN cargo build --release -p findverse-query-api
 

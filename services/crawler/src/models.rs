@@ -91,9 +91,6 @@ pub enum Command {
         /// Number of body characters sent to the LLM
         #[arg(long, default_value_t = 6000)]
         llm_max_body_chars: usize,
-        /// Deprecated compatibility flag. FindVerse now always uses the public crawler UA.
-        #[arg(long, default_value_t = false)]
-        stealth_ua: bool,
     },
 }
 
@@ -279,8 +276,6 @@ pub struct WorkerConfig {
     pub allowed_domains: Vec<String>,
     pub tor_socks_url: Option<String>,
     pub llm_filter: Option<LlmFilterConfig>,
-    #[allow(dead_code)]
-    pub stealth_ua: bool,
     pub capabilities: CrawlerCapabilities,
 }
 

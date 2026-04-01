@@ -9,7 +9,6 @@ mod url_normalize;
 mod worker;
 
 use clap::Parser;
-use tracing::warn;
 
 use models::{Cli, Command, CrawlerCapabilities, LlmFilterConfig, WorkerConfig};
 
@@ -55,15 +54,9 @@ async fn main() -> anyhow::Result<()> {
             llm_model,
             llm_min_score,
             llm_max_body_chars,
-            stealth_ua,
         } => {
-            if stealth_ua {
-                warn!(
-                    "--stealth-ua is deprecated and ignored; FindVerse always identifies as a public crawler now"
-                );
-            }
             if max_jobs != concurrency {
-                warn!(
+                tracing::warn!(
                     "--max-jobs is ignored; claim batch now follows heartbeat-delivered worker concurrency"
                 );
             }
@@ -109,7 +102,6 @@ async fn main() -> anyhow::Result<()> {
                     }),
                     _ => None,
                 },
-                stealth_ua,
                 capabilities: CrawlerCapabilities {
                     js_render: js_capable,
                 },

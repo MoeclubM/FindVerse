@@ -45,6 +45,8 @@ docker compose up -d --build
 
 Main service data is persisted under `./data` and will be created automatically by Docker when the stack starts.
 
+Legacy developer JSON stores are no longer auto-imported during startup. If you still have the old `dev_auth_store.json` and `developer_store.json`, run `findverse-control-api migrate-legacy --dev-auth-store <path> --developer-store <path>` before starting the new stack.
+
 ## Crawler Worker
 
 Set one shared crawler auth key in `/console -> Settings`, then install or update a crawler worker directly from GitHub:

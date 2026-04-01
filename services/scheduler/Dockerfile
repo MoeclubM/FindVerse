@@ -14,11 +14,7 @@ COPY services/scheduler/Cargo.toml services/scheduler/Cargo.toml
 COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
-COPY services/control-api/src services/control-api/src
-COPY services/query-api/src services/query-api/src
-COPY services/task-api/src services/task-api/src
 COPY services/scheduler services/scheduler
-COPY services/crawler/src services/crawler/src
 
 RUN cargo build --release -p findverse-scheduler
 
@@ -29,7 +25,6 @@ USER 0
 COPY --from=builder /app/target/release/findverse-scheduler /usr/local/bin/findverse-scheduler
 COPY services/api/migrations /app/migrations
 
-ENV FINDVERSE_SCHEDULER_BIND=127.0.0.1:0
 ENV FINDVERSE_POSTGRES_URL=postgres://findverse:findverse@postgres:5432/findverse
 ENV FINDVERSE_REDIS_URL=redis://valkey:6379/0
 ENV FINDVERSE_OPENSEARCH_URL=http://opensearch:9200

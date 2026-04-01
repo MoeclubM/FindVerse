@@ -19,7 +19,7 @@ impl ProjectionRunner {
         Self { ingest, blob_store }
     }
 
-    pub async fn drain(
+    pub(crate) async fn drain(
         &self,
         crawler_store: &CrawlerStore,
         search_index: &SearchIndex,

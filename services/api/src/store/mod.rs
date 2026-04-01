@@ -4,13 +4,10 @@ pub mod search;
 pub use developer::DeveloperStore;
 pub use search::SearchIndex;
 
-use std::path::PathBuf;
-
 pub use findverse_common::{
     CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, content_hash,
     derive_terms, display_url, extract_host, normalize_url, stable_document_id, word_count,
 };
-use tokio::fs;
 
 use crate::error::ApiError;
 
@@ -40,30 +37,6 @@ pub(crate) fn generate_token(prefix: &str) -> String {
         .map(char::from)
         .collect::<String>();
     format!("{prefix}_{secret}")
-}
-
-pub(crate) async fn ensure_file_with_fallbacks(
-    path: &PathBuf,
-    default_contents: &str,
-    fallbacks: &[PathBuf],
-) -> anyhow::Result<()> {
-    if fs::metadata(path).await.is_ok() {
-        return Ok(());
-    }
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-
-    for fallback in fallbacks {
-        if fallback != path && fs::metadata(fallback).await.is_ok() {
-            fs::copy(fallback, path).await?;
-            return Ok(());
-        }
-    }
-
-    fs::write(path, default_contents).await?;
-    Ok(())
 }
 
 #[cfg(test)]

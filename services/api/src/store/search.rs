@@ -24,8 +24,6 @@ use crate::{
     },
 };
 
-use super::ensure_file_with_fallbacks;
-
 #[derive(Debug, Clone)]
 pub struct SearchIndex {
     pg_pool: PgPool,
@@ -65,15 +63,9 @@ impl SearchIndex {
     }
 
     pub async fn bootstrap_from_path(&self, path: PathBuf) -> anyhow::Result<()> {
-        ensure_file_with_fallbacks(
-            &path,
-            "[]",
-            &[
-                PathBuf::from("/opt/findverse/bootstrap_documents.json"),
-                PathBuf::from("services/api/fixtures/bootstrap_documents.json"),
-            ],
-        )
-        .await?;
+        if tokio::fs::metadata(&path).await.is_err() {
+            return Ok(());
+        }
 
         let raw = tokio::fs::read_to_string(&path)
             .await
