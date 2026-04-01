@@ -15,24 +15,25 @@ COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
 COPY services/control-api/src services/control-api/src
-COPY services/query-api services/query-api
-COPY services/task-api/src services/task-api/src
+COPY services/query-api/src services/query-api/src
+COPY services/task-api services/task-api
 COPY services/scheduler/src services/scheduler/src
 COPY services/crawler/src services/crawler/src
 
-RUN cargo build --release -p findverse-query-api
+RUN cargo build --release -p findverse-task-api
 
 FROM quay.io/fedora/fedora:43 AS runner
 WORKDIR /app
 USER 0
 
-COPY --from=builder /app/target/release/findverse-query-api /usr/local/bin/findverse-query-api
+COPY --from=builder /app/target/release/findverse-task-api /usr/local/bin/findverse-task-api
 COPY services/api/migrations /app/migrations
 
-ENV FINDVERSE_QUERY_API_BIND=0.0.0.0:8081
+ENV FINDVERSE_TASK_API_BIND=0.0.0.0:8082
 ENV FINDVERSE_POSTGRES_URL=postgres://findverse:findverse@postgres:5432/findverse
 ENV FINDVERSE_REDIS_URL=redis://valkey:6379/0
 ENV FINDVERSE_OPENSEARCH_URL=http://opensearch:9200
+ENV FINDVERSE_BLOB_STORE_DIR=/var/lib/findverse/blobs
 
-EXPOSE 8081
-ENTRYPOINT ["/usr/local/bin/findverse-query-api"]
+EXPOSE 8082
+ENTRYPOINT ["/usr/local/bin/findverse-task-api"]

@@ -3,7 +3,6 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use findverse_common::{DiscoveryScope, host_matches_scope, origin_key};
 use sqlx::PgPool;
-use tracing::error;
 use uuid::Uuid;
 
 use crate::{
@@ -1136,7 +1135,6 @@ impl CrawlerStore {
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
         request: SubmitCrawlReportRequest,
-        search_index: &SearchIndex,
     ) -> Result<SubmitCrawlReportResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
 
@@ -1182,14 +1180,6 @@ impl CrawlerStore {
             .frontier
             .frontier_depth(&crawler.owner_developer_id)
             .await;
-
-        let worker = self.clone();
-        let index = search_index.clone();
-        tokio::spawn(async move {
-            if let Err(error) = worker.process_pending_ingests(&index, 64).await {
-                error!(?error, "staged crawl projection pass failed");
-            }
-        });
 
         Ok(SubmitCrawlReportResponse {
             lease_id,

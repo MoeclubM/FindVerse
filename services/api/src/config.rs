@@ -6,6 +6,7 @@ use anyhow::Context;
 pub enum ServiceKind {
     Control,
     Query,
+    Task,
 }
 
 impl ServiceKind {
@@ -13,6 +14,7 @@ impl ServiceKind {
         match self {
             Self::Control => "control-api",
             Self::Query => "query-api",
+            Self::Task => "task-api",
         }
     }
 }
@@ -137,6 +139,9 @@ fn resolve_bind_addr(service_kind: ServiceKind) -> anyhow::Result<String> {
         }
         ServiceKind::Query => {
             env::var("FINDVERSE_QUERY_API_BIND").unwrap_or_else(|_| "0.0.0.0:8081".to_string())
+        }
+        ServiceKind::Task => {
+            env::var("FINDVERSE_TASK_API_BIND").unwrap_or_else(|_| "0.0.0.0:8082".to_string())
         }
     };
 

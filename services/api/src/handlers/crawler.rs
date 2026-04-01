@@ -1,7 +1,7 @@
 use axum::{Json, extract::State, http::HeaderMap};
 
 use crate::{
-    ControlState,
+    TaskState,
     error::ApiError,
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlerCapabilities, CrawlerHeartbeatResponse,
@@ -10,7 +10,7 @@ use crate::{
 };
 
 pub async fn claim_jobs(
-    State(state): State<ControlState>,
+    State(state): State<TaskState>,
     headers: HeaderMap,
     Json(request): Json<ClaimJobsRequest>,
 ) -> Result<Json<ClaimJobsResponse>, ApiError> {
@@ -35,7 +35,7 @@ pub async fn claim_jobs(
 }
 
 pub async fn submit_crawl_report(
-    State(state): State<ControlState>,
+    State(state): State<TaskState>,
     headers: HeaderMap,
     Json(request): Json<SubmitCrawlReportRequest>,
 ) -> Result<Json<SubmitCrawlReportResponse>, ApiError> {
@@ -52,14 +52,13 @@ pub async fn submit_crawl_report(
                     .and_then(|value| value.to_str().ok()),
                 &state.default_crawler_owner_id,
                 request,
-                &state.query.search_index,
             )
             .await?,
     ))
 }
 
 pub async fn heartbeat_crawler(
-    State(state): State<ControlState>,
+    State(state): State<TaskState>,
     headers: HeaderMap,
 ) -> Result<Json<CrawlerHeartbeatResponse>, ApiError> {
     let crawler_id = crawler_id_from_headers(&headers)?;

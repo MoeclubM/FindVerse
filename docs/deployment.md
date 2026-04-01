@@ -9,6 +9,8 @@ Main services:
 - `opensearch`
 - `control-api`
 - `query-api`
+- `task-api`
+- `scheduler`
 - `web`
 
 Use one compose file and one `.env` file for both online deployment and long-lived development.
@@ -73,7 +75,7 @@ Recommended topology:
 - one Linux host for the main Docker stack
 - one or more Linux hosts for crawler workers
 - only `web` exposed publicly
-- `postgres`, `valkey`, `opensearch`, `control-api`, and `query-api` kept on private bind addresses
+- `postgres`, `valkey`, `opensearch`, `control-api`, `query-api`, and `task-api` kept on private bind addresses
 
 Main stack:
 
@@ -115,7 +117,7 @@ rm -rf data/postgres data/valkey data/opensearch
 It:
 
 - validates Rust tests and web typecheck
-- builds Linux release binaries for `control-api`, `query-api`, and `crawler`
+- builds Linux release binaries for `control-api`, `query-api`, `task-api`, `scheduler`, and `crawler`
 - creates a GitHub Release with binary artifacts
 
 Release example:

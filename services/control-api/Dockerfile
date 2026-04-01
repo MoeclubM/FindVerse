@@ -9,11 +9,15 @@ COPY crates/findverse-common/Cargo.toml crates/findverse-common/Cargo.toml
 COPY services/api/Cargo.toml services/api/Cargo.toml
 COPY services/control-api/Cargo.toml services/control-api/Cargo.toml
 COPY services/query-api/Cargo.toml services/query-api/Cargo.toml
+COPY services/task-api/Cargo.toml services/task-api/Cargo.toml
+COPY services/scheduler/Cargo.toml services/scheduler/Cargo.toml
 COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
 COPY services/control-api services/control-api
 COPY services/query-api/src services/query-api/src
+COPY services/task-api/src services/task-api/src
+COPY services/scheduler/src services/scheduler/src
 COPY services/crawler/src services/crawler/src
 
 RUN cargo build --release -p findverse-control-api

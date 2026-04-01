@@ -7,6 +7,8 @@ servers:
     description: query-api
   - url: http://localhost:8080
     description: control-api
+  - url: http://localhost:8082
+    description: task-api
 
 paths:
   /healthz:
@@ -439,7 +441,7 @@ paths:
 
   /internal/crawlers/claim:
     post:
-      summary: Claim crawl jobs
+      summary: Claim crawl jobs on task-api
       parameters:
         - in: header
           name: x-crawler-id
@@ -457,7 +459,7 @@ paths:
 
   /internal/crawlers/report:
     post:
-      summary: Report crawl results
+      summary: Report crawl results on task-api
       parameters:
         - in: header
           name: x-crawler-id
@@ -472,3 +474,21 @@ paths:
       responses:
         "200":
           description: Report accepted
+
+  /internal/crawlers/heartbeat:
+    post:
+      summary: Sync crawler runtime config on task-api
+      parameters:
+        - in: header
+          name: x-crawler-id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: Authorization
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Heartbeat accepted

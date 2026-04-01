@@ -53,8 +53,20 @@ pub struct ControlState {
     pub crawler_store: CrawlerStore,
     pub admin_auth: AdminAuth,
     pub dev_auth: DevAuthStore,
-    pub crawler_claim_timeout_secs: u64,
     pub default_crawler_owner_id: String,
+}
+
+#[derive(Clone)]
+pub struct TaskState {
+    pub crawler_store: CrawlerStore,
+    pub db: DatabaseBackends,
+    pub default_crawler_owner_id: String,
+}
+
+#[derive(Clone)]
+struct SchedulerState {
+    crawler_store: CrawlerStore,
+    search_index: SearchIndex,
 }
 
 impl FromRef<ControlState> for QueryState {
@@ -68,7 +80,6 @@ pub async fn run_control_api() -> anyhow::Result<()> {
 
     let config = Config::from_env(ServiceKind::Control)?;
     let state = bootstrap_control_state(&config).await?;
-    spawn_maintenance_loop(state.clone(), &config);
 
     info!(
         service = ServiceKind::Control.as_str(),
@@ -85,6 +96,29 @@ pub async fn run_control_api() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     axum::serve(listener, build_control_router(&config, state)).await?;
+
+    Ok(())
+}
+
+pub async fn run_task_api() -> anyhow::Result<()> {
+    init_tracing();
+
+    let config = Config::from_env(ServiceKind::Task)?;
+    let state = bootstrap_task_state(&config).await?;
+
+    info!(
+        service = ServiceKind::Task.as_str(),
+        postgres_url = %config.postgres_url,
+        redis_url = %config.redis_url,
+        "findverse backends ready"
+    );
+    info!(
+        service = ServiceKind::Task.as_str(),
+        "findverse api listening on {}", config.bind_addr
+    );
+
+    let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
+    axum::serve(listener, build_task_router(state)).await?;
 
     Ok(())
 }
@@ -111,6 +145,43 @@ pub async fn run_query_api() -> anyhow::Result<()> {
     axum::serve(listener, build_query_router(&config, state)).await?;
 
     Ok(())
+}
+
+pub async fn run_scheduler() -> anyhow::Result<()> {
+    init_tracing();
+
+    let config = Config::from_env(ServiceKind::Control)?;
+    let state = bootstrap_scheduler_state(&config).await?;
+    let maintenance_interval = Duration::from_secs(config.crawler_maintenance_interval_secs.max(1));
+    let default_claim_timeout_secs = config.crawler_claim_timeout_secs;
+
+    info!(
+        service = "scheduler",
+        postgres_url = %config.postgres_url,
+        redis_url = %config.redis_url,
+        opensearch_url = %config.opensearch_url,
+        interval_secs = maintenance_interval.as_secs(),
+        "findverse scheduler ready"
+    );
+
+    let mut ticker = tokio::time::interval(maintenance_interval);
+    loop {
+        ticker.tick().await;
+        let timeout_secs = state
+            .crawler_store
+            .get_system_config("crawler.claim_timeout_secs")
+            .await
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(default_claim_timeout_secs);
+        let claim_timeout = Duration::from_secs(timeout_secs.max(1));
+        if let Err(error) = state
+            .crawler_store
+            .run_maintenance(claim_timeout, &state.search_index)
+            .await
+        {
+            error!(?error, "scheduler maintenance pass failed");
+        }
+    }
 }
 
 fn init_tracing() {
@@ -173,50 +244,39 @@ async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState
         crawler_store: CrawlerStore::new(db.pg_pool.clone(), blob_store),
         admin_auth: AdminAuth::new(db.pg_pool.clone()),
         dev_auth: DevAuthStore::new(db.pg_pool.clone()),
-        crawler_claim_timeout_secs: config.crawler_claim_timeout_secs.max(1),
         default_crawler_owner_id: format!("local:{}", config.local_admin_username),
     })
 }
 
-fn spawn_maintenance_loop(state: ControlState, config: &Config) {
-    let maintenance_interval = Duration::from_secs(config.crawler_maintenance_interval_secs.max(1));
-    let default_claim_timeout_secs = config.crawler_claim_timeout_secs;
+async fn bootstrap_task_state(config: &Config) -> anyhow::Result<TaskState> {
+    let db = connect_backends(config).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_store_dir.clone());
+    blob_store.ensure_ready().await?;
 
-    tokio::spawn(async move {
-        let timeout_secs = state
-            .crawler_store
-            .get_system_config("crawler.claim_timeout_secs")
-            .await
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(default_claim_timeout_secs);
-        let claim_timeout = Duration::from_secs(timeout_secs.max(1));
-        if let Err(error) = state
-            .crawler_store
-            .run_maintenance(claim_timeout, &state.query.search_index)
-            .await
-        {
-            error!(?error, "initial crawler maintenance pass failed");
-        }
+    Ok(TaskState {
+        crawler_store: CrawlerStore::new(db.pg_pool.clone(), blob_store),
+        db,
+        default_crawler_owner_id: format!("local:{}", config.local_admin_username),
+    })
+}
 
-        let mut ticker = tokio::time::interval(maintenance_interval);
-        loop {
-            ticker.tick().await;
-            let timeout_secs = state
-                .crawler_store
-                .get_system_config("crawler.claim_timeout_secs")
-                .await
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(default_claim_timeout_secs);
-            let claim_timeout = Duration::from_secs(timeout_secs.max(1));
-            if let Err(error) = state
-                .crawler_store
-                .run_maintenance(claim_timeout, &state.query.search_index)
-                .await
-            {
-                error!(?error, "crawler maintenance pass failed");
-            }
-        }
-    });
+async fn bootstrap_scheduler_state(config: &Config) -> anyhow::Result<SchedulerState> {
+    let db = connect_backends(config).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_store_dir.clone());
+    blob_store.ensure_ready().await?;
+    let search_index = SearchIndex::connect(
+        db.pg_pool.clone(),
+        config.opensearch_url.clone(),
+        config.opensearch_index.clone(),
+        config.blob_store_dir.clone(),
+        db.redis_client.clone(),
+    )
+    .await?;
+
+    Ok(SchedulerState {
+        crawler_store: CrawlerStore::new(db.pg_pool.clone(), blob_store),
+        search_index,
+    })
 }
 
 fn build_query_router(config: &Config, state: QueryState) -> Router {
@@ -362,6 +422,15 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             patch(handlers::admin::admin_update_developer)
                 .delete(handlers::admin::admin_delete_developer),
         )
+        .layer(shared_cors(config))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+fn build_task_router(state: TaskState) -> Router {
+    Router::new()
+        .route("/healthz", get(handlers::task::healthz))
+        .route("/readyz", get(handlers::task::readyz))
         .route(
             "/internal/crawlers/claim",
             post(handlers::crawler::claim_jobs),
@@ -374,7 +443,6 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             "/internal/crawlers/heartbeat",
             post(handlers::crawler::heartbeat_crawler),
         )
-        .layer(shared_cors(config))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-FindVerse is a self-hosted search stack with a split control plane, query API, web UI, and independent crawler workers. It is designed to stay easy to deploy on a single machine while keeping the crawler and indexing pipeline extensible.
+FindVerse is a self-hosted search stack with a split control plane, task API, scheduler, query API, web UI, and independent crawler workers. It is designed to stay easy to deploy on a single machine while keeping the crawler and indexing pipeline extensible.
 
 ## Highlights
 
@@ -16,8 +16,10 @@ FindVerse is a self-hosted search stack with a split control plane, query API, w
 ## Repository Layout
 
 - `apps/web`: React SPA for `/`, `/dev`, and `/console`
-- `services/control-api`: admin, developer, crawler control, frontier, jobs, rules, and documents
+- `services/control-api`: admin, developer, rules, jobs, and documents management
 - `services/query-api`: public search, suggest, and developer search
+- `services/task-api`: crawler claim/report/heartbeat entrypoint and task-plane write side
+- `services/scheduler`: maintenance loop and staged ingest projection runner
 - `services/crawler`: crawler worker and local crawl tooling
 - `services/api`: shared backend library used by the split APIs
 
@@ -64,6 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/ins
 ## Development Notes
 
 - Main stack deployment is `docker compose up -d --build`
+- Crawler traffic enters through `web -> task-api`; admin and developer traffic enter through `web -> control-api`
 - Crawler nodes are intended to run as host services, not inside the main production compose stack
 - Current CI only runs regular validation from `.github/workflows/_validate.yml`
 - A separate workflow builds the crawler development artifact used by `install-crawler.sh --channel dev`

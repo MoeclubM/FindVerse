@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -194,15 +192,6 @@ pub async fn admin_create_rule(
         .crawler_store
         .create_rule(&state.default_crawler_owner_id, request)
         .await?;
-    if created.enabled {
-        state
-            .crawler_store
-            .run_maintenance(
-                Duration::from_secs(state.crawler_claim_timeout_secs),
-                &state.query.search_index,
-            )
-            .await?;
-    }
     Ok((StatusCode::CREATED, Json(created)))
 }
 

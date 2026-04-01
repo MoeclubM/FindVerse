@@ -4,6 +4,8 @@ members = [
   "services/api",
   "services/control-api",
   "services/query-api",
+  "services/task-api",
+  "services/scheduler",
   "services/crawler",
 ]
 resolver = "2"

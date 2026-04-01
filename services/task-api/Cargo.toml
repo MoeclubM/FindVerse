@@ -1,0 +1,10 @@
+[package]
+name = "findverse-task-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+findverse-api = { path = "../api" }
+tokio.workspace = true

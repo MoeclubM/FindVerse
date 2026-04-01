@@ -109,6 +109,58 @@ services:
       - ./data/blobs:/var/lib/findverse/blobs
     mem_limit: ${FINDVERSE_QUERY_API_MEM_LIMIT:-512m}
 
+  task-api:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-task-api:${FINDVERSE_IMAGE_TAG:-dev}
+    build:
+      context: .
+      dockerfile: services/task-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - valkey
+      - opensearch
+    environment:
+      FINDVERSE_TASK_API_BIND: ${FINDVERSE_TASK_API_BIND:-0.0.0.0:8082}
+      FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
+      FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
+      FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS: ${FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS:-5}
+      FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
+      FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
+      FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
+      FINDVERSE_BLOB_STORE_DIR: ${FINDVERSE_BLOB_STORE_DIR:-/var/lib/findverse/blobs}
+      FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
+      FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
+    ports:
+      - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_TASK_API_PORT:-8082}:8082"
+    volumes:
+      - ./data/blobs:/var/lib/findverse/blobs
+    mem_limit: ${FINDVERSE_TASK_API_MEM_LIMIT:-384m}
+
+  scheduler:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-scheduler:${FINDVERSE_IMAGE_TAG:-dev}
+    build:
+      context: .
+      dockerfile: services/scheduler/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - valkey
+      - opensearch
+    environment:
+      FINDVERSE_CONTROL_API_BIND: ${FINDVERSE_CONTROL_API_BIND:-0.0.0.0:8080}
+      FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
+      FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
+      FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS: ${FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS:-5}
+      FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
+      FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
+      FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
+      FINDVERSE_BLOB_STORE_DIR: ${FINDVERSE_BLOB_STORE_DIR:-/var/lib/findverse/blobs}
+      FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS: ${FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS:-15}
+      FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS: ${FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS:-300}
+    volumes:
+      - ./data/blobs:/var/lib/findverse/blobs
+    mem_limit: ${FINDVERSE_SCHEDULER_MEM_LIMIT:-384m}
+
   web:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-web:${FINDVERSE_IMAGE_TAG:-dev}
     build:
@@ -117,11 +169,13 @@ services:
       args:
         FINDVERSE_CONTROL_API_PROXY: http://control-api:8080
         FINDVERSE_QUERY_API_PROXY: http://query-api:8081
+        FINDVERSE_TASK_API_PROXY: http://task-api:8082
         FINDVERSE_SITE_NAME: ${FINDVERSE_SITE_NAME:-FindVerse}
     restart: unless-stopped
     depends_on:
       - control-api
       - query-api
+      - task-api
     ports:
       - "${FINDVERSE_WEB_BIND_HOST:-0.0.0.0}:${FINDVERSE_WEB_PORT:-3000}:3000"
     mem_limit: ${FINDVERSE_WEB_MEM_LIMIT:-256m}

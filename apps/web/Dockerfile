@@ -21,12 +21,13 @@ WORKDIR /usr/share/nginx/html
 
 ARG FINDVERSE_CONTROL_API_PROXY=http://control-api:8080
 ARG FINDVERSE_QUERY_API_PROXY=http://query-api:8081
+ARG FINDVERSE_TASK_API_PROXY=http://task-api:8082
 USER root
 
 COPY apps/web/nginx.conf /tmp/default.conf.template
 COPY --from=builder /app/apps/web/dist ./
 
-RUN sed "s|__FINDVERSE_CONTROL_API_PROXY__|${FINDVERSE_CONTROL_API_PROXY}|g; s|__FINDVERSE_QUERY_API_PROXY__|${FINDVERSE_QUERY_API_PROXY}|g" /tmp/default.conf.template > /etc/nginx/conf.d/default.conf
+RUN sed "s|__FINDVERSE_CONTROL_API_PROXY__|${FINDVERSE_CONTROL_API_PROXY}|g; s|__FINDVERSE_QUERY_API_PROXY__|${FINDVERSE_QUERY_API_PROXY}|g; s|__FINDVERSE_TASK_API_PROXY__|${FINDVERSE_TASK_API_PROXY}|g" /tmp/default.conf.template > /etc/nginx/conf.d/default.conf
 
 USER 101
 

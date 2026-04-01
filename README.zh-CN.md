@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-FindVerse 是一套可自部署的搜索系统，主站由控制面、查询 API、Web 界面和独立爬虫节点组成。它的目标不是一开始就做成很重的平台，而是在单机部署足够简单的前提下，保留后续扩展抓取、索引和搜索链路的空间。
+FindVerse 是一套可自部署的搜索系统，主站由控制面、任务 API、调度器、查询 API、Web 界面和独立爬虫节点组成。它的目标不是一开始就做成很重的平台，而是在单机部署足够简单的前提下，保留后续扩展抓取、索引和搜索链路的空间。
 
 ## 功能概览
 
@@ -16,8 +16,10 @@ FindVerse 是一套可自部署的搜索系统，主站由控制面、查询 API
 ## 仓库结构
 
 - `apps/web`：`/`、`/dev`、`/console` 对应的 React 前端
-- `services/control-api`：管理员、开发者、爬虫控制、frontier、任务、规则、文档管理
+- `services/control-api`：管理员、开发者、规则、任务、文档管理
 - `services/query-api`：公开搜索、建议搜索、开发者搜索
+- `services/task-api`：crawler claim/report/heartbeat 入口和任务写侧
+- `services/scheduler`：维护循环与 staged ingest 投影执行器
 - `services/crawler`：爬虫 worker 与本地抓取工具
 - `services/api`：供两个 API 复用的后端公共库
 
@@ -65,6 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/ins
 ## 开发说明
 
 - 主站部署命令就是 `docker compose up -d --build`
+- crawler 流量走 `web -> task-api`，控制台和开发者流量走 `web -> control-api`
 - 生产环境建议 crawler 作为宿主机服务独立运行，不要并入主站 compose
 - 当前 CI 只跑 `.github/workflows/_validate.yml` 里的常规校验
 - `install-crawler.sh --channel dev` 使用独立 workflow 产出的 crawler 开发构建
