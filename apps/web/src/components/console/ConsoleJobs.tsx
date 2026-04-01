@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Eye, RotateCcw, StopCircle, Trash2 } from "lucide-react";
 
 import {
-  cleanupFailedJobs,
   cleanupCompletedJobs,
+  cleanupFailedJobs,
   getCrawlJobStats,
   listCrawlJobs,
   retryFailedJobs,
@@ -22,17 +23,26 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
-import { Badge } from "../ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Badge, type BadgeProps } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Card, CardContent } from "../ui/card";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table";
 import { useConsole } from "./ConsoleContext";
 import { getConsoleJobStatusLabel, getConsoleValueLabel } from "./consoleLabels";
 
@@ -42,6 +52,20 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 function formatTimestamp(value: string | null) {
   return value ? value.replace("T", " ").replace("Z", "").slice(0, 16) : "-";
+}
+
+function getStatusVariant(status: string): BadgeProps["variant"] {
+  switch (status) {
+    case "succeeded":
+      return "success";
+    case "failed":
+    case "dead_letter":
+      return "destructive";
+    case "blocked":
+      return "warning";
+    default:
+      return "outline";
+  }
 }
 
 const PAGE_SIZE = 20;
@@ -63,6 +87,9 @@ export function ConsoleJobs() {
     () => jobs?.jobs.find((job) => job.id === selectedJobId) ?? null,
     [jobs?.jobs, selectedJobId],
   );
+
+  const cleanupFailedCount = (stats?.failed ?? 0) + (stats?.blocked ?? 0) + (stats?.dead_letter ?? 0);
+  const cleanupSucceededCount = stats?.succeeded ?? 0;
 
   const refreshJobs = useCallback(
     async (nextOffset: number, silent = false) => {
@@ -90,13 +117,12 @@ export function ConsoleJobs() {
     let cancelled = false;
     setLoading(true);
 
-    refreshJobs(offset)
-      .catch((error) => {
-        if (!cancelled) {
-          setFlash(getErrorMessage(error, t("console.jobs.load_failed")));
-          setLoading(false);
-        }
-      });
+    refreshJobs(offset).catch((error) => {
+      if (!cancelled) {
+        setFlash(getErrorMessage(error, t("console.jobs.load_failed")));
+        setLoading(false);
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -193,9 +219,9 @@ export function ConsoleJobs() {
   return (
     <>
       <PanelSection
-          title={t("console.jobs.status_title")}
-          meta={t("console.jobs.visible_jobs", { count: jobs?.total ?? 0 })}
-          contentClassName="space-y-5"
+        title={t("console.jobs.status_title")}
+        meta={`${t("console.jobs.visible_jobs", { count: jobs?.total ?? 0 })} · ${t("console.live_refresh")}`}
+        contentClassName="space-y-4"
       >
         <StatStrip
           items={[
@@ -206,145 +232,204 @@ export function ConsoleJobs() {
             { label: t("console.jobs.stats.blocked"), value: stats?.blocked ?? 0 },
             { label: t("console.jobs.stats.dead_letter"), value: stats?.dead_letter ?? 0 },
           ]}
-          className="xl:grid-cols-6"
+          className="md:grid-cols-3 xl:grid-cols-6"
         />
       </PanelSection>
 
-      <PanelSection title={t("console.jobs.queue_title")} meta={t("console.jobs.queue_meta")} contentClassName="space-y-5">
-
-        <div className="flex flex-wrap gap-3">
-          <Select
-            value={statusFilter || "all"}
-            onValueChange={(value) => {
-              setStatusFilter(value === "all" ? "" : value);
-              setOffset(0);
-            }}
-          >
-            <SelectTrigger className="w-[210px]">
-              <SelectValue placeholder={t("console.jobs.all_statuses")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("console.jobs.all_statuses")}</SelectItem>
-              <SelectItem value="queued">{t("console.jobs.stats.queued")}</SelectItem>
-              <SelectItem value="claimed">{t("console.jobs.stats.claimed")}</SelectItem>
-              <SelectItem value="succeeded">{t("console.jobs.stats.succeeded")}</SelectItem>
-              <SelectItem value="failed">{t("console.jobs.stats.failed")}</SelectItem>
-              <SelectItem value="blocked">{t("console.jobs.stats.blocked")}</SelectItem>
-              <SelectItem value="dead_letter">{t("console.jobs.stats.dead_letter")}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => void handleRetryFailed()}>
-            {t("console.jobs.retry_failed")}
-          </Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => setCleanupFailedOpen(true)}>
-            {t("console.jobs.cleanup_failed")}
-          </Button>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => void handleCleanupSucceeded()}>
-            {t("console.jobs.cleanup_succeeded")}
-          </Button>
-          <Button type="button" variant="destructive" disabled={busy} onClick={() => setStopAllOpen(true)}>
-            {t("console.jobs.stop_all")}
-          </Button>
+      <PanelSection
+        title={t("console.jobs.queue_title")}
+        meta={t("console.jobs.queue_meta")}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={statusFilter || "all"}
+              onValueChange={(value) => {
+                setStatusFilter(value === "all" ? "" : value);
+                setOffset(0);
+              }}
+            >
+              <SelectTrigger size="sm" className="w-[180px]">
+                <SelectValue placeholder={t("console.jobs.all_statuses")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">{t("console.jobs.all_statuses")}</SelectItem>
+                  <SelectItem value="queued">{t("console.jobs.stats.queued")}</SelectItem>
+                  <SelectItem value="claimed">{t("console.jobs.stats.claimed")}</SelectItem>
+                  <SelectItem value="succeeded">{t("console.jobs.stats.succeeded")}</SelectItem>
+                  <SelectItem value="failed">{t("console.jobs.stats.failed")}</SelectItem>
+                  <SelectItem value="blocked">{t("console.jobs.stats.blocked")}</SelectItem>
+                  <SelectItem value="dead_letter">{t("console.jobs.stats.dead_letter")}</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void handleRetryFailed()}>
+              <RotateCcw data-icon="inline-start" />
+              {t("console.jobs.retry_failed")}
+            </Button>
+            <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => setCleanupFailedOpen(true)}>
+              <Trash2 data-icon="inline-start" />
+              {t("console.jobs.cleanup_failed")} ({cleanupFailedCount})
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void handleCleanupSucceeded()}>
+              <Trash2 data-icon="inline-start" />
+              {t("console.jobs.cleanup_succeeded")} ({cleanupSucceededCount})
+            </Button>
+            <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => setStopAllOpen(true)}>
+              <StopCircle data-icon="inline-start" />
+              {t("console.jobs.stop_all")}
+            </Button>
+          </div>
+        }
+        contentClassName="space-y-4"
+      >
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <Table className="table-fixed">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[38%]">{t("console.jobs.url")}</TableHead>
+                <TableHead className="w-[28%]">{t("console.jobs.status")}</TableHead>
+                <TableHead className="hidden w-[20%] lg:table-cell">{t("console.jobs.source")}</TableHead>
+                <TableHead className="hidden w-[14%] xl:table-cell">{t("console.jobs.finished")}</TableHead>
+                <TableHead className="w-24 text-right">{t("console.actions.details")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading
+                ? Array.from({ length: 6 }).map((_, index) => (
+                    <TableRow key={index}>
+                      <TableCell className="whitespace-normal">
+                        <div className="flex min-w-0 flex-col gap-2">
+                          <Skeleton className="h-4 w-full max-w-xl" />
+                          <Skeleton className="h-3 w-40" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="whitespace-normal">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Skeleton className="h-6 w-24 rounded-full" />
+                            <Skeleton className="h-6 w-24 rounded-full" />
+                          </div>
+                          <Skeleton className="h-3 w-48" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden whitespace-normal lg:table-cell">
+                        <div className="flex flex-col gap-2">
+                          <Skeleton className="h-4 w-36" />
+                          <Skeleton className="h-3 w-28" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden whitespace-normal xl:table-cell">
+                        <div className="flex flex-col gap-2">
+                          <Skeleton className="h-4 w-28" />
+                          <Skeleton className="h-3 w-24" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Skeleton className="ml-auto h-7 w-16 rounded-lg" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                : jobs?.jobs.length
+                  ? jobs.jobs.map((job) => (
+                      <TableRow key={job.id} data-state={selectedJobId === job.id ? "selected" : undefined}>
+                        <TableCell className="max-w-0 whitespace-normal">
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="truncate text-sm font-semibold text-foreground" title={job.final_url ?? job.url}>
+                                {job.final_url ?? job.url}
+                              </span>
+                              {job.final_url && job.final_url !== job.url ? <Badge variant="outline">{t("console.jobs.final_url")}</Badge> : null}
+                            </div>
+                            <div className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+                              {job.final_url && job.final_url !== job.url ? (
+                                <span className="truncate" title={job.url}>
+                                  {job.url}
+                                </span>
+                              ) : null}
+                              <span className="truncate lg:hidden" title={job.source}>
+                                {job.source}
+                              </span>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={getStatusVariant(job.status)}>{getConsoleJobStatusLabel(t, job.status)}</Badge>
+                              <Badge variant={job.render_mode === "browser" ? "warning" : "outline"}>
+                                {job.render_mode === "browser" ? t("console.jobs.browser_rendered") : t("console.jobs.static_rendered")}
+                              </Badge>
+                              {job.http_status != null ? <Badge variant="outline">HTTP {job.http_status}</Badge> : null}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <span>{t("console.jobs.attempt_progress", { current: job.attempt_count, max: job.max_attempts })}</span>
+                              <span>{t("console.jobs.depth_progress", { current: job.depth, max: job.max_depth })}</span>
+                              <span>{t("console.jobs.discovered_count", { count: job.discovered_urls_count })}</span>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden whitespace-normal lg:table-cell">
+                          <div className="flex flex-col gap-1">
+                            <span className="truncate text-sm font-medium text-foreground" title={job.source}>
+                              {job.source}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              {job.claimed_by ? <span>{t("console.jobs.worker_id", { id: job.claimed_by })}</span> : null}
+                              <span>{getConsoleValueLabel(job.failure_kind ?? job.llm_decision)}</span>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden whitespace-normal xl:table-cell">
+                          <div className="flex flex-col gap-1 text-sm">
+                            <span className="font-medium text-foreground">{formatTimestamp(job.finished_at)}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {t("console.jobs.retry_after")}: {formatTimestamp(job.next_retry_at)}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedJobId(job.id)}>
+                            <Eye data-icon="inline-start" />
+                            {t("console.actions.details")}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  : null}
+            </TableBody>
+          </Table>
         </div>
 
-        <div className="grid gap-3">
-          {loading ? (
-            Array.from({ length: 3 }).map((_, index) => (
-              <Card key={index} className="rounded-2xl">
-                <CardContent className="grid gap-4 p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div className="grid min-w-0 flex-1 gap-2">
-                      <Skeleton className="h-4 w-full max-w-2xl" />
-                      <Skeleton className="h-4 w-40" />
-                    </div>
-                    <Skeleton className="h-8 w-20 rounded-lg" />
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Skeleton className="h-6 w-24 rounded-full" />
-                    <Skeleton className="h-4 w-20" />
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-4 w-28" />
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <Skeleton className="h-20 rounded-xl" />
-                    <Skeleton className="h-20 rounded-xl" />
-                    <Skeleton className="h-20 rounded-xl" />
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : jobs?.jobs.length ? (
-            jobs.jobs.map((job) => (
-              <Card key={job.id} className="rounded-2xl">
-                <CardContent className="grid min-w-0 gap-4 p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div className="grid min-w-0 flex-1 gap-1">
-                    <strong
-                      className="truncate text-sm font-semibold text-foreground"
-                      title={job.final_url ?? job.url}
-                    >
-                      {job.final_url ?? job.url}
-                    </strong>
-                    <span className="text-sm text-muted-foreground">{job.source}</span>
-                  </div>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedJobId(job.id)}>
-                    {t("console.actions.details")}
-                  </Button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <Badge variant={job.status === "succeeded" ? "success" : "outline"}>
-                    {getConsoleJobStatusLabel(t, job.status)}
-                  </Badge>
-                  <Badge variant={job.render_mode === "browser" ? "warning" : "outline"}>
-                    {job.render_mode === "browser"
-                      ? t("console.jobs.browser_rendered")
-                      : t("console.jobs.static_rendered")}
-                  </Badge>
-                  {job.http_status != null ? <span>HTTP {job.http_status}</span> : null}
-                  <span>{t("console.jobs.attempt_progress", { current: job.attempt_count, max: job.max_attempts })}</span>
-                  <span>{t("console.jobs.depth_progress", { current: job.depth, max: job.max_depth })}</span>
-                  {job.claimed_by ? <span>{t("console.jobs.worker_id", { id: job.claimed_by })}</span> : null}
-                </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                    <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.discovered")}</span>
-                    <strong className="mt-2 block text-lg font-semibold text-foreground">{job.discovered_urls_count}</strong>
-                  </div>
-                  <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                    <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.finished")}</span>
-                    <strong className="mt-2 block text-sm font-semibold text-foreground">{formatTimestamp(job.finished_at ?? job.claimed_at)}</strong>
-                  </div>
-                  <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                    <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.status")}</span>
-                    <strong className="mt-2 block text-sm font-semibold text-foreground">{getConsoleValueLabel(job.failure_kind ?? job.llm_decision)}</strong>
-                  </div>
-                </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">{t("console.jobs.no_jobs_match")}</div>
-          )}
-        </div>
+        {!loading && !jobs?.jobs.length ? (
+          <Alert>
+            <AlertTitle>{t("console.jobs.no_jobs_match")}</AlertTitle>
+            <AlertDescription>{t("console.jobs.queue_meta")}</AlertDescription>
+          </Alert>
+        ) : null}
 
-        <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={offset === 0}
-            onClick={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))}
-          >
-            {t("search.previous")}
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="text-sm text-muted-foreground">{t("console.jobs.offset", { offset })}</span>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={jobs?.next_offset == null}
-            onClick={() => setOffset(jobs?.next_offset ?? offset)}
-          >
-            {t("search.next")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={offset === 0}
+              onClick={() => setOffset((current) => Math.max(0, current - PAGE_SIZE))}
+            >
+              {t("search.previous")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={jobs?.next_offset == null}
+              onClick={() => setOffset(jobs?.next_offset ?? offset)}
+            >
+              {t("search.next")}
+            </Button>
+          </div>
         </div>
       </PanelSection>
 
@@ -390,23 +475,29 @@ export function ConsoleJobs() {
         onClose={() => setSelectedJobId(null)}
       >
         {selectedJob ? (
-            <div className="grid gap-4">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-xl border border-border bg-muted/40 p-4">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.status")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{getConsoleJobStatusLabel(t, selectedJob.status)}</strong>
-                </div>
+          <div className="grid gap-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.status")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {getConsoleJobStatusLabel(t, selectedJob.status)}
+                </strong>
+              </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.http_status")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.http_status ?? "-"}</strong>
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.attempts")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.attempt_count} / {selectedJob.max_attempts}</strong>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {selectedJob.attempt_count} / {selectedJob.max_attempts}
+                </strong>
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.depth")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.depth} / {selectedJob.max_depth}</strong>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {selectedJob.depth} / {selectedJob.max_depth}
+                </strong>
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.worker")}</span>
@@ -438,7 +529,12 @@ export function ConsoleJobs() {
               <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.final_url")}</span>
-                  <Button type="button" variant="outline" size="sm" onClick={() => void handleCopy(selectedJob.final_url!)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleCopy(selectedJob.final_url ?? selectedJob.url)}
+                  >
                     {t("console.actions.copy")}
                   </Button>
                 </div>
@@ -456,7 +552,9 @@ export function ConsoleJobs() {
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.llm_decision")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{getConsoleValueLabel(selectedJob.llm_decision)}</strong>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {getConsoleValueLabel(selectedJob.llm_decision)}
+                </strong>
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.score")}</span>
@@ -476,13 +574,13 @@ export function ConsoleJobs() {
             {selectedJob.llm_reason ? (
               <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
                 <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.llm_decision")}</span>
-                <p className="text-sm leading-6 text-muted-foreground whitespace-pre-wrap">{selectedJob.llm_reason}</p>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{selectedJob.llm_reason}</p>
               </div>
             ) : null}
             {selectedJob.failure_kind || selectedJob.failure_message ? (
               <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
                 <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.failure")}</span>
-                <p className="text-sm leading-6 text-muted-foreground whitespace-pre-wrap">
+                <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                   {[selectedJob.failure_kind, selectedJob.failure_message].filter(Boolean).join(" · ")}
                 </p>
               </div>
