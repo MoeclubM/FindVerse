@@ -52,15 +52,15 @@ docker compose up -d --build
 先在 `/console -> Settings` 设置一组共享 crawler 认证密钥，然后直接从 GitHub 安装或更新 crawler：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --max-jobs 16 --skip-browser-install
 ```
 
-首次安装时会在本地自动生成 `crawler_id`，并写入 `/etc/findverse-crawler/crawler.env`。以后重复执行这条命令就是原地更新，并继续复用这份本地 id。
+安装脚本同时支持 `x86_64/amd64` 和 `aarch64/arm64` Linux 主机。首次安装时会在本地自动生成 `crawler_id`，并写入 `/etc/findverse-crawler/crawler.env`。以后重复执行这条命令就是原地更新，并继续复用这份本地 id。
 
 只有你明确要跟最新成功的 CI 开发构建时，才用 `dev`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --max-jobs 16 --skip-browser-install
 ```
 
 - `--channel release` 不需要 token

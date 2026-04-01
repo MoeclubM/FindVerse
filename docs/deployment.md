@@ -62,8 +62,10 @@ Crawler workers are host services, not Docker services.
 Set one shared crawler auth key in `/console -> Settings`, then install or update a node with the same command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --max-jobs 16 --skip-browser-install
 ```
+
+The installer supports both `x86_64/amd64` and `aarch64/arm64` Linux hosts. It selects the matching release asset automatically from the current machine architecture.
 
 What the installer writes:
 
@@ -77,7 +79,7 @@ The first install auto-generates `CRAWLER_ID` locally and writes it into `/etc/f
 Use the development channel only when you explicitly want the latest successful CI crawler build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --max-jobs 16 --skip-browser-install
 ```
 
 `--channel release` does not need a token. `--channel dev` does, because GitHub Actions artifact downloads require authenticated API access.
@@ -131,7 +133,7 @@ rm -rf data/postgres data/valkey data/opensearch
 It:
 
 - validates Rust tests and web typecheck
-- builds Linux release binaries for `control-api`, `query-api`, `task-api`, `scheduler`, and `crawler`
+- builds Linux release binaries for `control-api`, `query-api`, `task-api`, `scheduler`, and `crawler` on both `x86_64` and `arm64`
 - creates a GitHub Release with binary artifacts
 
 Release example:

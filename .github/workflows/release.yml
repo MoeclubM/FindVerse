@@ -18,7 +18,15 @@ jobs:
 
   build-binaries:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            suffix: x86_64
+          - runner: ubuntu-24.04-arm
+            suffix: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -36,13 +44,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          tar -czf dist/findverse-linux-x86_64.tar.gz -C target/release findverse-control-api findverse-query-api findverse-task-api findverse-scheduler findverse-crawler
+          tar -czf dist/findverse-linux-${{ matrix.suffix }}.tar.gz -C target/release findverse-control-api findverse-query-api findverse-task-api findverse-scheduler findverse-crawler
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: binaries-linux-x86_64
-          path: dist/findverse-linux-x86_64.tar.gz
+          name: binaries-linux-${{ matrix.suffix }}
+          path: dist/findverse-linux-${{ matrix.suffix }}.tar.gz
 
   create-release:
     needs:

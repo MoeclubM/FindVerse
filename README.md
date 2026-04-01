@@ -52,15 +52,15 @@ Legacy developer JSON stores are no longer auto-imported during startup. If you 
 Set one shared crawler auth key in `/console -> Settings`, then install or update a crawler worker directly from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel release --max-jobs 16 --skip-browser-install
 ```
 
-The first install auto-generates `crawler_id` locally and writes it into `/etc/findverse-crawler/crawler.env`. Re-running the same command updates the node in place and reuses the saved id.
+The installer supports both `x86_64/amd64` and `aarch64/arm64` Linux hosts. The first install auto-generates `crawler_id` locally and writes it into `/etc/findverse-crawler/crawler.env`. Re-running the same command updates the node in place and reuses the saved id.
 
 Only use the development channel when you explicitly want the latest successful CI build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --concurrency 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo env GITHUB_TOKEN=<TOKEN> bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --channel dev --max-jobs 16 --skip-browser-install
 ```
 
 `--channel release` does not need a token. `--channel dev` does, because GitHub Actions artifact downloads require authenticated API access.

@@ -133,7 +133,8 @@ generate_crawler_id() {
 machine_suffix() {
   case "$(uname -m)" in
     x86_64|amd64) echo "linux-x86_64" ;;
-    *) fail "unsupported architecture: $(uname -m)" ;;
+    aarch64|arm64) echo "linux-arm64" ;;
+    *) fail "unsupported architecture: $(uname -m) (supported: x86_64, amd64, aarch64, arm64)" ;;
   esac
 }
 
