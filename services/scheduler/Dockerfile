@@ -29,7 +29,7 @@ USER 0
 COPY --from=builder /app/target/release/findverse-scheduler /usr/local/bin/findverse-scheduler
 COPY services/api/migrations /app/migrations
 
-ENV FINDVERSE_CONTROL_API_BIND=0.0.0.0:8080
+ENV FINDVERSE_SCHEDULER_BIND=127.0.0.1:0
 ENV FINDVERSE_POSTGRES_URL=postgres://findverse:findverse@postgres:5432/findverse
 ENV FINDVERSE_REDIS_URL=redis://valkey:6379/0
 ENV FINDVERSE_OPENSEARCH_URL=http://opensearch:9200

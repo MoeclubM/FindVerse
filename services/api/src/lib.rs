@@ -150,7 +150,7 @@ pub async fn run_query_api() -> anyhow::Result<()> {
 pub async fn run_scheduler() -> anyhow::Result<()> {
     init_tracing();
 
-    let config = Config::from_env(ServiceKind::Control)?;
+    let config = Config::from_env(ServiceKind::Scheduler)?;
     let state = bootstrap_scheduler_state(&config).await?;
     let maintenance_interval = Duration::from_secs(config.crawler_maintenance_interval_secs.max(1));
     let default_claim_timeout_secs = config.crawler_claim_timeout_secs;

@@ -7,6 +7,7 @@ pub enum ServiceKind {
     Control,
     Query,
     Task,
+    Scheduler,
 }
 
 impl ServiceKind {
@@ -15,6 +16,7 @@ impl ServiceKind {
             Self::Control => "control-api",
             Self::Query => "query-api",
             Self::Task => "task-api",
+            Self::Scheduler => "scheduler",
         }
     }
 }
@@ -142,6 +144,9 @@ fn resolve_bind_addr(service_kind: ServiceKind) -> anyhow::Result<String> {
         }
         ServiceKind::Task => {
             env::var("FINDVERSE_TASK_API_BIND").unwrap_or_else(|_| "0.0.0.0:8082".to_string())
+        }
+        ServiceKind::Scheduler => {
+            env::var("FINDVERSE_SCHEDULER_BIND").unwrap_or_else(|_| "127.0.0.1:0".to_string())
         }
     };
 

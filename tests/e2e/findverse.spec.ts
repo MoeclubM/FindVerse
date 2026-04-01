@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(process.cwd());
 const controlApiBaseUrl = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:8080";
 const queryApiBaseUrl = process.env.PLAYWRIGHT_QUERY_API_BASE_URL ?? "http://127.0.0.1:8081";
+const taskApiBaseUrl = process.env.PLAYWRIGHT_TASK_API_BASE_URL ?? "http://127.0.0.1:8082";
 
 test.describe.configure({ timeout: 300_000 });
 
@@ -17,12 +18,13 @@ async function waitForFindVerseReady(request: APIRequestContext) {
     .poll(
       async () => {
         try {
-          const [controlReady, queryReady] = await Promise.all([
+          const [controlReady, queryReady, taskReady] = await Promise.all([
             request.get(`${controlApiBaseUrl}/readyz`),
             request.get(`${queryApiBaseUrl}/readyz`),
+            request.get(`${taskApiBaseUrl}/readyz`),
           ]);
 
-          if (!controlReady.ok() || !queryReady.ok()) {
+          if (!controlReady.ok() || !queryReady.ok() || !taskReady.ok()) {
             return "not-ready";
           }
 
@@ -49,7 +51,7 @@ async function runCrawlerWorker(crawlerId: string, crawlerKey: string) {
   const workerArgs = [
     "worker",
     "--server",
-    controlApiBaseUrl,
+    taskApiBaseUrl,
     "--crawler-id",
     crawlerId,
     "--crawler-key",
@@ -226,7 +228,7 @@ test("crawler shared auth key flow", async ({ request }) => {
   });
   expect(setAuthKeyRes.status()).toBe(204);
 
-  const claimRes = await request.post(`${controlApiBaseUrl}/internal/crawlers/claim`, {
+  const claimRes = await request.post(`${taskApiBaseUrl}/internal/crawlers/claim`, {
     headers: {
       Authorization: `Bearer ${crawlerKey}`,
       "Content-Type": "application/json",

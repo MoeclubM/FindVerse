@@ -4,6 +4,7 @@ set -euo pipefail
 API_BASE_URL="http://127.0.0.1:3000/api"
 CONTROL_API_BASE_URL=""
 QUERY_API_BASE_URL=""
+TASK_API_BASE_URL=""
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="change-me"
 SEED_URL_TEMPLATE=""
@@ -14,6 +15,7 @@ while [[ $# -gt 0 ]]; do
     --api-base-url) API_BASE_URL="${2%/}"; shift 2 ;;
     --control-api-base-url) CONTROL_API_BASE_URL="${2%/}"; shift 2 ;;
     --query-api-base-url) QUERY_API_BASE_URL="${2%/}"; shift 2 ;;
+    --task-api-base-url) TASK_API_BASE_URL="${2%/}"; shift 2 ;;
     --admin-username) ADMIN_USERNAME="$2"; shift 2 ;;
     --admin-password) ADMIN_PASSWORD="$2"; shift 2 ;;
     --seed-url) SEED_URL_TEMPLATE="$2"; shift 2 ;;
@@ -35,8 +37,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
 CRAWLER_SERVER="$API_BASE_URL"
-if [[ -n "$CONTROL_API_BASE_URL" ]]; then
-  CRAWLER_SERVER="$CONTROL_API_BASE_URL"
+if [[ -n "$TASK_API_BASE_URL" ]]; then
+  CRAWLER_SERVER="$TASK_API_BASE_URL"
 fi
 PUBLIC_BASE_URL="${API_BASE_URL%/api}"
 
@@ -100,6 +102,7 @@ try_probe() {
 step "Probe health endpoints"
 try_probe "control-api healthz" "${CONTROL_API_BASE_URL:+$CONTROL_API_BASE_URL/healthz}" '.status == "ok"'
 try_probe "query-api readyz" "${QUERY_API_BASE_URL:+$QUERY_API_BASE_URL/readyz}" '.status == "ready" and .postgres and .redis and .opensearch'
+try_probe "task-api readyz" "${TASK_API_BASE_URL:+$TASK_API_BASE_URL/readyz}" '.status == "ready" and .postgres and .redis'
 
 timestamp="$(date +%s)"
 developer_username="smoke-dev-$timestamp"
@@ -218,6 +221,9 @@ if $RUN_PLAYWRIGHT; then
   step "Playwright"
   export PLAYWRIGHT_BASE_URL="${API_BASE_URL%/api}"
   export PLAYWRIGHT_API_BASE_URL="$API_BASE_URL"
+  if [[ -n "$TASK_API_BASE_URL" ]]; then
+    export PLAYWRIGHT_TASK_API_BASE_URL="$TASK_API_BASE_URL"
+  fi
   pushd "$repo_root" >/dev/null
   npx playwright test
   popd >/dev/null
