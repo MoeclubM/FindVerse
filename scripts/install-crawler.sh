@@ -2,7 +2,6 @@
 set -euo pipefail
 
 REPO="${FINDVERSE_GITHUB_REPO:-MoeclubM/FindVerse}"
-CHANNEL="release"
 VERSION=""
 SERVER_URL=""
 CRAWLER_KEY_ARG=""
@@ -13,7 +12,6 @@ MAX_JOBS=""
 POLL_INTERVAL_SECS=""
 ALLOWED_DOMAINS=""
 PROXY=""
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 SKIP_BROWSER_INSTALL=false
 
 TMP_DIR=""
@@ -26,13 +24,12 @@ Usage:
   install-crawler.sh --server <url> [options]
 
 Install or update the FindVerse crawler binary and systemd service on this machine.
-The script downloads either the latest GitHub release artifact or the latest CI dev artifact,
+The script downloads the latest GitHub release artifact,
 installs the binary into /opt, writes config into /etc, and enables a systemd service.
 
 Options:
   --server <url>                Control API base URL. Required on first install, reused later if omitted
   --crawler-key <key>           Shared fixed crawler key. Required on first install, reused later if omitted
-  --channel <release|dev>       Download source. Default: release
   --version <tag>               Optional pinned release tag, for example v1.2.3
   --repo <owner/name>           GitHub repo. Default: MoeclubM/FindVerse
   --service-name <name>         systemd service name. Default: findverse-crawler
@@ -42,7 +39,6 @@ Options:
   --poll-interval-secs <n>      Poll interval. Reuses existing config if omitted
   --allowed-domains <csv>       Optional domain allowlist
   --proxy <url>                 Optional outbound proxy
-  --github-token <token>        GitHub token. Only needed for --channel dev
   --skip-browser-install        Do not auto-install Chromium when missing
   --help                        Show this help
 
@@ -53,8 +49,8 @@ Notes:
   - On first install the script uses the local hostname as the default crawler name.
   - Once the env file exists, updates can reuse the saved server, crawler_id, and crawler_key.
   - The same release command can be used for both first install and updates.
-  - Release mode downloads the public GitHub release asset without auth.
-  - Dev mode downloads the latest successful crawler dev build artifact and requires GitHub API auth even for public repos.
+  - Without --version the script downloads the latest public GitHub release asset.
+  - Use --version to pin a specific release tag during rollout.
 EOF
 }
 
@@ -79,7 +75,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --server) SERVER_URL="$2"; shift 2 ;;
     --crawler-key) CRAWLER_KEY_ARG="$2"; shift 2 ;;
-    --channel) CHANNEL="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
@@ -89,19 +84,15 @@ while [[ $# -gt 0 ]]; do
     --poll-interval-secs) POLL_INTERVAL_SECS="$2"; shift 2 ;;
     --allowed-domains) ALLOWED_DOMAINS="$2"; shift 2 ;;
     --proxy) PROXY="$2"; shift 2 ;;
-    --github-token) GITHUB_TOKEN="$2"; shift 2 ;;
     --skip-browser-install) SKIP_BROWSER_INSTALL=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) fail "unknown option: $1" ;;
   esac
 done
 
-[[ "$CHANNEL" == "release" || "$CHANNEL" == "dev" ]] || fail "--channel must be release or dev"
-
 require_cmd curl
 require_cmd jq
 require_cmd tar
-require_cmd unzip
 require_cmd systemctl
 require_cmd install
 require_cmd mktemp
@@ -140,30 +131,18 @@ machine_suffix() {
 
 github_api_json() {
   local url="$1"
-  local require_auth="${2:-false}"
   local -a args=(
     -fsSL
     -H "Accept: application/vnd.github+json"
     -H "X-GitHub-Api-Version: 2022-11-28"
   )
-  if [[ -n "$GITHUB_TOKEN" ]]; then
-    args+=(-H "Authorization: Bearer $GITHUB_TOKEN")
-  elif [[ "$require_auth" == "true" ]]; then
-    fail "GitHub token is required for this operation"
-  fi
   curl "${args[@]}" "$url"
 }
 
 github_download() {
   local url="$1"
   local output="$2"
-  local require_auth="${3:-false}"
   local -a args=(-fsSL -o "$output")
-  if [[ -n "$GITHUB_TOKEN" ]]; then
-    args+=(-H "Authorization: Bearer $GITHUB_TOKEN")
-  elif [[ "$require_auth" == "true" ]]; then
-    fail "GitHub token is required for this download"
-  fi
   curl "${args[@]}" "$url"
 }
 
@@ -213,35 +192,6 @@ download_release_archive() {
   [[ -n "$asset_url" && "$asset_url" != "null" ]] || fail "release asset findverse-${suffix}.tar.gz not found for ${REPO}"
 
   github_download "$asset_url" "$archive_path"
-  DOWNLOADED_ARCHIVE_PATH="$archive_path"
-}
-
-download_dev_archive() {
-  local suffix="$1"
-  local runs_json
-  local run_id
-  local artifacts_json
-  local artifact_url
-  local zip_path="$TMP_DIR/crawler-dev-artifact.zip"
-  local artifact_dir="$TMP_DIR/dev-artifact"
-  local archive_path
-
-  runs_json="$(github_api_json "https://api.github.com/repos/${REPO}/actions/workflows/crawler-dev-artifact.yml/runs?status=success&per_page=20" true)"
-  run_id="$(printf '%s' "$runs_json" | jq -r '.workflow_runs[] | select(.head_branch == "main" or .head_branch == "master") | .id' | head -n 1)"
-  [[ -n "$run_id" ]] || fail "no successful CI runs found on main/master for ${REPO}"
-
-  artifacts_json="$(github_api_json "https://api.github.com/repos/${REPO}/actions/runs/${run_id}/artifacts?per_page=100" true)"
-  artifact_url="$(printf '%s' "$artifacts_json" | jq -r --arg name "findverse-crawler-${suffix}-dev" '.artifacts[] | select(.name == $name and .expired == false) | .archive_download_url' | head -n 1)"
-  [[ -n "$artifact_url" ]] || fail "dev artifact findverse-crawler-${suffix}-dev not found on CI run ${run_id}"
-
-  SOURCE_LABEL="dev:run-${run_id}"
-  github_download "$artifact_url" "$zip_path" true
-  mkdir -p "$artifact_dir"
-  unzip -q "$zip_path" -d "$artifact_dir"
-
-  archive_path="$(find "$artifact_dir" -maxdepth 2 -type f -name "findverse-crawler-${suffix}.tar.gz" | head -n 1)"
-  [[ -n "$archive_path" ]] || fail "downloaded dev artifact did not contain findverse-crawler-${suffix}.tar.gz"
-
   DOWNLOADED_ARCHIVE_PATH="$archive_path"
 }
 
@@ -402,21 +352,13 @@ main() {
   [[ -n "$SERVER_URL" ]] || fail "--server is required on first install"
   ensure_browser
 
-  case "$CHANNEL" in
-    release)
-      if [[ -n "$VERSION" ]]; then
-        SOURCE_LABEL="release:${VERSION}"
-      else
-        SOURCE_LABEL="release:latest"
-      fi
-      download_release_archive "$suffix"
-      archive_path="$DOWNLOADED_ARCHIVE_PATH"
-      ;;
-    dev)
-      download_dev_archive "$suffix"
-      archive_path="$DOWNLOADED_ARCHIVE_PATH"
-      ;;
-  esac
+  if [[ -n "$VERSION" ]]; then
+    SOURCE_LABEL="release:${VERSION}"
+  else
+    SOURCE_LABEL="release:latest"
+  fi
+  download_release_archive "$suffix"
+  archive_path="$DOWNLOADED_ARCHIVE_PATH"
 
   binary_path="$(extract_crawler_binary "$archive_path")"
 
@@ -459,7 +401,7 @@ main() {
   echo "  Server:      ${SERVER_URL}"
   echo "  Crawler ID:  ${final_crawler_id}"
   echo "  Crawler Name:${final_crawler_name}"
-  echo "  Channel:     ${CHANNEL}"
+  echo "  Version:     ${VERSION:-latest}"
 }
 
 main "$@"
