@@ -21,6 +21,7 @@ impl ServiceKind {
 pub struct Config {
     pub bind_addr: SocketAddr,
     pub index_path: PathBuf,
+    pub blob_store_dir: PathBuf,
     pub developer_store_path: PathBuf,
     pub dev_auth_store_path: PathBuf,
     pub frontend_origin: String,
@@ -46,6 +47,10 @@ impl Config {
         let index_path = env::var("FINDVERSE_INDEX_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("services/api/fixtures/bootstrap_documents.json"));
+
+        let blob_store_dir = env::var("FINDVERSE_BLOB_STORE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("data/blobs"));
 
         let developer_store_path = env::var("FINDVERSE_DEVELOPER_STORE")
             .map(PathBuf::from)
@@ -106,6 +111,7 @@ impl Config {
         Ok(Self {
             bind_addr,
             index_path,
+            blob_store_dir,
             developer_store_path,
             dev_auth_store_path,
             frontend_origin,

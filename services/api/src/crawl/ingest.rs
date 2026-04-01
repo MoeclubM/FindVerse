@@ -1,3 +1,5 @@
+use std::{collections::BTreeSet, time::Duration};
+
 use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -27,6 +29,22 @@ pub struct PendingIngestItem {
     pub crawler_id: String,
     pub crawl_job_id: String,
     pub blob_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecoverStaleIngestOutcome {
+    pub requeued: Vec<RecoveredIngestItem>,
+    pub failed: Vec<RecoveredIngestItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecoveredIngestItem {
+    pub lease_id: String,
+    pub owner_developer_id: String,
+    pub crawler_id: String,
+    pub crawl_job_id: String,
+    pub url: String,
+    pub crawl_job_status: String,
 }
 
 impl IngestService {
@@ -219,6 +237,105 @@ impl IngestService {
             .collect())
     }
 
+    pub async fn recover_stale_items(
+        &self,
+        timeout: Duration,
+    ) -> Result<RecoverStaleIngestOutcome, ApiError> {
+        let now = Utc::now();
+        let cutoff = now - chrono::Duration::seconds(timeout.as_secs().max(1) as i64);
+        let requeued = sqlx::query_as::<_, RecoveredIngestItemRow>(
+            "with stale as (
+                 update crawl_ingest_items item
+                 set status = 'pending',
+                     started_at = null,
+                     error_message = null
+                 from crawl_jobs job
+                 where item.status = 'processing'
+                   and item.started_at < $1
+                   and job.owner_developer_id = item.owner_developer_id
+                   and job.id = item.crawl_job_id
+                   and job.status = 'ingesting'
+                 returning item.lease_id,
+                           item.owner_developer_id,
+                           item.crawler_id,
+                           item.crawl_job_id,
+                           job.url,
+                           job.status as crawl_job_status
+             )
+             select lease_id, owner_developer_id, crawler_id, crawl_job_id, url, crawl_job_status
+             from stale",
+        )
+        .bind(cutoff)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?;
+
+        let failed = sqlx::query_as::<_, RecoveredIngestItemRow>(
+            "with stale as (
+                 update crawl_ingest_items item
+                 set status = 'failed',
+                     finished_at = $2,
+                     error_message = format(
+                         'projection stalled after crawl job left ingesting (job status: %s)',
+                         job.status
+                     )
+                 from crawl_jobs job
+                 where item.status = 'processing'
+                   and item.started_at < $1
+                   and job.owner_developer_id = item.owner_developer_id
+                   and job.id = item.crawl_job_id
+                   and job.status <> 'ingesting'
+                 returning item.lease_id,
+                           item.owner_developer_id,
+                           item.crawler_id,
+                           item.crawl_job_id,
+                           job.url,
+                           job.status as crawl_job_status
+             )
+             select lease_id, owner_developer_id, crawler_id, crawl_job_id, url, crawl_job_status
+             from stale",
+        )
+        .bind(cutoff)
+        .bind(now)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?;
+
+        let lease_ids = requeued
+            .iter()
+            .chain(failed.iter())
+            .map(|item| item.lease_id.clone())
+            .collect::<BTreeSet<_>>();
+        for lease_id in lease_ids {
+            self.refresh_batch_status(&lease_id, None, now).await?;
+        }
+
+        Ok(RecoverStaleIngestOutcome {
+            requeued: requeued
+                .into_iter()
+                .map(|item| RecoveredIngestItem {
+                    lease_id: item.lease_id,
+                    owner_developer_id: item.owner_developer_id,
+                    crawler_id: item.crawler_id,
+                    crawl_job_id: item.crawl_job_id,
+                    url: item.url,
+                    crawl_job_status: item.crawl_job_status,
+                })
+                .collect(),
+            failed: failed
+                .into_iter()
+                .map(|item| RecoveredIngestItem {
+                    lease_id: item.lease_id,
+                    owner_developer_id: item.owner_developer_id,
+                    crawler_id: item.crawler_id,
+                    crawl_job_id: item.crawl_job_id,
+                    url: item.url,
+                    crawl_job_status: item.crawl_job_status,
+                })
+                .collect(),
+        })
+    }
+
     pub async fn mark_item_completed(&self, item: &PendingIngestItem) -> Result<(), ApiError> {
         let now = Utc::now();
         sqlx::query(
@@ -340,4 +457,14 @@ struct PendingIngestItemRow {
     crawler_id: String,
     crawl_job_id: String,
     blob_id: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct RecoveredIngestItemRow {
+    lease_id: String,
+    owner_developer_id: String,
+    crawler_id: String,
+    crawl_job_id: String,
+    url: String,
+    crawl_job_status: String,
 }

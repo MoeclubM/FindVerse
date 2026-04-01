@@ -39,9 +39,8 @@ pub struct CrawlerStore {
 }
 
 impl CrawlerStore {
-    pub fn new(pg_pool: PgPool) -> Self {
+    pub fn new(pg_pool: PgPool, blob_store: BlobStore) -> Self {
         let frontier = FrontierService::new(pg_pool.clone());
-        let blob_store = BlobStore::new(pg_pool.clone());
         let ingest = IngestService::new(pg_pool.clone(), blob_store.clone());
         let projection = ProjectionRunner::new(ingest.clone(), blob_store);
 
@@ -1205,7 +1204,54 @@ impl CrawlerStore {
         search_index: &SearchIndex,
         limit: usize,
     ) -> Result<usize, ApiError> {
-        self.projection.drain(self, search_index, limit).await
+        let mut processed = 0usize;
+        while processed < limit {
+            let drained = self
+                .projection
+                .drain(self, search_index, limit - processed)
+                .await?;
+            if drained == 0 {
+                break;
+            }
+            processed += drained;
+        }
+        Ok(processed)
+    }
+
+    pub(crate) async fn recover_stale_ingests(&self, timeout: Duration) -> Result<(), ApiError> {
+        let recovered = self.ingest.recover_stale_items(timeout).await?;
+
+        for item in recovered.requeued {
+            self.push_event(
+                &item.owner_developer_id,
+                "stale-ingest-requeued",
+                "ok",
+                format!(
+                    "requeued stale ingest item {} for lease {}",
+                    item.crawl_job_id, item.lease_id
+                ),
+                Some(item.url),
+                Some(item.crawler_id),
+            )
+            .await?;
+        }
+
+        for item in recovered.failed {
+            self.push_event(
+                &item.owner_developer_id,
+                "stale-ingest-failed",
+                "error",
+                format!(
+                    "stale ingest item {} could not be replayed because crawl job is {}",
+                    item.crawl_job_id, item.crawl_job_status
+                ),
+                Some(item.url),
+                Some(item.crawler_id),
+            )
+            .await?;
+        }
+
+        Ok(())
     }
 
     pub(crate) async fn apply_staged_result(
@@ -2089,6 +2135,7 @@ impl CrawlerStore {
     ) -> Result<(), ApiError> {
         let now = Utc::now();
         self.apply_due_rules(now).await?;
+        self.recover_stale_ingests(claim_timeout).await?;
         self.process_pending_ingests(search_index, 64).await?;
         self.requeue_stale_jobs(now, claim_timeout).await?;
         self.prune_stale_crawlers(now, claim_timeout).await?;

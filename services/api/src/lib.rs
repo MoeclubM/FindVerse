@@ -35,7 +35,10 @@ use tower_http::{
 };
 use tracing::{error, info};
 
-use crate::store::{DeveloperStore, SearchIndex};
+use crate::{
+    blob_store::BlobStore,
+    store::{DeveloperStore, SearchIndex},
+};
 
 #[derive(Clone)]
 pub struct QueryState {
@@ -131,6 +134,7 @@ async fn bootstrap_query_state(config: &Config) -> anyhow::Result<QueryState> {
         db.pg_pool.clone(),
         config.opensearch_url.clone(),
         config.opensearch_index.clone(),
+        config.blob_store_dir.clone(),
         db.redis_client.clone(),
     )
     .await?;
@@ -145,11 +149,14 @@ async fn bootstrap_query_state(config: &Config) -> anyhow::Result<QueryState> {
 async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState> {
     let db = connect_backends(config).await?;
     db.prepare_control_plane(config).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_store_dir.clone());
+    blob_store.ensure_ready().await?;
 
     let search_index = SearchIndex::connect(
         db.pg_pool.clone(),
         config.opensearch_url.clone(),
         config.opensearch_index.clone(),
+        config.blob_store_dir.clone(),
         db.redis_client.clone(),
     )
     .await?;
@@ -163,7 +170,7 @@ async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState
             developer_store: DeveloperStore::new(db.pg_pool.clone()),
             db: db.clone(),
         },
-        crawler_store: CrawlerStore::new(db.pg_pool.clone()),
+        crawler_store: CrawlerStore::new(db.pg_pool.clone(), blob_store),
         admin_auth: AdminAuth::new(db.pg_pool.clone()),
         dev_auth: DevAuthStore::new(db.pg_pool.clone()),
         crawler_claim_timeout_secs: config.crawler_claim_timeout_secs.max(1),

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{fmt::Write, path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use chrono::Utc;
@@ -32,6 +32,7 @@ pub struct SearchIndex {
     http_client: Client,
     opensearch_url: String,
     opensearch_index: String,
+    blob_store_dir: PathBuf,
     redis_client: redis::Client,
 }
 
@@ -40,6 +41,7 @@ impl SearchIndex {
         pg_pool: PgPool,
         opensearch_url: String,
         opensearch_index: String,
+        blob_store_dir: PathBuf,
         redis_client: redis::Client,
     ) -> anyhow::Result<Self> {
         let http_client = Client::builder()
@@ -52,9 +54,11 @@ impl SearchIndex {
             http_client,
             opensearch_url: opensearch_url.trim_end_matches('/').to_string(),
             opensearch_index,
+            blob_store_dir,
             redis_client,
         };
 
+        tokio::fs::create_dir_all(index.document_blob_dir()).await?;
         index.ensure_index().await?;
 
         Ok(index)
@@ -292,6 +296,9 @@ impl SearchIndex {
             return Ok(outcome);
         }
 
+        let mut documents_to_index = Vec::new();
+        let mut document_ids_to_delete = Vec::new();
+
         for document in documents {
             let mut normalized = normalize_document(document);
             if normalized.title.trim().is_empty() || normalized.body.trim().is_empty() {
@@ -308,19 +315,30 @@ impl SearchIndex {
             .await
             .map_err(|error| ApiError::Internal(error.into()))?;
 
-            let replaced_document_ids = self.persist_document(&normalized).await?;
+            let replaced_document_rows = self.persist_document(&normalized).await?;
 
             if normalized.duplicate_of.is_some() {
-                self.delete_index_document(&normalized.id).await;
+                document_ids_to_delete.push(normalized.id.clone());
                 outcome.duplicate_documents += 1;
             } else {
-                self.index_document(&normalized).await?;
-                for document_id in replaced_document_ids {
-                    self.delete_index_document(&document_id).await;
+                documents_to_index.push(normalized);
+            }
+
+            for row in replaced_document_rows {
+                document_ids_to_delete.push(row.id);
+                if let Some(blob_key) = row.text_blob_key {
+                    self.delete_document_blob(&blob_key).await;
                 }
             }
 
             outcome.accepted_documents += 1;
+        }
+
+        if !documents_to_index.is_empty() {
+            self.bulk_index_documents(&documents_to_index).await?;
+        }
+        if !document_ids_to_delete.is_empty() {
+            self.bulk_delete_documents(&document_ids_to_delete).await;
         }
 
         Ok(outcome)
@@ -431,6 +449,14 @@ impl SearchIndex {
     }
 
     pub async fn delete_document(&self, document_id: &str) -> Result<bool, ApiError> {
+        let blob_key: Option<String> =
+            sqlx::query_scalar("select text_blob_key from documents where id = $1")
+                .bind(document_id)
+                .fetch_optional(&self.pg_pool)
+                .await
+                .map_err(|error| ApiError::Internal(error.into()))?
+                .flatten();
+
         let deleted = sqlx::query("delete from documents where id = $1")
             .bind(document_id)
             .execute(&self.pg_pool)
@@ -440,6 +466,9 @@ impl SearchIndex {
 
         if deleted > 0 {
             self.delete_index_document(document_id).await;
+            if let Some(blob_key) = blob_key {
+                self.delete_document_blob(&blob_key).await;
+            }
         }
 
         Ok(deleted > 0)
@@ -452,8 +481,8 @@ impl SearchIndex {
         }
 
         let pattern = format!("%{normalized}%");
-        let document_ids: Vec<String> = sqlx::query_scalar(
-            "select id from documents where lower(host) like $1 or lower(canonical_url) like $1",
+        let document_rows = sqlx::query_as::<_, DeletedDocumentRow>(
+            "select id, text_blob_key from documents where lower(host) like $1 or lower(canonical_url) like $1",
         )
         .bind(&pattern)
         .fetch_all(&self.pg_pool)
@@ -469,8 +498,19 @@ impl SearchIndex {
         .map_err(|error| ApiError::Internal(error.into()))?
         .rows_affected();
 
-        for id in document_ids {
-            self.delete_index_document(&id).await;
+        if !document_rows.is_empty() {
+            self.bulk_delete_documents(
+                &document_rows
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await;
+            for row in document_rows {
+                if let Some(blob_key) = row.text_blob_key {
+                    self.delete_document_blob(&blob_key).await;
+                }
+            }
         }
 
         Ok(PurgeSiteResponse {
@@ -481,9 +521,13 @@ impl SearchIndex {
     async fn persist_document(
         &self,
         document: &NormalizedDocument,
-    ) -> Result<Vec<String>, ApiError> {
+    ) -> Result<Vec<DeletedDocumentRow>, ApiError> {
         let suggest_terms = serde_json::to_value(&document.suggest_terms)
             .map_err(|error| ApiError::Internal(error.into()))?;
+        let stored_body = document.body.chars().take(2_048).collect::<String>();
+        let text_blob_key = format!("documents/{}.txt", document.id);
+        self.write_document_blob(&text_blob_key, &document.body)
+            .await?;
 
         sqlx::query(
             r#"
@@ -497,6 +541,7 @@ impl SearchIndex {
                 display_url,
                 snippet,
                 body,
+                text_blob_key,
                 language,
                 site_authority,
                 suggest_terms,
@@ -533,6 +578,7 @@ impl SearchIndex {
                 $19,
                 $20,
                 $21,
+                $22,
                 setweight(to_tsvector('simple', $6), 'A') ||
                 setweight(to_tsvector('simple', $8), 'B') ||
                 setweight(to_tsvector('simple', $9), 'C') ||
@@ -547,6 +593,7 @@ impl SearchIndex {
                 display_url = excluded.display_url,
                 snippet = excluded.snippet,
                 body = excluded.body,
+                text_blob_key = excluded.text_blob_key,
                 language = excluded.language,
                 site_authority = excluded.site_authority,
                 suggest_terms = excluded.suggest_terms,
@@ -570,7 +617,8 @@ impl SearchIndex {
         .bind(&document.title)
         .bind(&document.display_url)
         .bind(&document.snippet)
-        .bind(&document.body)
+        .bind(&stored_body)
+        .bind(&text_blob_key)
         .bind(&document.language)
         .bind(document.site_authority)
         .bind(&suggest_terms)
@@ -587,19 +635,21 @@ impl SearchIndex {
         .await
         .map_err(|error| ApiError::Internal(error.into()))?;
 
-        let mut replaced_document_ids = Vec::new();
+        let mut replaced_document_rows = Vec::new();
         if document.duplicate_of.is_none() {
-            replaced_document_ids = sqlx::query_scalar(
-                "delete from documents where canonical_url = $1 and id != $2 and duplicate_of is null returning id",
+            replaced_document_rows = sqlx::query_as::<_, DeletedDocumentRow>(
+                "delete from documents
+                 where canonical_url = $1 and id != $2 and duplicate_of is null
+                 returning id, text_blob_key",
             )
-                .bind(&document.canonical_url)
-                .bind(&document.id)
-                .fetch_all(&self.pg_pool)
-                .await
-                .map_err(|error| ApiError::Internal(error.into()))?;
+            .bind(&document.canonical_url)
+            .bind(&document.id)
+            .fetch_all(&self.pg_pool)
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?;
         }
 
-        Ok(replaced_document_ids)
+        Ok(replaced_document_rows)
     }
 
     async fn ensure_index(&self) -> anyhow::Result<()> {
@@ -677,31 +727,10 @@ impl SearchIndex {
         })
     }
 
-    async fn index_document(&self, document: &NormalizedDocument) -> Result<(), ApiError> {
-        let payload = IndexedDocumentPayload::from_document(document);
-        let response = self
-            .http_client
-            .put(self.index_endpoint(&format!("/_doc/{}?refresh=wait_for", document.id)))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|error| ApiError::Internal(error.into()))?;
-
-        if response.status().is_success() {
-            return Ok(());
-        }
-
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        Err(ApiError::Internal(anyhow::anyhow!(
-            "opensearch index write failed: {status} {body}"
-        )))
-    }
-
     async fn delete_index_document(&self, document_id: &str) {
         match self
             .http_client
-            .delete(self.index_endpoint(&format!("/_doc/{document_id}?refresh=wait_for")))
+            .delete(self.index_endpoint(&format!("/_doc/{document_id}")))
             .send()
             .await
         {
@@ -717,6 +746,78 @@ impl SearchIndex {
         }
     }
 
+    async fn bulk_index_documents(&self, documents: &[NormalizedDocument]) -> Result<(), ApiError> {
+        let mut body = String::new();
+        for document in documents {
+            writeln!(
+                &mut body,
+                "{}",
+                serde_json::json!({ "index": { "_id": document.id } })
+            )
+            .expect("write to string");
+            writeln!(
+                &mut body,
+                "{}",
+                serde_json::to_string(&IndexedDocumentPayload::from_document(document))
+                    .map_err(|error| ApiError::Internal(error.into()))?
+            )
+            .expect("write to string");
+        }
+
+        self.submit_bulk_request(body).await
+    }
+
+    async fn bulk_delete_documents(&self, document_ids: &[String]) {
+        let mut body = String::new();
+        for document_id in document_ids {
+            writeln!(
+                &mut body,
+                "{}",
+                serde_json::json!({ "delete": { "_id": document_id } })
+            )
+            .expect("write to string");
+        }
+
+        if let Err(error) = self.submit_bulk_request(body).await {
+            warn!(
+                ?error,
+                count = document_ids.len(),
+                "failed to delete opensearch documents in bulk"
+            );
+        }
+    }
+
+    async fn submit_bulk_request(&self, body: String) -> Result<(), ApiError> {
+        let response = self
+            .http_client
+            .post(self.index_endpoint("/_bulk"))
+            .header("content-type", "application/x-ndjson")
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiError::Internal(anyhow::anyhow!(
+                "opensearch bulk request failed: {status} {body}"
+            )));
+        }
+
+        let payload = response
+            .json::<OpenSearchBulkResponse>()
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?;
+        if payload.errors {
+            return Err(ApiError::Internal(anyhow::anyhow!(
+                "opensearch bulk request reported item failures"
+            )));
+        }
+
+        Ok(())
+    }
+
     fn index_endpoint(&self, suffix: &str) -> String {
         format!(
             "{}/{}{}",
@@ -724,6 +825,34 @@ impl SearchIndex {
             self.opensearch_index,
             suffix
         )
+    }
+
+    fn document_blob_dir(&self) -> PathBuf {
+        self.blob_store_dir.join("documents")
+    }
+
+    fn document_blob_path(&self, blob_key: &str) -> PathBuf {
+        self.blob_store_dir.join(blob_key)
+    }
+
+    async fn write_document_blob(&self, blob_key: &str, body: &str) -> Result<(), ApiError> {
+        let path = self.document_blob_path(blob_key);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| ApiError::Internal(error.into()))?;
+        }
+        tokio::fs::write(path, body)
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))
+    }
+
+    async fn delete_document_blob(&self, blob_key: &str) {
+        match tokio::fs::remove_file(self.document_blob_path(blob_key)).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => warn!(?error, blob_key, "failed to delete document blob"),
+        }
     }
 }
 
@@ -748,7 +877,18 @@ struct DocumentSummaryRow {
     duplicate_of: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct DeletedDocumentRow {
+    id: String,
+    text_blob_key: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct OpenSearchCountResponse {
     count: i64,
+}
+
+#[derive(Deserialize)]
+struct OpenSearchBulkResponse {
+    errors: bool,
 }
