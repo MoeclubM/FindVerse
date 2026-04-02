@@ -29,12 +29,11 @@ impl FrontierService {
         now: DateTime<Utc>,
     ) -> Result<FrontierClaim, ApiError> {
         let lease_id = Uuid::now_v7().to_string();
-        let lease_expires = now + chrono::Duration::minutes(30);
         let claimed_rows = sqlx::query_as::<_, ClaimedJobRow>(
             "with active_counts as (
                  select origin_key, count(*)::integer as active_count
                  from crawl_jobs
-                 where owner_developer_id = $5
+                 where owner_developer_id = $4
                    and status in ('claimed', 'ingesting')
                  group by origin_key
              ),
@@ -57,11 +56,11 @@ impl FrontierService {
                   and o.origin_key = j.origin_key
                  left join active_counts
                    on active_counts.origin_key = j.origin_key
-                 where j.owner_developer_id = $5
+                 where j.owner_developer_id = $4
                    and j.status = 'queued'
                    and (j.next_retry_at is null or j.next_retry_at <= $2)
                    and o.next_allowed_at <= $2
-                   and ($7 or not j.requires_js)
+                   and ($6 or not j.requires_js)
              ),
              candidate_jobs as (
                  select j.id, ranked_jobs.origin_key
@@ -69,7 +68,7 @@ impl FrontierService {
                  join ranked_jobs on ranked_jobs.id = j.id
                  where ranked_jobs.active_count + ranked_jobs.origin_rank <= ranked_jobs.same_origin_concurrency
                  order by ranked_jobs.next_allowed_at asc, ranked_jobs.priority desc, ranked_jobs.discovered_at asc
-                 limit $6
+                 limit $5
                  for update of j skip locked
              ),
              claimed as (
@@ -77,9 +76,7 @@ impl FrontierService {
                  set status = 'claimed',
                      claimed_by = $1,
                      claimed_at = $2,
-                     lease_expires_at = $3,
-                     lease_id = $4,
-                     report_accepted_at = null,
+                     lease_id = $3,
                      attempt_count = attempt_count + 1
                  where id in (select id from candidate_jobs)
                  returning id, url, origin_key, source, depth, max_depth, attempt_count, discovered_at, network
@@ -93,7 +90,7 @@ impl FrontierService {
                      from claimed
                      group by origin_key
                  ) touched
-                 where origin.owner_developer_id = $5
+                 where origin.owner_developer_id = $4
                    and origin.origin_key = touched.origin_key
              )
              select id, url, origin_key, source, depth, max_depth, attempt_count, discovered_at, network
@@ -101,7 +98,6 @@ impl FrontierService {
         )
         .bind(crawler_id)
         .bind(now)
-        .bind(lease_expires)
         .bind(&lease_id)
         .bind(owner_developer_id)
         .bind(max_jobs.clamp(1, 100) as i64)
@@ -167,8 +163,7 @@ impl FrontierService {
 
         sqlx::query(
             "update crawl_jobs
-             set status = 'ingesting',
-                 report_accepted_at = coalesce(report_accepted_at, now())
+             set status = 'ingesting'
              where owner_developer_id = $1
                and claimed_by = $2
                and lease_id = $3

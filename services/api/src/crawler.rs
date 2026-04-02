@@ -1790,9 +1790,7 @@ impl CrawlerStore {
                      set status = 'queued',
                          claimed_by = null,
                          claimed_at = null,
-                         lease_expires_at = null,
                          lease_id = null,
-                         report_accepted_at = null,
                          next_retry_at = $2,
                          failure_kind = $3,
                          failure_message = $4,
@@ -1850,9 +1848,7 @@ impl CrawlerStore {
                      set status = 'queued',
                          claimed_by = null,
                          claimed_at = null,
-                         lease_expires_at = null,
                          lease_id = null,
-                         report_accepted_at = null,
                          next_retry_at = null,
                          failure_kind = null,
                          failure_message = null,
@@ -2210,7 +2206,6 @@ impl CrawlerStore {
              set status = 'failed',
                  claimed_by = null,
                  claimed_at = null,
-                 lease_expires_at = null,
                  lease_id = null,
                  next_retry_at = null,
                  failure_kind = 'projection_error',
@@ -2381,7 +2376,6 @@ impl CrawlerStore {
         self.recover_stale_ingests(claim_timeout).await?;
         self.process_pending_ingests(search_index, 64).await?;
         self.requeue_stale_jobs(now, claim_timeout).await?;
-        self.prune_stale_crawlers(now, claim_timeout).await?;
         self.trim_events().await?;
         self.schedule_adaptive_recrawl(now).await?;
         crate::ranking::update_site_authority(&self.pg_pool).await?;
@@ -2492,9 +2486,7 @@ impl CrawlerStore {
              SET status = 'queued',
                  claimed_by = NULL,
                  claimed_at = NULL,
-                 lease_expires_at = NULL,
                  lease_id = NULL,
-                 report_accepted_at = NULL,
                  next_retry_at = NULL,
                  failure_kind = NULL,
                  failure_message = NULL,
@@ -3091,19 +3083,48 @@ impl CrawlerStore {
     ) -> Result<(), ApiError> {
         let timeout_secs = claim_timeout.as_secs() as i64;
         let cutoff = now - chrono::Duration::seconds(timeout_secs);
+        let next_retry_at = now + chrono::Duration::seconds(30);
 
         let stale = sqlx::query_as::<_, StaleJobRow>(
             "with stale as (
                  update crawl_jobs
-                 set status = 'queued',
+                 set status = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then 'dead_letter'
+                         else 'queued'
+                     end,
                      claimed_by = null,
                      claimed_at = null,
-                     lease_expires_at = null,
                      lease_id = null,
-                     report_accepted_at = null,
-                     next_retry_at = $2
+                     next_retry_at = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then null
+                         else $2
+                     end,
+                     failure_kind = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then 'claim_timeout'
+                         else failure_kind
+                     end,
+                     failure_message = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then concat(
+                             'claim timed out after ',
+                             greatest(attempt_count, 1),
+                             ' attempts'
+                         )
+                         else failure_message
+                     end,
+                     finished_at = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then $3
+                         else null
+                     end
                  where status = 'claimed' and claimed_at < $1
-                 returning id, owner_developer_id, origin_key, url, claimed_by
+                 returning
+                     id,
+                     owner_developer_id,
+                     origin_key,
+                     url,
+                     claimed_by,
+                     status,
+                     attempt_count,
+                     max_attempts
              ),
              touched_origins as (
                  update crawl_origins origin
@@ -3118,37 +3139,45 @@ impl CrawlerStore {
                  where origin.owner_developer_id = touched.owner_developer_id
                    and origin.origin_key = touched.origin_key
              )
-             select id, owner_developer_id, url, claimed_by from stale",
+             select id, owner_developer_id, url, claimed_by, status, attempt_count, max_attempts from stale",
         )
         .bind(cutoff)
-        .bind(now + chrono::Duration::seconds(30))
+        .bind(next_retry_at)
+        .bind(now)
         .fetch_all(&self.pg_pool)
         .await
         .map_err(|e| ApiError::Internal(e.into()))?;
 
         for job in stale {
-            self.push_event(
-                &job.owner_developer_id,
-                "stale-job-requeued",
-                "ok",
-                format!("requeued stale in-flight job {}", job.id),
-                Some(job.url),
-                job.claimed_by,
-            )
-            .await?;
+            if job.status == "dead_letter" {
+                self.push_event(
+                    &job.owner_developer_id,
+                    "stale-job-dead-lettered",
+                    "error",
+                    format!(
+                        "moved stale in-flight job {} to dead letter after {}/{} claims",
+                        job.id, job.attempt_count, job.max_attempts
+                    ),
+                    Some(job.url),
+                    job.claimed_by,
+                )
+                .await?;
+            } else {
+                self.push_event(
+                    &job.owner_developer_id,
+                    "stale-job-requeued",
+                    "ok",
+                    format!(
+                        "requeued stale in-flight job {} after {}/{} claims",
+                        job.id, job.attempt_count, job.max_attempts
+                    ),
+                    Some(job.url),
+                    job.claimed_by,
+                )
+                .await?;
+            }
         }
 
-        Ok(())
-    }
-
-    async fn prune_stale_crawlers(
-        &self,
-        _now: DateTime<Utc>,
-        _claim_timeout: Duration,
-    ) -> Result<(), ApiError> {
-        // Keep crawler identities stable across long offline windows.
-        // Online/offline state is derived from last_seen_at in the console,
-        // so maintenance only needs to requeue stale claimed jobs.
         Ok(())
     }
 
@@ -3333,6 +3362,9 @@ struct StaleJobRow {
     owner_developer_id: String,
     url: String,
     claimed_by: Option<String>,
+    status: String,
+    attempt_count: i32,
+    max_attempts: i32,
 }
 
 #[derive(sqlx::FromRow)]

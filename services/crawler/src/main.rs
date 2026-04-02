@@ -55,12 +55,6 @@ async fn main() -> anyhow::Result<()> {
             llm_min_score,
             llm_max_body_chars,
         } => {
-            if max_jobs != concurrency {
-                tracing::warn!(
-                    "--max-jobs is ignored; claim batch now follows heartbeat-delivered worker concurrency"
-                );
-            }
-
             let parsed_domains: Vec<String> = allowed_domains
                 .map(|d| {
                     d.split(',')
@@ -86,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty()),
                 auth_token: crawler_key,
+                max_jobs: max_jobs.max(1),
                 poll_interval_secs,
                 once,
                 concurrency,

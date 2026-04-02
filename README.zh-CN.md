@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/ins
 如果你要在灰度时固定某个正式版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.13 --max-jobs 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.14 --max-jobs 16 --skip-browser-install
 ```
 
 ## 开发说明

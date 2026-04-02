@@ -60,7 +60,7 @@ The installer supports both `x86_64/amd64` and `aarch64/arm64` Linux hosts. It a
 To pin a specific release during rollout:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.13 --max-jobs 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.14 --max-jobs 16 --skip-browser-install
 ```
 
 ## Development Notes

@@ -169,7 +169,11 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         }
 
         let current_runtime = *runtime_config.read().await;
-        let claim = claim_jobs(&api_client, &config, current_runtime.worker_concurrency).await?;
+        let claim_batch_size = config
+            .max_jobs
+            .min(current_runtime.worker_concurrency)
+            .max(1);
+        let claim = claim_jobs(&api_client, &config, claim_batch_size).await?;
         if claim.jobs.is_empty() {
             info!(
                 "crawler {} received no jobs, frontier depth {}",
@@ -191,7 +195,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         let lease_id = claim.lease_id.clone();
         let js_render_limiter = Arc::new(Semaphore::new(current_runtime.js_render_concurrency));
         let capabilities = config.capabilities.clone();
-        let results: Vec<CrawlResultReport> = stream::iter(claim.jobs)
+        let mut pending_results = stream::iter(claim.jobs)
             .map(|job| {
                 let clearnet_clients = clearnet_clients.clone();
                 let tor_clients = tor_clients.clone();
@@ -239,19 +243,28 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                     .await
                 }
             })
-            .buffer_unordered(current_runtime.worker_concurrency)
-            .collect()
-            .await;
+            .buffer_unordered(current_runtime.worker_concurrency);
 
-        let report = submit_report(&api_client, &config, lease_id.as_deref(), results).await?;
-        info!(
-            "crawler {} staged {} results for lease {}, pending ingest {}, frontier depth {}",
-            config.crawler_id,
-            report.staged_results,
-            report.lease_id,
-            report.pending_results,
-            report.frontier_depth,
-        );
+        let mut reported_jobs = 0usize;
+        let mut last_report: Option<SubmitCrawlReportResponse> = None;
+        while let Some(result) = pending_results.next().await {
+            let report =
+                submit_report(&api_client, &config, lease_id.as_deref(), vec![result]).await?;
+            reported_jobs += 1;
+            last_report = Some(report);
+        }
+
+        if let Some(report) = last_report {
+            info!(
+                "crawler {} staged {} results for lease {}, reported {}, pending ingest {}, frontier depth {}",
+                config.crawler_id,
+                report.staged_results,
+                report.lease_id,
+                reported_jobs,
+                report.pending_results,
+                report.frontier_depth,
+            );
+        }
 
         if config.once || shutdown_requested.load(Ordering::Relaxed) {
             if shutdown_requested.load(Ordering::Relaxed) {

@@ -67,6 +67,8 @@ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/ins
 
 The installer supports both `x86_64/amd64` and `aarch64/arm64` Linux hosts. It selects the matching release asset automatically from the current machine architecture and always downloads from GitHub Releases.
 
+`--max-jobs` is a local claim cap for that node. The real claim count is still capped by the concurrency delivered from the control plane heartbeat.
+
 What the installer writes:
 
 - binary: `/opt/findverse-crawler/findverse-crawler`
@@ -79,7 +81,7 @@ The first install auto-generates `CRAWLER_ID` locally and writes it into `/etc/f
 Pin a specific release during rollout when needed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.13 --max-jobs 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.14 --max-jobs 16 --skip-browser-install
 ```
 
 ## Online Deployment

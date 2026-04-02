@@ -54,7 +54,7 @@ pub enum Command {
         /// Fixed crawler key
         #[arg(long)]
         crawler_key: String,
-        /// Claim batch size. Values below --concurrency are ignored.
+        /// Local claim cap. Actual claim count is also capped by server-delivered concurrency.
         #[arg(long, default_value_t = 16)]
         max_jobs: usize,
         #[arg(long, default_value_t = 5)]
@@ -269,6 +269,7 @@ pub struct WorkerConfig {
     pub crawler_id: String,
     pub crawler_name: Option<String>,
     pub auth_token: String,
+    pub max_jobs: usize,
     pub poll_interval_secs: u64,
     pub once: bool,
     pub concurrency: usize,

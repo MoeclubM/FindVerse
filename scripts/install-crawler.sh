@@ -35,7 +35,7 @@ Options:
   --service-name <name>         systemd service name. Default: findverse-crawler
   --install-dir <dir>           Install directory. Default: /opt/findverse-crawler
   --env-file <path>             Config file path. Default: /etc/findverse-crawler/crawler.env
-  --max-jobs <n>                Claim batch size. Defaults to concurrency when omitted
+  --max-jobs <n>                Local claim cap. Actual claim count also follows server concurrency
   --poll-interval-secs <n>      Poll interval. Reuses existing config if omitted
   --allowed-domains <csv>       Optional domain allowlist
   --proxy <url>                 Optional outbound proxy
@@ -352,11 +352,6 @@ main() {
   [[ -n "$SERVER_URL" ]] || fail "--server is required on first install"
   ensure_browser
 
-  if [[ -n "$VERSION" ]]; then
-    SOURCE_LABEL="release:${VERSION}"
-  else
-    SOURCE_LABEL="release:latest"
-  fi
   download_release_archive "$suffix"
   archive_path="$DOWNLOADED_ARCHIVE_PATH"
 
