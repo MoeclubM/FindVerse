@@ -29,6 +29,8 @@ use crate::{
     },
 };
 
+const DEFAULT_CRAWLER_CLAIM_TIMEOUT_SECS: u64 = 300;
+
 #[derive(Debug, Clone)]
 pub(crate) struct CrawlerStore {
     pg_pool: PgPool,
@@ -429,7 +431,7 @@ impl CrawlerStore {
         crawler_id: &str,
     ) -> Result<(), ApiError> {
         let row = sqlx::query_as::<_, CrawlerDeleteRow>(
-            "select id, name
+            "select id, name, last_seen_at
              from crawlers
              where id = $1 and owner_developer_id = $2",
         )
@@ -443,18 +445,47 @@ impl CrawlerStore {
         let claimed_job_exists: Option<String> = sqlx::query_scalar(
             "select id
              from crawl_jobs
-             where claimed_by = $1 and status in ('claimed', 'ingesting')
+             where owner_developer_id = $1
+               and claimed_by = $2
+               and status in ('claimed', 'ingesting')
              limit 1",
         )
+        .bind(developer_id)
         .bind(crawler_id)
         .fetch_optional(&self.pg_pool)
         .await
         .map_err(|e| ApiError::Internal(e.into()))?;
 
         if claimed_job_exists.is_some() {
-            return Err(ApiError::Conflict(
-                "crawler still has claimed jobs".to_string(),
-            ));
+            let claim_timeout_secs = self
+                .get_system_config("crawler.claim_timeout_secs")
+                .await
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_CRAWLER_CLAIM_TIMEOUT_SECS);
+            let now = Utc::now();
+            let claim_timeout = Duration::from_secs(claim_timeout_secs.max(1));
+
+            if crawler_seen_within_timeout(row.last_seen_at, now, claim_timeout) {
+                return Err(ApiError::Conflict(
+                    "crawler still has claimed jobs".to_string(),
+                ));
+            }
+
+            let (requeued_count, dead_letter_count) = self
+                .release_claimed_jobs_for_deleted_crawler(developer_id, crawler_id, now)
+                .await?;
+
+            self.push_event(
+                developer_id,
+                "crawler-delete-detached-jobs",
+                "ok",
+                format!(
+                    "detached offline crawler {crawler_id} from in-flight jobs (requeued: {requeued_count}, dead_letter: {dead_letter_count})"
+                ),
+                None,
+                Some(crawler_id.to_string()),
+            )
+            .await?;
         }
 
         sqlx::query("delete from crawlers where id = $1 and owner_developer_id = $2")
@@ -3181,6 +3212,76 @@ impl CrawlerStore {
         Ok(())
     }
 
+    async fn release_claimed_jobs_for_deleted_crawler(
+        &self,
+        owner_developer_id: &str,
+        crawler_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(usize, usize), ApiError> {
+        let next_retry_at = now + chrono::Duration::seconds(30);
+        let counts: (Option<i64>, Option<i64>) = sqlx::query_as(
+            "with released as (
+                 update crawl_jobs
+                 set status = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then 'dead_letter'
+                         else 'queued'
+                     end,
+                     claimed_by = null,
+                     claimed_at = null,
+                     lease_id = null,
+                     next_retry_at = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then null
+                         else $3
+                     end,
+                     failure_kind = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then 'crawler_deleted'
+                         else failure_kind
+                     end,
+                     failure_message = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then 'crawler was deleted while the job was still claimed'
+                         else failure_message
+                     end,
+                     finished_at = case
+                         when greatest(max_attempts, 1) <= greatest(attempt_count, 1) then $4
+                         else null
+                     end
+                 where owner_developer_id = $1
+                   and claimed_by = $2
+                   and status = 'claimed'
+                 returning owner_developer_id, origin_key, status
+             ),
+             touched_origins as (
+                 update crawl_origins origin
+                 set in_flight_count = greatest(origin.in_flight_count - touched.released_count, 0),
+                     next_allowed_at = greatest(origin.next_allowed_at, $3),
+                     updated_at = $4
+                 from (
+                     select owner_developer_id, origin_key, count(*)::integer as released_count
+                     from released
+                     group by owner_developer_id, origin_key
+                 ) touched
+                 where origin.owner_developer_id = touched.owner_developer_id
+                   and origin.origin_key = touched.origin_key
+             )
+             select
+                 count(*) filter (where status = 'queued') as requeued_count,
+                 count(*) filter (where status = 'dead_letter') as dead_letter_count
+             from released",
+        )
+        .bind(owner_developer_id)
+        .bind(crawler_id)
+        .bind(next_retry_at)
+        .bind(now)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        Ok((
+            counts.0.unwrap_or(0).max(0) as usize,
+            counts.1.unwrap_or(0).max(0) as usize,
+        ))
+    }
+
     async fn get_config(&self, key: &str) -> Result<Option<String>, ApiError> {
         sqlx::query_scalar::<_, String>("select value from system_config where key = $1")
             .bind(key)
@@ -3283,6 +3384,7 @@ struct CrawlerMetadataRow {
 struct CrawlerDeleteRow {
     id: String,
     name: String,
+    last_seen_at: Option<DateTime<Utc>>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3829,7 +3931,6 @@ fn crawler_runtime_metadata(value: &serde_json::Value) -> StoredCrawlerMetadata 
     serde_json::from_value(value.clone()).unwrap_or_default()
 }
 
-#[cfg(test)]
 fn crawler_seen_within_timeout(
     last_seen_at: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
