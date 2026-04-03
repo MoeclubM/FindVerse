@@ -442,21 +442,24 @@ impl CrawlerStore {
         .map_err(|e| ApiError::Internal(e.into()))?
         .ok_or_else(|| ApiError::NotFound("crawler not found".to_string()))?;
 
-        let claimed_job_exists: Option<String> = sqlx::query_scalar(
-            "select id
+        let in_flight_jobs = sqlx::query_as::<_, CrawlerDeleteInFlightRow>(
+            "select
+                 count(*) filter (where status = 'claimed') as claimed_jobs,
+                 count(*) filter (where status = 'ingesting') as ingesting_jobs
              from crawl_jobs
              where owner_developer_id = $1
                and claimed_by = $2
-               and status in ('claimed', 'ingesting')
-             limit 1",
+               and status in ('claimed', 'ingesting')",
         )
         .bind(developer_id)
         .bind(crawler_id)
-        .fetch_optional(&self.pg_pool)
+        .fetch_one(&self.pg_pool)
         .await
         .map_err(|e| ApiError::Internal(e.into()))?;
+        let claimed_jobs = in_flight_jobs.claimed_jobs.max(0) as usize;
+        let ingesting_jobs = in_flight_jobs.ingesting_jobs.max(0) as usize;
 
-        if claimed_job_exists.is_some() {
+        if claimed_jobs > 0 || ingesting_jobs > 0 {
             let claim_timeout_secs = self
                 .get_system_config("crawler.claim_timeout_secs")
                 .await
@@ -467,21 +470,36 @@ impl CrawlerStore {
 
             if crawler_seen_within_timeout(row.last_seen_at, now, claim_timeout) {
                 return Err(ApiError::Conflict(
-                    "crawler still has claimed jobs".to_string(),
+                    "crawler still has in-flight jobs".to_string(),
                 ));
             }
 
-            let (requeued_count, dead_letter_count) = self
-                .release_claimed_jobs_for_deleted_crawler(developer_id, crawler_id, now)
-                .await?;
+            let (requeued_count, dead_letter_count) = if claimed_jobs > 0 {
+                self.release_claimed_jobs_for_deleted_crawler(developer_id, crawler_id, now)
+                    .await?
+            } else {
+                (0, 0)
+            };
+
+            let detached_message = if claimed_jobs == 0 {
+                format!(
+                    "deleted offline crawler {crawler_id}; ingesting jobs still finishing: {ingesting_jobs}"
+                )
+            } else if ingesting_jobs == 0 {
+                format!(
+                    "deleted offline crawler {crawler_id}; released claimed jobs (requeued: {requeued_count}, dead_letter: {dead_letter_count})"
+                )
+            } else {
+                format!(
+                    "deleted offline crawler {crawler_id}; released claimed jobs (requeued: {requeued_count}, dead_letter: {dead_letter_count}), ingesting jobs still finishing: {ingesting_jobs}"
+                )
+            };
 
             self.push_event(
                 developer_id,
                 "crawler-delete-detached-jobs",
                 "ok",
-                format!(
-                    "detached offline crawler {crawler_id} from in-flight jobs (requeued: {requeued_count}, dead_letter: {dead_letter_count})"
-                ),
+                detached_message,
                 None,
                 Some(crawler_id.to_string()),
             )
@@ -765,10 +783,26 @@ impl CrawlerStore {
                 .await,
             1,
         );
+        let claim_timeout_secs = self
+            .get_system_config("crawler.claim_timeout_secs")
+            .await
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CRAWLER_CLAIM_TIMEOUT_SECS);
+        let claim_timeout = Duration::from_secs(claim_timeout_secs.max(1));
+        let now = Utc::now();
         let crawlers: Vec<CrawlerMetadata> = sqlx::query_as::<_, CrawlerMetadataRow>(
-            "select id, name, preview, created_at, revoked_at, last_seen_at, last_claimed_at, jobs_claimed, jobs_reported, metadata
-             from crawlers where owner_developer_id = $1
-             order by created_at desc",
+            "select crawlers.id, crawlers.name, crawlers.preview, crawlers.created_at, crawlers.revoked_at, crawlers.last_seen_at, crawlers.last_claimed_at, crawlers.jobs_claimed, crawlers.jobs_reported, coalesce(job_counts.in_flight_jobs, 0) as in_flight_jobs, crawlers.metadata
+             from crawlers
+             left join (
+                 select claimed_by as crawler_id, count(*)::bigint as in_flight_jobs
+                 from crawl_jobs
+                 where owner_developer_id = $1
+                   and claimed_by is not null
+                   and status in ('claimed', 'ingesting')
+                 group by claimed_by
+             ) job_counts on job_counts.crawler_id = crawlers.id
+             where crawlers.owner_developer_id = $1
+             order by crawlers.created_at desc",
         )
         .bind(developer_id)
         .fetch_all(&self.pg_pool)
@@ -777,6 +811,8 @@ impl CrawlerStore {
         .into_iter()
         .map(|r| {
             let metadata = crawler_runtime_metadata(&r.metadata);
+            let in_flight_jobs = r.in_flight_jobs.max(0) as u64;
+            let online = crawler_seen_within_timeout(r.last_seen_at, now, claim_timeout);
             CrawlerMetadata {
                 supports_js_render: metadata.js_render,
                 id: r.id,
@@ -786,6 +822,9 @@ impl CrawlerStore {
                 revoked_at: r.revoked_at,
                 last_seen_at: r.last_seen_at,
                 last_claimed_at: r.last_claimed_at,
+                online,
+                can_delete: in_flight_jobs == 0 || !online,
+                in_flight_jobs,
                 jobs_claimed: r.jobs_claimed as u64,
                 jobs_reported: r.jobs_reported as u64,
                 worker_concurrency: metadata
@@ -3377,6 +3416,7 @@ struct CrawlerMetadataRow {
     last_claimed_at: Option<DateTime<Utc>>,
     jobs_claimed: i64,
     jobs_reported: i64,
+    in_flight_jobs: i64,
     metadata: serde_json::Value,
 }
 
@@ -3385,6 +3425,12 @@ struct CrawlerDeleteRow {
     id: String,
     name: String,
     last_seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CrawlerDeleteInFlightRow {
+    claimed_jobs: i64,
+    ingesting_jobs: i64,
 }
 
 #[derive(sqlx::FromRow)]

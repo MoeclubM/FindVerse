@@ -1,5 +1,15 @@
 import { ExitIcon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
-import { Settings, Users, Bot, FileText, ListTodo, LayoutDashboard, Orbit, Globe2 } from "lucide-react";
+import {
+  Settings,
+  Users,
+  Bot,
+  FileText,
+  ListTodo,
+  LayoutDashboard,
+  Orbit,
+  Globe2,
+  type LucideIcon,
+} from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -16,7 +26,10 @@ import {
   logout,
 } from "../api";
 import { AppTopbar, TopbarActionButton } from "./common/AppTopbar";
-import { ConsoleProvider, type ConsoleContextValue } from "./console/ConsoleContext";
+import {
+  ConsoleProvider,
+  type ConsoleContextValue,
+} from "./console/ConsoleContext";
 import { ConsoleOverview } from "./console/ConsoleOverview";
 import { ConsoleUsers } from "./console/ConsoleUsers";
 import { ConsoleCrawlTasks } from "./console/ConsoleCrawlTasks";
@@ -28,24 +41,57 @@ import { ConsoleSettings } from "./console/ConsoleSettings";
 import type { ThemeMode } from "./ThemeSwitcher";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Button } from "./ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
 import { Input } from "./ui/input";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
 
 const CONSOLE_TOKEN_KEY = "findverse_console_token";
-const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
+const SITE_NAME =
+  (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() ||
+  "FindVerse";
 
-type ConsoleTab = "overview" | "users" | "tasks" | "domains" | "jobs" | "workers" | "documents" | "settings";
+type ConsoleTab =
+  | "overview"
+  | "users"
+  | "tasks"
+  | "domains"
+  | "jobs"
+  | "workers"
+  | "documents"
+  | "settings";
+
+type ConsoleSidebarItem = {
+  key: ConsoleTab;
+  label: string;
+  icon: LucideIcon;
+  badge?: string;
+};
+
+type ConsoleSidebarGroup = {
+  label: string;
+  items: ConsoleSidebarItem[];
+};
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -78,7 +124,9 @@ async function refreshConsoleData(
 async function refreshDocuments(
   token: string,
   actions: {
-    setDocuments: (value: Awaited<ReturnType<typeof listDocuments>> | null) => void;
+    setDocuments: (
+      value: Awaited<ReturnType<typeof listDocuments>> | null,
+    ) => void;
     setFlash: (value: string | null) => void;
   },
   refreshFailedMessage: string,
@@ -102,11 +150,15 @@ export function ConsolePage(props: {
 }) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<ConsoleTab>("overview");
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(CONSOLE_TOKEN_KEY));
+  const [token, setToken] = useState<string | null>(() =>
+    localStorage.getItem(CONSOLE_TOKEN_KEY),
+  );
   const [session, setSession] = useState<AdminSession | null>(null);
   const [overview, setOverview] = useState<CrawlOverview | null>(null);
   const [developers, setDevelopers] = useState<AdminDeveloperRecord[]>([]);
-  const [documents, setDocuments] = useState<Awaited<ReturnType<typeof listDocuments>> | null>(null);
+  const [documents, setDocuments] = useState<Awaited<
+    ReturnType<typeof listDocuments>
+  > | null>(null);
   const [authLoading, setAuthLoading] = useState(Boolean(token));
   const [busy, setBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -297,51 +349,225 @@ export function ConsolePage(props: {
       developers,
       documents,
     }),
-    [token, busy, setFlash, refreshAll, refreshDocumentList, overview, developers, documents],
+    [
+      token,
+      busy,
+      setFlash,
+      refreshAll,
+      refreshDocumentList,
+      overview,
+      developers,
+      documents,
+    ],
   );
 
-  const tabItems = [
-    { key: "overview" as const, label: t("console.tabs.overview"), icon: LayoutDashboard },
-    { key: "users" as const, label: t("console.tabs.users"), icon: Users },
-    { key: "tasks" as const, label: t("console.tabs.tasks"), icon: Orbit },
-    { key: "domains" as const, label: t("console.tabs.domains"), icon: Globe2 },
-    { key: "jobs" as const, label: t("console.tabs.jobs"), icon: ListTodo },
-    { key: "workers" as const, label: t("console.tabs.workers"), icon: Bot },
-    { key: "documents" as const, label: t("console.tabs.documents"), icon: FileText },
-    { key: "settings" as const, label: t("console.tabs.settings"), icon: Settings },
+  const activeRules =
+    overview?.rules.filter((rule) => rule.enabled).length ?? 0;
+  const queuedJobs = overview?.frontier_depth ?? 0;
+  const inFlightJobs = overview?.in_flight_jobs ?? 0;
+  const indexedDocuments = overview?.indexed_documents ?? 0;
+  const totalWorkers = overview?.crawlers.length ?? 0;
+  const onlineWorkers =
+    overview?.crawlers.filter((crawler) => crawler.online).length ?? 0;
+  const terminalFailures = overview?.terminal_failures ?? 0;
+  const tabGroups: ConsoleSidebarGroup[] = [
+    {
+      label: t("console.sidebar.groups.system"),
+      items: [
+        {
+          key: "overview" as const,
+          label: t("console.tabs.overview"),
+          icon: LayoutDashboard,
+          badge: String(terminalFailures),
+        },
+        {
+          key: "users" as const,
+          label: t("console.tabs.users"),
+          icon: Users,
+          badge: String(developers.length),
+        },
+        {
+          key: "settings" as const,
+          label: t("console.tabs.settings"),
+          icon: Settings,
+          badge: undefined,
+        },
+      ],
+    },
+    {
+      label: t("console.sidebar.groups.crawl"),
+      items: [
+        {
+          key: "tasks" as const,
+          label: t("console.tabs.tasks"),
+          icon: Orbit,
+          badge: String(activeRules),
+        },
+        {
+          key: "domains" as const,
+          label: t("console.tabs.domains"),
+          icon: Globe2,
+          badge: undefined,
+        },
+        {
+          key: "jobs" as const,
+          label: t("console.tabs.jobs"),
+          icon: ListTodo,
+          badge: String(inFlightJobs || queuedJobs),
+        },
+        {
+          key: "workers" as const,
+          label: t("console.tabs.workers"),
+          icon: Bot,
+          badge: `${onlineWorkers}/${totalWorkers}`,
+        },
+        {
+          key: "documents" as const,
+          label: t("console.tabs.documents"),
+          icon: FileText,
+          badge: String(indexedDocuments),
+        },
+      ],
+    },
   ];
+  const activeTabLabel =
+    tabGroups
+      .flatMap((group) => group.items)
+      .find((item) => item.key === activeTab)?.label ?? t("console.title");
 
   const sidebar = (
-    <SidebarContent className="gap-2 p-2.5">
-      <SidebarGroup>
-        <SidebarMenu className="gap-1">
-          {tabItems.map((item) => {
-            const Icon = item.icon;
-            const active = activeTab === item.key;
-            return (
-              <SidebarMenuItem key={item.key}>
-                <SidebarMenuButton
-                  isActive={active}
-                  className="justify-start rounded-lg px-2.5 py-2.5"
-                  onClick={() => {
-                    setActiveTab(item.key);
-                  }}
-                >
-                  <span className="flex items-center gap-3">
-                    <Icon data-icon="inline-start" />
-                    <span className="font-medium">{item.label}</span>
-                  </span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-      </SidebarGroup>
-    </SidebarContent>
+    <>
+      <SidebarHeader>
+        <div className="rounded-[24px] bg-sidebar-primary p-4 text-sidebar-primary-foreground">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-sidebar-primary-foreground/70">
+                {t("console.sidebar.header.eyebrow")}
+              </div>
+              <div className="mt-2 text-lg font-semibold">{SITE_NAME}</div>
+              <p className="mt-1 text-sm text-sidebar-primary-foreground/80">
+                {consoleLabel}
+              </p>
+            </div>
+            <LayoutDashboard className="mt-0.5 opacity-80" />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
+                {t("console.sidebar.header.queued")}
+              </div>
+              <div className="mt-1 text-base font-semibold">{queuedJobs}</div>
+            </div>
+            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
+                {t("console.sidebar.header.in_flight")}
+              </div>
+              <div className="mt-1 text-base font-semibold">{inFlightJobs}</div>
+            </div>
+            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
+                {t("console.sidebar.header.workers")}
+              </div>
+              <div className="mt-1 text-base font-semibold">
+                {onlineWorkers}/{totalWorkers}
+              </div>
+            </div>
+            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
+              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
+                {t("console.sidebar.header.documents")}
+              </div>
+              <div className="mt-1 text-base font-semibold">
+                {indexedDocuments}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-sidebar-border bg-sidebar-accent/60 px-3 py-2 text-sm">
+          <span className="text-sidebar-foreground/65">
+            {t("console.live_refresh")}
+          </span>
+          <SidebarMenuBadge>{terminalFailures}</SidebarMenuBadge>
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        {tabGroups.map((group, index) => (
+          <div key={group.label} className="flex flex-col gap-4">
+            {index > 0 ? <SidebarSeparator /> : null}
+            <SidebarGroup>
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <SidebarMenuItem key={item.key}>
+                      <SidebarMenuButton
+                        isActive={activeTab === item.key}
+                        onClick={() => {
+                          setActiveTab(item.key);
+                        }}
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <Icon data-icon="inline-start" />
+                          <span className="truncate font-medium">
+                            {item.label}
+                          </span>
+                        </span>
+                        {item.badge ? (
+                          <SidebarMenuBadge>{item.badge}</SidebarMenuBadge>
+                        ) : null}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroup>
+          </div>
+        ))}
+      </SidebarContent>
+
+      <SidebarFooter>
+        <div className="rounded-2xl border border-sidebar-border bg-sidebar-accent/60 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-sidebar-foreground/55">
+                {t("console.sidebar.footer.label")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-sidebar-foreground">
+                {session?.username}
+              </div>
+            </div>
+            <SidebarMenuBadge>{developers.length}</SidebarMenuBadge>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                {t("console.sidebar.footer.rules")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-sidebar-foreground">
+                {activeRules}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
+                {t("console.sidebar.footer.failures")}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-sidebar-foreground">
+                {terminalFailures}
+              </div>
+            </div>
+          </div>
+        </div>
+      </SidebarFooter>
+    </>
   );
 
   if (authLoading) {
-    return <div className="grid min-h-screen place-items-center bg-background text-foreground">{t("console.login.checking")}</div>;
+    return (
+      <div className="grid min-h-screen place-items-center bg-background text-foreground">
+        {t("console.login.checking")}
+      </div>
+    );
   }
 
   if (!session || !token) {
@@ -382,7 +608,9 @@ export function ConsolePage(props: {
                   placeholder={t("console.login.password")}
                 />
                 <Button type="submit" disabled={busy}>
-                  {busy ? t("console.login.submitting") : t("console.login.submit")}
+                  {busy
+                    ? t("console.login.submitting")
+                    : t("console.login.submit")}
                 </Button>
               </form>
               {loginError ? (
@@ -426,14 +654,14 @@ export function ConsolePage(props: {
             }
           />
           <div className="bg-background">
-            <div className="flex w-full px-4 pb-8 pt-4 sm:px-6 lg:px-8 xl:px-10">
-              <Sidebar className="md:sticky md:top-[73px] md:h-[calc(100svh-73px)] md:w-56">
+            <div className="flex w-full gap-4 px-4 pb-8 pt-4 sm:px-6 lg:gap-6 lg:px-8 xl:px-10">
+              <Sidebar className="md:sticky md:top-[73px] md:h-[calc(100svh-89px)] md:w-72 xl:w-[19rem]">
                 {sidebar}
               </Sidebar>
 
-              <SidebarInset className="flex flex-1 flex-col gap-4 pl-0 md:pl-4">
+              <SidebarInset className="flex flex-1 flex-col gap-4 pl-0">
                 <div className="flex items-center justify-between md:hidden">
-                  <SidebarTrigger>{t("console.title")}</SidebarTrigger>
+                  <SidebarTrigger>{activeTabLabel}</SidebarTrigger>
                 </div>
                 {activeTab === "overview" && <ConsoleOverview />}
                 {activeTab === "users" && <ConsoleUsers />}

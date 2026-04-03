@@ -168,6 +168,9 @@ export type CrawlOverview = {
     revoked_at: string | null;
     last_seen_at: string | null;
     last_claimed_at: string | null;
+    online: boolean;
+    can_delete: boolean;
+    in_flight_jobs: number;
     jobs_claimed: number;
     jobs_reported: number;
     supports_js_render: boolean;
@@ -206,7 +209,10 @@ type RequestOptions = RequestInit & {
   token?: string | null;
 };
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  options: RequestOptions = {},
+): Promise<T> {
   const { token, ...fetchOptions } = options;
   const response = await fetch(`/api${path}`, {
     ...fetchOptions,
@@ -233,7 +239,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export function search(query: string, apiKey?: string | null) {
-  return request<SearchResponse>(`/v1/search?q=${encodeURIComponent(query)}`, { token: apiKey });
+  return request<SearchResponse>(`/v1/search?q=${encodeURIComponent(query)}`, {
+    token: apiKey,
+  });
 }
 
 export function suggestSearch(query: string) {
@@ -241,9 +249,12 @@ export function suggestSearch(query: string) {
 }
 
 export function developerSearch(query: string, apiKey: string) {
-  return request<SearchResponse>(`/v1/developer/search?q=${encodeURIComponent(query)}`, {
-    token: apiKey,
-  });
+  return request<SearchResponse>(
+    `/v1/developer/search?q=${encodeURIComponent(query)}`,
+    {
+      token: apiKey,
+    },
+  );
 }
 
 export function login(username: string, password: string) {
@@ -423,11 +434,14 @@ export function deleteDocument(token: string, id: string) {
 }
 
 export function purgeSite(token: string, site: string) {
-  return request<{ deleted_documents: number }>("/v1/admin/documents/purge-site", {
-    method: "POST",
-    token,
-    body: JSON.stringify({ site }),
-  });
+  return request<{ deleted_documents: number }>(
+    "/v1/admin/documents/purge-site",
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ site }),
+    },
+  );
 }
 
 export function registerDeveloper(username: string, password: string) {
@@ -518,7 +532,11 @@ export function createDeveloperKey(token: string, name: string) {
   });
 }
 
-export function createAdminDeveloperKey(token: string, userId: string, name: string) {
+export function createAdminDeveloperKey(
+  token: string,
+  userId: string,
+  name: string,
+) {
   return request<CreatedApiKey>(`/v1/admin/developers/${userId}/keys`, {
     method: "POST",
     token,
@@ -533,7 +551,11 @@ export function revokeDeveloperKey(token: string, id: string) {
   });
 }
 
-export function revokeAdminDeveloperKey(token: string, userId: string, id: string) {
+export function revokeAdminDeveloperKey(
+  token: string,
+  userId: string,
+  id: string,
+) {
   return request<void>(`/v1/admin/developers/${userId}/keys/${id}`, {
     method: "DELETE",
     token,
@@ -570,14 +592,20 @@ export function deleteDeveloper(token: string, userId: string) {
   });
 }
 
-export function getSystemConfig(token: string): Promise<{ entries: SystemConfigEntry[] }> {
+export function getSystemConfig(
+  token: string,
+): Promise<{ entries: SystemConfigEntry[] }> {
   return request<{ entries: SystemConfigEntry[] }>("/v1/admin/system-config", {
     method: "GET",
     token,
   });
 }
 
-export function setSystemConfig(token: string, key: string, value: string | null): Promise<void> {
+export function setSystemConfig(
+  token: string,
+  key: string,
+  value: string | null,
+): Promise<void> {
   return request<void>(`/v1/admin/system-config/${encodeURIComponent(key)}`, {
     method: "PUT",
     token,
@@ -707,5 +735,7 @@ export function searchWithParams(
   if (params.network) search.set("network", params.network);
 
   const path = apiKey ? "/v1/developer/search" : "/v1/search";
-  return request<SearchResponse>(`${path}?${search.toString()}`, { token: apiKey });
+  return request<SearchResponse>(`${path}?${search.toString()}`, {
+    token: apiKey,
+  });
 }

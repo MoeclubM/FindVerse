@@ -204,6 +204,24 @@
       "documents": "索引文档",
       "settings": "设置"
     },
+    "sidebar": {
+      "groups": {
+        "system": "系统",
+        "crawl": "抓取"
+      },
+      "header": {
+        "eyebrow": "控制中心",
+        "queued": "排队",
+        "in_flight": "进行中",
+        "workers": "节点",
+        "documents": "文档"
+      },
+      "footer": {
+        "label": "当前会话",
+        "rules": "规则",
+        "failures": "失败"
+      }
+    },
     "overview": {
       "title": "系统概览",
       "recent_events_count": "最近事件 {{count}} 条",
@@ -248,12 +266,16 @@
         "crawl_stopped": "抓取已停止",
         "rule_enqueued": "规则已入队",
         "stale_job_requeued": "过期任务已重新入队",
+        "stale_job_dead_lettered": "过期任务已进入死信",
+        "stale_ingest_requeued": "过期收录任务已重新排队",
+        "stale_ingest_failed": "过期收录任务失败",
         "developer_api_key_created": "开发者 API 密钥已创建",
         "developer_api_key_revoked": "开发者 API 密钥已撤销",
         "document_deleted": "文档已删除",
         "site_purged": "站点已清理",
         "developer_deleted": "开发者已删除",
-        "crawler_runtime_updated": "节点并发已更新"
+        "crawler_runtime_updated": "节点并发已更新",
+        "crawler_delete_detached_jobs": "离线节点任务已脱钩"
       }
     },
     "users": {
@@ -444,6 +466,7 @@
       "online": "在线",
       "offline": "离线",
       "online_count": "在线节点",
+      "delete_ready_count": "可删除节点",
       "rename": "重命名",
       "delete": "删除",
       "save": "保存",
@@ -453,11 +476,14 @@
       "created": "创建时间",
       "last_seen": "最近活跃",
       "last_claimed": "最近认领",
+      "in_flight_jobs": "进行中任务",
       "jobs_claimed": "已认领任务",
       "jobs_reported": "已上报任务",
       "status": "状态",
       "chromium_enabled": "Chromium 可用",
       "chromium_disabled": "无 Chromium",
+      "delete_ready": "允许删除",
+      "delete_waiting": "删除锁定",
       "runtime_title": "节点并发",
       "runtime_hint": "节点会通过心跳上报 Chromium 能力；需要浏览器渲染的任务只会重新排队并交给支持的节点。",
       "worker_concurrency_label": "任务并发",
@@ -469,7 +495,10 @@
       "name_too_short": "节点名称至少需要 2 个字符",
       "rename_failed": "重命名失败",
       "delete_failed": "删除节点失败",
-      "delete_confirm": "确认删除离线节点 {{name}} 吗？"
+      "delete_confirm": "确认删除节点 {{name}} 吗？",
+      "delete_ready_hint": "当前节点没有进行中任务，可以直接删除。",
+      "delete_release_hint": "当前节点已离线。删除后会释放仍处于认领中的任务，已经进入收录阶段的任务会继续完成。",
+      "delete_waiting_hint": "当前节点仍有进行中任务，只有任务完成或认领超时后才能删除。"
     },
     "documents": {
       "title": "索引文档",
