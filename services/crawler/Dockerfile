@@ -1,8 +1,9 @@
-FROM quay.io/fedora/fedora:43 AS builder
+FROM rust:1-slim-bookworm AS builder
 WORKDIR /app
 
-RUN dnf install -y cargo rustc rustfmt gcc gcc-c++ make pkgconf-pkg-config perl \
-    && dnf clean all
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential pkg-config perl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/findverse-common/Cargo.toml crates/findverse-common/Cargo.toml
@@ -19,9 +20,14 @@ COPY config config
 
 RUN cargo build --release -p findverse-crawler
 
-FROM quay.io/fedora/fedora-minimal:43 AS runner
+FROM debian:bookworm-slim AS runner
 WORKDIR /app
 USER 0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/target/release/findverse-crawler /usr/local/bin/findverse-crawler
 COPY config config
 
