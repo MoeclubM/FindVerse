@@ -8,14 +8,20 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY crates/findverse-common/Cargo.toml crates/findverse-common/Cargo.toml
 COPY services/api/Cargo.toml services/api/Cargo.toml
+COPY services/bootstrap/Cargo.toml services/bootstrap/Cargo.toml
+COPY services/blob-storage/Cargo.toml services/blob-storage/Cargo.toml
 COPY services/control-api/Cargo.toml services/control-api/Cargo.toml
+COPY services/projector/Cargo.toml services/projector/Cargo.toml
 COPY services/query-api/Cargo.toml services/query-api/Cargo.toml
 COPY services/task-api/Cargo.toml services/task-api/Cargo.toml
 COPY services/scheduler/Cargo.toml services/scheduler/Cargo.toml
 COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
+COPY services/bootstrap/src services/bootstrap/src
+COPY services/blob-storage/src services/blob-storage/src
 COPY services/control-api/src services/control-api/src
+COPY services/projector/src services/projector/src
 COPY services/query-api/src services/query-api/src
 COPY services/task-api services/task-api
 COPY services/scheduler/src services/scheduler/src
@@ -37,7 +43,7 @@ COPY services/api/migrations /app/migrations
 ENV FINDVERSE_TASK_API_BIND=0.0.0.0:8082
 ENV FINDVERSE_POSTGRES_URL=postgres://findverse:findverse@postgres:5432/findverse
 ENV FINDVERSE_REDIS_URL=redis://valkey:6379/0
-ENV FINDVERSE_BLOB_STORE_DIR=/var/lib/findverse/blobs
+ENV FINDVERSE_BLOB_STORAGE_URL=http://blob-storage:8090
 
 EXPOSE 8082
 ENTRYPOINT ["/usr/local/bin/findverse-task-api"]

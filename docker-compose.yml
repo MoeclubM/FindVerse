@@ -10,6 +10,13 @@ services:
       - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_POSTGRES_PORT:-5432}:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${FINDVERSE_POSTGRES_USER:-findverse} -d ${FINDVERSE_POSTGRES_DB:-findverse}
+      interval: 5s
+      timeout: 5s
+      retries: 12
     mem_limit: ${FINDVERSE_POSTGRES_MEM_LIMIT:-1g}
 
   valkey:
@@ -23,6 +30,13 @@ services:
       - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_REDIS_PORT:-6379}:6379"
     volumes:
       - ./data/valkey:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - valkey-cli ping || redis-cli ping
+      interval: 5s
+      timeout: 5s
+      retries: 12
     mem_limit: ${FINDVERSE_VALKEY_MEM_LIMIT:-256m}
 
   opensearch:
@@ -46,6 +60,58 @@ services:
         hard: 65536
     mem_limit: ${FINDVERSE_OPENSEARCH_MEM_LIMIT:-2g}
 
+  blob-storage:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-blob-storage:${FINDVERSE_IMAGE_TAG:-dev}
+    build:
+      context: .
+      dockerfile: services/blob-storage/Dockerfile
+    restart: unless-stopped
+    environment:
+      FINDVERSE_BLOB_STORAGE_BIND: ${FINDVERSE_BLOB_STORAGE_BIND:-0.0.0.0:8090}
+      FINDVERSE_BLOB_STORE_DIR: ${FINDVERSE_BLOB_STORE_DIR:-/var/lib/findverse/blobs}
+    volumes:
+      - ./data/blobs:/var/lib/findverse/blobs
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O- http://127.0.0.1:8090/readyz >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: ${FINDVERSE_BLOB_STORAGE_MEM_LIMIT:-256m}
+
+  bootstrap:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-bootstrap:${FINDVERSE_IMAGE_TAG:-dev}
+    build:
+      context: .
+      dockerfile: services/bootstrap/Dockerfile
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      opensearch:
+        condition: service_started
+      blob-storage:
+        condition: service_healthy
+    environment:
+      FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
+      FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
+      FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS: ${FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS:-5}
+      FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
+      FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
+      FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
+      FINDVERSE_BLOB_STORAGE_URL: ${FINDVERSE_BLOB_STORAGE_URL:-http://blob-storage:8090}
+      FINDVERSE_FRONTEND_ORIGIN: ${FINDVERSE_FRONTEND_ORIGIN:-http://localhost:${FINDVERSE_WEB_PORT:-3000}}
+      FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
+      FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
+      FINDVERSE_BOOTSTRAP_ADMIN_ENABLED: ${FINDVERSE_BOOTSTRAP_ADMIN_ENABLED:-true}
+      FINDVERSE_INDEX_PATH: ${FINDVERSE_INDEX_PATH:-/opt/findverse/production/empty-bootstrap-documents.json}
+      FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS: ${FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS:-300}
+    volumes:
+      - ./config/production:/opt/findverse/production:ro
+
   control-api:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-control-api:${FINDVERSE_IMAGE_TAG:-dev}
     build:
@@ -53,9 +119,16 @@ services:
       dockerfile: services/control-api/Dockerfile
     restart: unless-stopped
     depends_on:
-      - postgres
-      - valkey
-      - opensearch
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      opensearch:
+        condition: service_started
+      blob-storage:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     environment:
       FINDVERSE_CONTROL_API_BIND: ${FINDVERSE_CONTROL_API_BIND:-0.0.0.0:8080}
       FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
@@ -64,19 +137,15 @@ services:
       FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
       FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
       FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
-      FINDVERSE_BLOB_STORE_DIR: ${FINDVERSE_BLOB_STORE_DIR:-/var/lib/findverse/blobs}
+      FINDVERSE_BLOB_STORAGE_URL: ${FINDVERSE_BLOB_STORAGE_URL:-http://blob-storage:8090}
       FINDVERSE_FRONTEND_ORIGIN: ${FINDVERSE_FRONTEND_ORIGIN:-http://localhost:${FINDVERSE_WEB_PORT:-3000}}
       FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
       FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
-      FINDVERSE_BOOTSTRAP_ADMIN_ENABLED: ${FINDVERSE_BOOTSTRAP_ADMIN_ENABLED:-true}
-      FINDVERSE_INDEX_PATH: ${FINDVERSE_INDEX_PATH:-services/api/fixtures/bootstrap_documents.json}
+      FINDVERSE_BOOTSTRAP_ADMIN_ENABLED: "false"
       FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS: ${FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS:-15}
       FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS: ${FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS:-300}
     ports:
       - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_CONTROL_API_PORT:-8080}:8080"
-    volumes:
-      - ./config/production:/opt/findverse/production:ro
-      - ./data/blobs:/var/lib/findverse/blobs
     mem_limit: ${FINDVERSE_CONTROL_API_MEM_LIMIT:-512m}
 
   query-api:
@@ -86,9 +155,16 @@ services:
       dockerfile: services/query-api/Dockerfile
     restart: unless-stopped
     depends_on:
-      - postgres
-      - valkey
-      - opensearch
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      opensearch:
+        condition: service_started
+      blob-storage:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     environment:
       FINDVERSE_QUERY_API_BIND: ${FINDVERSE_QUERY_API_BIND:-0.0.0.0:8081}
       FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
@@ -97,14 +173,12 @@ services:
       FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
       FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
       FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
-      FINDVERSE_BLOB_STORE_DIR: ${FINDVERSE_BLOB_STORE_DIR:-/var/lib/findverse/blobs}
+      FINDVERSE_BLOB_STORAGE_URL: ${FINDVERSE_BLOB_STORAGE_URL:-http://blob-storage:8090}
       FINDVERSE_FRONTEND_ORIGIN: ${FINDVERSE_FRONTEND_ORIGIN:-http://localhost:${FINDVERSE_WEB_PORT:-3000}}
       FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
       FINDVERSE_LOCAL_ADMIN_PASSWORD: ${FINDVERSE_LOCAL_ADMIN_PASSWORD:-change-me}
     ports:
       - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_QUERY_API_PORT:-8081}:8081"
-    volumes:
-      - ./data/blobs:/var/lib/findverse/blobs
     mem_limit: ${FINDVERSE_QUERY_API_MEM_LIMIT:-512m}
 
   task-api:
@@ -114,20 +188,24 @@ services:
       dockerfile: services/task-api/Dockerfile
     restart: unless-stopped
     depends_on:
-      - postgres
-      - valkey
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      blob-storage:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     environment:
       FINDVERSE_TASK_API_BIND: ${FINDVERSE_TASK_API_BIND:-0.0.0.0:8082}
       FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
       FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
       FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS: ${FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS:-5}
       FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
-      FINDVERSE_BLOB_STORE_DIR: ${FINDVERSE_BLOB_STORE_DIR:-/var/lib/findverse/blobs}
+      FINDVERSE_BLOB_STORAGE_URL: ${FINDVERSE_BLOB_STORAGE_URL:-http://blob-storage:8090}
       FINDVERSE_LOCAL_ADMIN_USERNAME: ${FINDVERSE_LOCAL_ADMIN_USERNAME:-admin}
     ports:
       - "${FINDVERSE_INTERNAL_BIND_HOST:-0.0.0.0}:${FINDVERSE_TASK_API_PORT:-8082}:8082"
-    volumes:
-      - ./data/blobs:/var/lib/findverse/blobs
     mem_limit: ${FINDVERSE_TASK_API_MEM_LIMIT:-384m}
 
   scheduler:
@@ -137,9 +215,14 @@ services:
       dockerfile: services/scheduler/Dockerfile
     restart: unless-stopped
     depends_on:
-      - postgres
-      - valkey
-      - opensearch
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      blob-storage:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     environment:
       FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
       FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
@@ -147,12 +230,40 @@ services:
       FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
       FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
       FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
-      FINDVERSE_BLOB_STORE_DIR: ${FINDVERSE_BLOB_STORE_DIR:-/var/lib/findverse/blobs}
+      FINDVERSE_BLOB_STORAGE_URL: ${FINDVERSE_BLOB_STORAGE_URL:-http://blob-storage:8090}
       FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS: ${FINDVERSE_CRAWLER_MAINTENANCE_INTERVAL_SECS:-15}
       FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS: ${FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS:-300}
-    volumes:
-      - ./data/blobs:/var/lib/findverse/blobs
     mem_limit: ${FINDVERSE_SCHEDULER_MEM_LIMIT:-384m}
+
+  projector:
+    image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-projector:${FINDVERSE_IMAGE_TAG:-dev}
+    build:
+      context: .
+      dockerfile: services/projector/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      opensearch:
+        condition: service_started
+      blob-storage:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      FINDVERSE_POSTGRES_URL: ${FINDVERSE_POSTGRES_URL:-postgres://findverse:findverse@postgres:5432/findverse}
+      FINDVERSE_POSTGRES_MAX_CONNECTIONS: ${FINDVERSE_POSTGRES_MAX_CONNECTIONS:-20}
+      FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS: ${FINDVERSE_POSTGRES_ACQUIRE_TIMEOUT_SECS:-5}
+      FINDVERSE_REDIS_URL: ${FINDVERSE_REDIS_URL:-redis://valkey:6379/0}
+      FINDVERSE_OPENSEARCH_URL: ${FINDVERSE_OPENSEARCH_URL:-http://opensearch:9200}
+      FINDVERSE_OPENSEARCH_INDEX: ${FINDVERSE_OPENSEARCH_INDEX:-findverse-documents}
+      FINDVERSE_BLOB_STORAGE_URL: ${FINDVERSE_BLOB_STORAGE_URL:-http://blob-storage:8090}
+      FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS: ${FINDVERSE_CRAWLER_CLAIM_TIMEOUT_SECS:-300}
+      FINDVERSE_PROJECTOR_INTERVAL_SECS: ${FINDVERSE_PROJECTOR_INTERVAL_SECS:-2}
+      FINDVERSE_PROJECTOR_BATCH_SIZE: ${FINDVERSE_PROJECTOR_BATCH_SIZE:-64}
+    mem_limit: ${FINDVERSE_PROJECTOR_MEM_LIMIT:-384m}
 
   web:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-web:${FINDVERSE_IMAGE_TAG:-dev}
@@ -166,9 +277,12 @@ services:
         FINDVERSE_SITE_NAME: ${FINDVERSE_SITE_NAME:-FindVerse}
     restart: unless-stopped
     depends_on:
-      - control-api
-      - query-api
-      - task-api
+      control-api:
+        condition: service_started
+      query-api:
+        condition: service_started
+      task-api:
+        condition: service_started
     ports:
       - "${FINDVERSE_WEB_BIND_HOST:-0.0.0.0}:${FINDVERSE_WEB_PORT:-3000}:3000"
     mem_limit: ${FINDVERSE_WEB_MEM_LIMIT:-256m}

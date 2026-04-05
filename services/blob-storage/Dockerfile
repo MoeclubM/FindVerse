@@ -19,30 +19,28 @@ COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
 COPY services/bootstrap/src services/bootstrap/src
-COPY services/blob-storage/src services/blob-storage/src
+COPY services/blob-storage services/blob-storage
 COPY services/control-api/src services/control-api/src
 COPY services/projector/src services/projector/src
 COPY services/query-api/src services/query-api/src
 COPY services/task-api/src services/task-api/src
-COPY services/scheduler services/scheduler
+COPY services/scheduler/src services/scheduler/src
 COPY services/crawler/src services/crawler/src
 
-RUN cargo build --release -p findverse-scheduler
+RUN cargo build --release -p findverse-blob-storage
 
 FROM debian:bookworm-slim AS runner
 WORKDIR /app
 USER 0
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 \
+    && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 wget \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/findverse-scheduler /usr/local/bin/findverse-scheduler
-COPY services/api/migrations /app/migrations
+COPY --from=builder /app/target/release/findverse-blob-storage /usr/local/bin/findverse-blob-storage
 
-ENV FINDVERSE_POSTGRES_URL=postgres://findverse:findverse@postgres:5432/findverse
-ENV FINDVERSE_REDIS_URL=redis://valkey:6379/0
-ENV FINDVERSE_OPENSEARCH_URL=http://opensearch:9200
-ENV FINDVERSE_BLOB_STORAGE_URL=http://blob-storage:8090
+ENV FINDVERSE_BLOB_STORAGE_BIND=0.0.0.0:8090
+ENV FINDVERSE_BLOB_STORE_DIR=/var/lib/findverse/blobs
 
-ENTRYPOINT ["/usr/local/bin/findverse-scheduler"]
+EXPOSE 8090
+ENTRYPOINT ["/usr/local/bin/findverse-blob-storage"]

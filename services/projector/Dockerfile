@@ -21,13 +21,13 @@ COPY services/api services/api
 COPY services/bootstrap/src services/bootstrap/src
 COPY services/blob-storage/src services/blob-storage/src
 COPY services/control-api/src services/control-api/src
-COPY services/projector/src services/projector/src
+COPY services/projector services/projector
 COPY services/query-api/src services/query-api/src
 COPY services/task-api/src services/task-api/src
-COPY services/scheduler services/scheduler
+COPY services/scheduler/src services/scheduler/src
 COPY services/crawler/src services/crawler/src
 
-RUN cargo build --release -p findverse-scheduler
+RUN cargo build --release -p findverse-projector
 
 FROM debian:bookworm-slim AS runner
 WORKDIR /app
@@ -37,7 +37,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/findverse-scheduler /usr/local/bin/findverse-scheduler
+COPY --from=builder /app/target/release/findverse-projector /usr/local/bin/findverse-projector
 COPY services/api/migrations /app/migrations
 
 ENV FINDVERSE_POSTGRES_URL=postgres://findverse:findverse@postgres:5432/findverse
@@ -45,4 +45,4 @@ ENV FINDVERSE_REDIS_URL=redis://valkey:6379/0
 ENV FINDVERSE_OPENSEARCH_URL=http://opensearch:9200
 ENV FINDVERSE_BLOB_STORAGE_URL=http://blob-storage:8090
 
-ENTRYPOINT ["/usr/local/bin/findverse-scheduler"]
+ENTRYPOINT ["/usr/local/bin/findverse-projector"]

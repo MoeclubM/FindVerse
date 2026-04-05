@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-FindVerse 是一套可自部署的搜索系统，主站由控制面、任务 API、调度器、查询 API、Web 界面和独立爬虫节点组成。它的目标不是一开始就做成很重的平台，而是在单机部署足够简单的前提下，保留后续扩展抓取、索引和搜索链路的空间。
+FindVerse 是一套可自部署的搜索系统，主站现在由 bootstrap、blob-storage、控制面、任务 API、调度器、projector、查询 API、Web 界面和独立爬虫节点组成。它的目标不是一开始就做成很重的平台，而是在单机部署足够简单的前提下，保留后续扩展抓取、索引和搜索链路的空间。
 
 ## 功能概览
 
@@ -19,7 +19,10 @@ FindVerse 是一套可自部署的搜索系统，主站由控制面、任务 API
 - `services/control-api`：管理员、开发者、规则、任务、文档管理
 - `services/query-api`：公开搜索、建议搜索、开发者搜索
 - `services/task-api`：crawler claim/report/heartbeat 入口和任务写侧
-- `services/scheduler`：维护循环与 staged ingest 投影执行器
+- `services/scheduler`：规则展开、超时回收、重试与 recrawl 调度
+- `services/projector`：staged ingest 恢复与投影执行器
+- `services/blob-storage`：本地对象存储 HTTP 服务
+- `services/bootstrap`：一次性 migration 与索引初始化入口
 - `services/crawler`：爬虫 worker 与本地抓取工具
 - `services/api`：供两个 API 复用的后端公共库
 
@@ -43,9 +46,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-主站数据会持久化到 `./data`，Docker 在启动时会自动创建这些目录。
+主站数据会持久化到 `./data`，Docker 在启动时会自动创建这些目录。`bootstrap` 会在主站启动时自动执行 migration、初始化 OpenSearch alias、写入默认系统配置，并在当前 alias 还是空的情况下自动回填旧 blob、把 PostgreSQL 里的文档重建进新的 OpenSearch alias。
 
-旧版 `dev_auth_store.json` 和 `developer_store.json` 不再在启动时自动导入。如果你还保留这两份旧数据，先执行 `findverse-control-api migrate-legacy --dev-auth-store <路径> --developer-store <路径>`，再启动新主站。
+旧版 `dev_auth_store.json` 和 `developer_store.json` 不再在启动时自动导入。如果你还保留这两份旧数据，先执行 `findverse-control-api migrate-legacy --dev-auth-store <路径> --developer-store <路径>`，再启动新主站。如果同时传了 `--blob-storage-url` 或设置了 `FINDVERSE_BLOB_STORAGE_URL`，这个命令也会顺手把旧版文档正文和抓取结果补齐到新的 blob 存储布局；不传也没关系，后续由 `bootstrap` 自动补齐。
 
 ## 爬虫节点
 
@@ -60,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/ins
 如果你要在灰度时固定某个正式版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.14 --max-jobs 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.15 --max-jobs 16 --skip-browser-install
 ```
 
 ## 开发说明

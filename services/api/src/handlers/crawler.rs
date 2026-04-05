@@ -41,20 +41,35 @@ pub async fn submit_crawl_report(
 ) -> Result<Json<SubmitCrawlReportResponse>, ApiError> {
     let crawler_id = crawler_id_from_headers(&headers)?;
     let crawler_name = crawler_name_from_headers(&headers);
-    Ok(Json(
-        state
-            .crawl_store
-            .submit_report(
-                &crawler_id,
-                crawler_name.as_deref(),
-                headers
-                    .get("authorization")
-                    .and_then(|value| value.to_str().ok()),
-                &state.default_crawler_owner_id,
-                request,
-            )
-            .await?,
-    ))
+    let reported = request.results.len();
+    let response = state
+        .crawl_store
+        .submit_report(
+            &crawler_id,
+            crawler_name.as_deref(),
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            &state.default_crawler_owner_id,
+            request,
+        )
+        .await?;
+
+    state
+        .task_bus
+        .publish(
+            "crawl.reported",
+            serde_json::json!({
+                "crawler_id": crawler_id,
+                "lease_id": response.lease_id,
+                "staged_results": response.staged_results,
+                "pending_results": response.pending_results,
+                "reported_results": reported,
+            }),
+        )
+        .await?;
+
+    Ok(Json(response))
 }
 
 pub async fn heartbeat_crawler(

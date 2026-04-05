@@ -7,10 +7,13 @@ Main services:
 - `postgres`
 - `valkey`
 - `opensearch`
+- `blob-storage`
+- `bootstrap`
 - `control-api`
 - `query-api`
 - `task-api`
 - `scheduler`
+- `projector`
 - `web`
 
 Use one compose file and one `.env` file for both online deployment and long-lived development.
@@ -33,13 +36,16 @@ Start or update the main stack:
 docker compose up -d --build
 ```
 
+`bootstrap` is a one-shot service. It runs database migrations, seeds default system config, initializes the versioned OpenSearch aliases, backfills legacy document/result blobs into `blob-storage`, reindexes PostgreSQL documents into the current OpenSearch aliases when needed, and creates the bootstrap admin when enabled.
+
 Main service data is persisted under:
 
 - `./data/postgres`
 - `./data/valkey`
 - `./data/opensearch`
+- `./data/blobs`
 
-After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false` in `.env` and run the same compose command again.
+After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false` in `.env` and run the same compose command again. Runtime services no longer create the bootstrap admin on startup by themselves.
 
 ## Legacy Data Migration
 
@@ -53,7 +59,7 @@ findverse-control-api migrate-legacy \
   --developer-store /path/to/developer_store.json
 ```
 
-The command connects to `FINDVERSE_POSTGRES_URL`, imports developer records, rewrites non-argon passwords into fresh temporary passwords, and prints the generated temporary credentials as JSON. Legacy sessions are not migrated.
+The command connects to `FINDVERSE_POSTGRES_URL`, imports developer records, rewrites non-argon passwords into fresh temporary passwords, and prints the generated temporary credentials as JSON. If `--blob-storage-url` or `FINDVERSE_BLOB_STORAGE_URL` is provided, it also backfills legacy document/result blobs immediately. Legacy sessions are not migrated, and any missing blob backfill will still be completed by `bootstrap`.
 
 ## Crawler Workers
 
@@ -81,7 +87,7 @@ The first install auto-generates `CRAWLER_ID` locally and writes it into `/etc/f
 Pin a specific release during rollout when needed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.14 --max-jobs 16 --skip-browser-install
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.15 --max-jobs 16 --skip-browser-install
 ```
 
 ## Online Deployment
@@ -91,7 +97,7 @@ Recommended topology:
 - one Linux host for the main Docker stack
 - one or more Linux hosts for crawler workers
 - only `web` exposed publicly
-- `postgres`, `valkey`, `opensearch`, `control-api`, `query-api`, and `task-api` kept on private bind addresses
+- `postgres`, `valkey`, `opensearch`, `blob-storage`, `control-api`, `query-api`, and `task-api` kept on private bind addresses
 
 Main stack:
 
@@ -123,7 +129,7 @@ Clean reset of local compose data:
 
 ```bash
 docker compose down
-rm -rf data/postgres data/valkey data/opensearch
+rm -rf data/postgres data/valkey data/opensearch data/blobs
 ```
 
 ## Release Pipeline
@@ -133,7 +139,7 @@ rm -rf data/postgres data/valkey data/opensearch
 It:
 
 - validates Rust tests and web typecheck
-- builds Linux release binaries for `control-api`, `query-api`, `task-api`, `scheduler`, and `crawler` on both `x86_64` and `arm64`
+- builds Linux release binaries for `bootstrap`, `blob-storage`, `control-api`, `projector`, `query-api`, `task-api`, `scheduler`, and `crawler` on both `x86_64` and `arm64`
 - creates a GitHub Release with binary artifacts
 
 Release example:

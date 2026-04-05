@@ -18,16 +18,16 @@ COPY services/scheduler/Cargo.toml services/scheduler/Cargo.toml
 COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
-COPY services/bootstrap/src services/bootstrap/src
+COPY services/bootstrap services/bootstrap
 COPY services/blob-storage/src services/blob-storage/src
 COPY services/control-api/src services/control-api/src
 COPY services/projector/src services/projector/src
 COPY services/query-api/src services/query-api/src
 COPY services/task-api/src services/task-api/src
-COPY services/scheduler services/scheduler
+COPY services/scheduler/src services/scheduler/src
 COPY services/crawler/src services/crawler/src
 
-RUN cargo build --release -p findverse-scheduler
+RUN cargo build --release -p findverse-bootstrap
 
 FROM debian:bookworm-slim AS runner
 WORKDIR /app
@@ -37,12 +37,14 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/findverse-scheduler /usr/local/bin/findverse-scheduler
+COPY --from=builder /app/target/release/findverse-bootstrap /usr/local/bin/findverse-bootstrap
 COPY services/api/migrations /app/migrations
+COPY services/api/fixtures/bootstrap_documents.json /opt/findverse/bootstrap_documents.json
 
+ENV FINDVERSE_INDEX_PATH=/opt/findverse/bootstrap_documents.json
 ENV FINDVERSE_POSTGRES_URL=postgres://findverse:findverse@postgres:5432/findverse
 ENV FINDVERSE_REDIS_URL=redis://valkey:6379/0
 ENV FINDVERSE_OPENSEARCH_URL=http://opensearch:9200
 ENV FINDVERSE_BLOB_STORAGE_URL=http://blob-storage:8090
 
-ENTRYPOINT ["/usr/local/bin/findverse-scheduler"]
+ENTRYPOINT ["/usr/local/bin/findverse-bootstrap"]

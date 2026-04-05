@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 use crate::{
     auth_support::{PASSWORD_SCHEME_ARGON2ID, hash_password},
+    blob_store::BlobStore,
+    models::CrawlResultInput,
     store::{developer::import_legacy_developer_store, generate_token},
 };
 
@@ -17,6 +19,7 @@ pub struct LegacyMigrationConfig {
     pub postgres_url: String,
     pub postgres_max_connections: u32,
     pub postgres_acquire_timeout_secs: u64,
+    pub blob_storage_url: Option<String>,
     pub dev_auth_store_path: Option<PathBuf>,
     pub developer_store_path: Option<PathBuf>,
 }
@@ -28,6 +31,8 @@ pub struct LegacyMigrationSummary {
     pub imported_accounts: usize,
     pub rotated_credentials: usize,
     pub skipped_legacy_sessions: usize,
+    pub document_text_blobs_backfilled: usize,
+    pub crawl_result_blobs_backfilled: usize,
     pub temporary_credentials: Vec<TemporaryCredential>,
 }
 
@@ -54,6 +59,8 @@ pub async fn migrate_legacy_control_plane_data(
         imported_accounts: 0,
         rotated_credentials: 0,
         skipped_legacy_sessions: 0,
+        document_text_blobs_backfilled: 0,
+        crawl_result_blobs_backfilled: 0,
         temporary_credentials: Vec::new(),
     };
 
@@ -81,6 +88,136 @@ pub async fn migrate_legacy_control_plane_data(
     let rotated = rotate_non_argon_credentials(&pg_pool).await?;
     summary.rotated_credentials = rotated.len();
     summary.temporary_credentials.extend(rotated);
+
+    if let Some(blob_storage_url) = config.blob_storage_url {
+        let blob_store = BlobStore::new(pg_pool.clone(), blob_storage_url);
+        let blob_summary = backfill_blob_storage(&pg_pool, &blob_store).await?;
+        summary.document_text_blobs_backfilled = blob_summary.document_text_blobs_backfilled;
+        summary.crawl_result_blobs_backfilled = blob_summary.crawl_result_blobs_backfilled;
+    }
+
+    Ok(summary)
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct BlobBackfillSummary {
+    pub document_text_blobs_backfilled: usize,
+    pub crawl_result_blobs_backfilled: usize,
+}
+
+pub async fn backfill_blob_storage(
+    pg_pool: &PgPool,
+    blob_store: &BlobStore,
+) -> anyhow::Result<BlobBackfillSummary> {
+    let mut summary = BlobBackfillSummary::default();
+
+    loop {
+        let rows = sqlx::query_as::<_, LegacyDocumentBlobRow>(
+            "select id, body
+             from documents
+             where text_blob_key is null
+             order by id
+             limit 128",
+        )
+        .fetch_all(pg_pool)
+        .await?;
+
+        if rows.is_empty() {
+            break;
+        }
+
+        for row in rows {
+            let blob_key = format!("documents/{}.txt", row.id);
+            blob_store
+                .write_text_blob(&blob_key, &row.body)
+                .await
+                .map_err(anyhow::Error::from)?;
+
+            let updated = sqlx::query(
+                "update documents
+                 set text_blob_key = $2
+                 where id = $1
+                   and text_blob_key is null",
+            )
+            .bind(&row.id)
+            .bind(&blob_key)
+            .execute(pg_pool)
+            .await?
+            .rows_affected();
+
+            summary.document_text_blobs_backfilled += updated as usize;
+        }
+    }
+
+    loop {
+        let rows = sqlx::query_as::<_, LegacyCrawlResultBlobRow>(
+            "select id, lease_id, crawl_job_id, payload
+             from crawl_result_blobs
+             where blob_key is null
+             order by created_at, id
+             limit 128",
+        )
+        .fetch_all(pg_pool)
+        .await?;
+
+        if rows.is_empty() {
+            break;
+        }
+
+        for row in rows {
+            let result: CrawlResultInput = serde_json::from_value(row.payload.clone())
+                .with_context(|| {
+                    format!("crawl_result_blobs {} contains invalid payload", row.id)
+                })?;
+            let body = serde_json::to_vec(&result)?;
+            let body_len = body.len() as i64;
+            let blob_key = format!("crawl-results/{}/{}.json", row.lease_id, row.crawl_job_id);
+            blob_store
+                .write_blob_bytes(&blob_key, body, "application/json")
+                .await
+                .map_err(anyhow::Error::from)?;
+
+            let updated = sqlx::query(
+                "update crawl_result_blobs
+                 set blob_key = $2,
+                     blob_size_bytes = $3,
+                     blob_content_type = $4,
+                     payload = $5
+                 where id = $1
+                   and blob_key is null",
+            )
+            .bind(&row.id)
+            .bind(&blob_key)
+            .bind(body_len)
+            .bind("application/json")
+            .bind(serde_json::json!({}))
+            .execute(pg_pool)
+            .await?
+            .rows_affected();
+
+            summary.crawl_result_blobs_backfilled += updated as usize;
+        }
+    }
+
+    let remaining_document_blobs: i64 =
+        sqlx::query_scalar("select count(*) from documents where text_blob_key is null")
+            .fetch_one(pg_pool)
+            .await?;
+    if remaining_document_blobs > 0 {
+        anyhow::bail!(
+            "document blob migration incomplete: {remaining_document_blobs} rows still missing text_blob_key"
+        );
+    }
+
+    let remaining_result_blobs: i64 =
+        sqlx::query_scalar("select count(*) from crawl_result_blobs where blob_key is null")
+            .fetch_one(pg_pool)
+            .await?;
+    if remaining_result_blobs > 0 {
+        anyhow::bail!(
+            "crawl result blob migration incomplete: {remaining_result_blobs} rows still missing blob_key"
+        );
+    }
 
     Ok(summary)
 }
@@ -306,6 +443,20 @@ struct LegacyCredentialRow {
     id: Uuid,
     external_id: String,
     username: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct LegacyDocumentBlobRow {
+    id: String,
+    body: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct LegacyCrawlResultBlobRow {
+    id: String,
+    lease_id: String,
+    crawl_job_id: String,
+    payload: serde_json::Value,
 }
 
 fn default_true() -> bool {

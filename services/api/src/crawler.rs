@@ -50,6 +50,11 @@ pub struct TaskCrawlerStore {
 }
 
 #[derive(Debug, Clone)]
+pub struct ProjectorCrawlerStore {
+    inner: CrawlerStore,
+}
+
+#[derive(Debug, Clone)]
 pub struct SchedulerCrawlerStore {
     inner: CrawlerStore,
 }
@@ -281,13 +286,33 @@ impl SchedulerCrawlerStore {
         self.inner.get_system_config(key).await
     }
 
-    pub async fn run_maintenance(
+    pub async fn run_scheduler_maintenance(&self, claim_timeout: Duration) -> Result<(), ApiError> {
+        self.inner.run_scheduler_maintenance(claim_timeout).await
+    }
+}
+
+impl ProjectorCrawlerStore {
+    pub fn new(pg_pool: PgPool, blob_store: BlobStore) -> Self {
+        Self {
+            inner: CrawlerStore::new(pg_pool, blob_store),
+        }
+    }
+
+    pub async fn get_system_config(&self, key: &str) -> Option<String> {
+        self.inner.get_system_config(key).await
+    }
+
+    pub async fn recover_stale_ingests(&self, timeout: Duration) -> Result<(), ApiError> {
+        self.inner.recover_stale_ingests(timeout).await
+    }
+
+    pub async fn process_pending_ingests(
         &self,
-        claim_timeout: Duration,
         search_index: &SearchIndex,
-    ) -> Result<(), ApiError> {
+        limit: usize,
+    ) -> Result<usize, ApiError> {
         self.inner
-            .run_maintenance(claim_timeout, search_index)
+            .process_pending_ingests(search_index, limit)
             .await
     }
 }
@@ -2436,15 +2461,9 @@ impl CrawlerStore {
         Ok(())
     }
 
-    pub async fn run_maintenance(
-        &self,
-        claim_timeout: Duration,
-        search_index: &SearchIndex,
-    ) -> Result<(), ApiError> {
+    pub async fn run_scheduler_maintenance(&self, claim_timeout: Duration) -> Result<(), ApiError> {
         let now = Utc::now();
         self.apply_due_rules(now).await?;
-        self.recover_stale_ingests(claim_timeout).await?;
-        self.process_pending_ingests(search_index, 64).await?;
         self.requeue_stale_jobs(now, claim_timeout).await?;
         self.trim_events().await?;
         self.schedule_adaptive_recrawl(now).await?;

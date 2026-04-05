@@ -2,7 +2,10 @@
 members = [
   "crates/findverse-common",
   "services/api",
+  "services/bootstrap",
+  "services/blob-storage",
   "services/control-api",
+  "services/projector",
   "services/query-api",
   "services/task-api",
   "services/scheduler",
@@ -13,7 +16,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-version = "0.0.14"
+version = "0.0.15"
 
 [workspace.dependencies]
 anyhow = "1.0.102"

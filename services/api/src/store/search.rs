@@ -10,6 +10,7 @@ use sqlx::PgPool;
 use tracing::warn;
 
 use crate::{
+    blob_store::BlobStore,
     error::ApiError,
     indexing::{
         IndexedDocumentPayload, IngestBatchOutcome, NormalizedDocument, normalize_document,
@@ -30,7 +31,9 @@ pub struct SearchIndex {
     http_client: Client,
     opensearch_url: String,
     opensearch_index: String,
-    blob_store_dir: PathBuf,
+    opensearch_read_alias: String,
+    opensearch_write_alias: String,
+    blob_store: BlobStore,
     redis_client: redis::Client,
 }
 
@@ -39,7 +42,7 @@ impl SearchIndex {
         pg_pool: PgPool,
         opensearch_url: String,
         opensearch_index: String,
-        blob_store_dir: PathBuf,
+        blob_store: BlobStore,
         redis_client: redis::Client,
     ) -> anyhow::Result<Self> {
         let http_client = Client::builder()
@@ -47,19 +50,16 @@ impl SearchIndex {
             .build()
             .context("failed to build opensearch client")?;
 
-        let index = Self {
+        Ok(Self {
             pg_pool,
             http_client,
             opensearch_url: opensearch_url.trim_end_matches('/').to_string(),
+            opensearch_read_alias: format!("{opensearch_index}-read"),
+            opensearch_write_alias: format!("{opensearch_index}-write"),
             opensearch_index,
-            blob_store_dir,
+            blob_store,
             redis_client,
-        };
-
-        tokio::fs::create_dir_all(index.document_blob_dir()).await?;
-        index.ensure_index().await?;
-
-        Ok(index)
+        })
     }
 
     pub async fn bootstrap_from_path(&self, path: PathBuf) -> anyhow::Result<()> {
@@ -86,7 +86,7 @@ impl SearchIndex {
         } else {
             let indexed = match self
                 .http_client
-                .get(self.index_endpoint("/_count"))
+                .get(self.read_endpoint("/_count"))
                 .send()
                 .await
             {
@@ -131,6 +131,122 @@ impl SearchIndex {
         Ok(())
     }
 
+    pub async fn bootstrap_storage(&self) -> anyhow::Result<()> {
+        self.ensure_index().await?;
+        self.ensure_alias(&self.opensearch_read_alias, false)
+            .await?;
+        self.ensure_alias(&self.opensearch_write_alias, true).await
+    }
+
+    pub async fn reindex_existing_documents(&self, batch_size: usize) -> anyhow::Result<usize> {
+        let postgres_documents = sqlx::query_scalar::<_, i64>(
+            "select count(*) from documents where duplicate_of is null",
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        if postgres_documents == 0 {
+            return Ok(0);
+        }
+
+        let indexed_documents = self.opensearch_document_count().await;
+        if indexed_documents >= postgres_documents {
+            return Ok(0);
+        }
+
+        let mut reindexed = 0usize;
+        let mut last_id: Option<String> = None;
+        loop {
+            let rows = sqlx::query_as::<_, ReindexDocumentRow>(
+                r#"
+                select
+                    id,
+                    title,
+                    url,
+                    canonical_url,
+                    host,
+                    display_url,
+                    snippet,
+                    text_blob_key,
+                    language,
+                    last_crawled_at,
+                    content_hash,
+                    suggest_terms,
+                    site_authority,
+                    content_type,
+                    word_count,
+                    network,
+                    source_job_id,
+                    parser_version,
+                    schema_version,
+                    index_version,
+                    duplicate_of
+                from documents
+                where duplicate_of is null
+                  and ($1::text is null or id > $1)
+                order by id
+                limit $2
+                "#,
+            )
+            .bind(last_id.as_deref())
+            .bind(batch_size.max(1) as i64)
+            .fetch_all(&self.pg_pool)
+            .await?;
+
+            if rows.is_empty() {
+                break;
+            }
+
+            let mut documents = Vec::with_capacity(rows.len());
+            for row in rows {
+                let blob_key = row.text_blob_key.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "document {} is missing text_blob_key; run bootstrap migration first",
+                        row.id
+                    )
+                })?;
+                let body = self
+                    .blob_store
+                    .load_text_blob(blob_key)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                let suggest_terms = serde_json::from_value::<Vec<String>>(row.suggest_terms)
+                    .with_context(|| format!("failed to decode suggest_terms for {}", row.id))?;
+
+                documents.push(normalize_document(IndexedDocument {
+                    id: row.id.clone(),
+                    title: row.title,
+                    url: row.url,
+                    display_url: row.display_url,
+                    snippet: row.snippet,
+                    body,
+                    language: row.language,
+                    last_crawled_at: row.last_crawled_at,
+                    canonical_url: Some(row.canonical_url),
+                    host: Some(row.host),
+                    content_hash: Some(row.content_hash),
+                    suggest_terms,
+                    site_authority: row.site_authority,
+                    content_type: row.content_type,
+                    word_count: row.word_count as u32,
+                    network: row.network,
+                    source_job_id: row.source_job_id,
+                    parser_version: row.parser_version,
+                    schema_version: row.schema_version,
+                    index_version: row.index_version,
+                    duplicate_of: row.duplicate_of,
+                }));
+                last_id = Some(row.id);
+            }
+
+            self.bulk_index_documents(&documents)
+                .await
+                .map_err(anyhow::Error::from)?;
+            reindexed += documents.len();
+        }
+
+        Ok(reindexed)
+    }
+
     pub async fn readiness(&self, postgres_ready: bool, redis_ready: bool) -> ReadyResponse {
         let opensearch_ready = self.ping().await;
         let frontier_depth =
@@ -154,7 +270,7 @@ impl SearchIndex {
 
     pub async fn ping(&self) -> bool {
         self.http_client
-            .get(self.index_endpoint(""))
+            .get(self.read_endpoint(""))
             .send()
             .await
             .map(|response| {
@@ -190,7 +306,7 @@ impl SearchIndex {
 
         let response = match self
             .http_client
-            .post(self.index_endpoint("/_search"))
+            .post(self.read_endpoint("/_search"))
             .json(&plan.request_body())
             .send()
             .await
@@ -247,7 +363,7 @@ impl SearchIndex {
     pub async fn suggest(&self, query: &str) -> SuggestResponse {
         let suggestions = match self
             .http_client
-            .post(self.index_endpoint("/_search"))
+            .post(self.read_endpoint("/_search"))
             .json(&build_suggest_body(query))
             .send()
             .await
@@ -518,7 +634,8 @@ impl SearchIndex {
             .map_err(|error| ApiError::Internal(error.into()))?;
         let stored_body = document.body.chars().take(2_048).collect::<String>();
         let text_blob_key = format!("documents/{}.txt", document.id);
-        self.write_document_blob(&text_blob_key, &document.body)
+        self.blob_store
+            .write_text_blob(&text_blob_key, &document.body)
             .await?;
 
         sqlx::query(
@@ -645,9 +762,10 @@ impl SearchIndex {
     }
 
     async fn ensure_index(&self) -> anyhow::Result<()> {
+        let versioned_index = self.versioned_index();
         let response = self
             .http_client
-            .put(self.index_endpoint(""))
+            .put(self.raw_index_endpoint(&versioned_index, ""))
             .json(&json!({
                 "settings": {
                     "number_of_shards": 1,
@@ -675,9 +793,10 @@ impl SearchIndex {
     }
 
     async fn ensure_mapping(&self) -> anyhow::Result<()> {
+        let versioned_index = self.versioned_index();
         let response = self
             .http_client
-            .put(self.index_endpoint("/_mapping"))
+            .put(self.raw_index_endpoint(&versioned_index, "/_mapping"))
             .json(&json!({
                 "properties": self.mapping_properties()
             }))
@@ -722,7 +841,7 @@ impl SearchIndex {
     async fn delete_index_document(&self, document_id: &str) {
         match self
             .http_client
-            .delete(self.index_endpoint(&format!("/_doc/{document_id}")))
+            .delete(self.write_endpoint(&format!("/_doc/{document_id}")))
             .send()
             .await
         {
@@ -782,7 +901,7 @@ impl SearchIndex {
     async fn submit_bulk_request(&self, body: String) -> Result<(), ApiError> {
         let response = self
             .http_client
-            .post(self.index_endpoint("/_bulk"))
+            .post(self.write_endpoint("/_bulk"))
             .header("content-type", "application/x-ndjson")
             .body(body)
             .send()
@@ -810,40 +929,133 @@ impl SearchIndex {
         Ok(())
     }
 
-    fn index_endpoint(&self, suffix: &str) -> String {
+    fn read_endpoint(&self, suffix: &str) -> String {
+        self.raw_index_endpoint(&self.opensearch_read_alias, suffix)
+    }
+
+    fn write_endpoint(&self, suffix: &str) -> String {
+        self.raw_index_endpoint(&self.opensearch_write_alias, suffix)
+    }
+
+    fn raw_index_endpoint(&self, index_name: &str, suffix: &str) -> String {
         format!(
             "{}/{}{}",
             self.opensearch_url.trim_end_matches('/'),
-            self.opensearch_index,
+            index_name,
             suffix
         )
     }
 
-    fn document_blob_dir(&self) -> PathBuf {
-        self.blob_store_dir.join("documents")
+    fn versioned_index(&self) -> String {
+        format!(
+            "{}-v{}",
+            self.opensearch_index.trim_end_matches('-'),
+            crate::store::CURRENT_INDEX_VERSION
+        )
     }
 
-    fn document_blob_path(&self, blob_key: &str) -> PathBuf {
-        self.blob_store_dir.join(blob_key)
-    }
-
-    async fn write_document_blob(&self, blob_key: &str, body: &str) -> Result<(), ApiError> {
-        let path = self.document_blob_path(blob_key);
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|error| ApiError::Internal(error.into()))?;
-        }
-        tokio::fs::write(path, body)
+    async fn ensure_alias(&self, alias: &str, write: bool) -> anyhow::Result<()> {
+        let versioned_index = self.versioned_index();
+        let alias_response = self
+            .http_client
+            .get(format!(
+                "{}/_alias/{}",
+                self.opensearch_url.trim_end_matches('/'),
+                alias
+            ))
+            .send()
             .await
-            .map_err(|error| ApiError::Internal(error.into()))
+            .context("failed to inspect opensearch aliases")?;
+
+        let mut actions = Vec::new();
+        if alias_response.status().is_success() {
+            let payload = alias_response
+                .json::<serde_json::Value>()
+                .await
+                .context("failed to decode opensearch alias response")?;
+            if let Some(object) = payload.as_object() {
+                for index_name in object.keys() {
+                    if index_name != &versioned_index {
+                        actions.push(json!({
+                            "remove": {
+                                "index": index_name,
+                                "alias": alias
+                            }
+                        }));
+                    }
+                }
+            }
+        } else if alias_response.status() != StatusCode::NOT_FOUND {
+            let status = alias_response.status();
+            let body = alias_response.text().await.unwrap_or_default();
+            anyhow::bail!("opensearch alias inspection failed: {status} {body}");
+        }
+
+        let add_action = if write {
+            json!({
+                "add": {
+                    "index": versioned_index,
+                    "alias": alias,
+                    "is_write_index": true
+                }
+            })
+        } else {
+            json!({
+                "add": {
+                    "index": versioned_index,
+                    "alias": alias
+                }
+            })
+        };
+        actions.push(add_action);
+
+        let response = self
+            .http_client
+            .post(format!(
+                "{}/_aliases",
+                self.opensearch_url.trim_end_matches('/')
+            ))
+            .json(&json!({ "actions": actions }))
+            .send()
+            .await
+            .context("failed to update opensearch aliases")?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("opensearch alias update failed: {status} {body}");
     }
 
     async fn delete_document_blob(&self, blob_key: &str) {
-        match tokio::fs::remove_file(self.document_blob_path(blob_key)).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => warn!(?error, blob_key, "failed to delete document blob"),
+        self.blob_store.delete_blob(blob_key).await;
+    }
+
+    async fn opensearch_document_count(&self) -> i64 {
+        match self
+            .http_client
+            .get(self.read_endpoint("/_count"))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response
+                .json::<OpenSearchCountResponse>()
+                .await
+                .map(|payload| payload.count)
+                .unwrap_or(0),
+            Ok(response) => {
+                warn!(
+                    status = %response.status(),
+                    "failed to inspect opensearch count"
+                );
+                0
+            }
+            Err(error) => {
+                warn!(?error, "failed to inspect opensearch count");
+                0
+            }
         }
     }
 }
@@ -873,6 +1085,31 @@ struct DocumentSummaryRow {
 struct DeletedDocumentRow {
     id: String,
     text_blob_key: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ReindexDocumentRow {
+    id: String,
+    title: String,
+    url: String,
+    canonical_url: String,
+    host: String,
+    display_url: String,
+    snippet: String,
+    text_blob_key: Option<String>,
+    language: String,
+    last_crawled_at: chrono::DateTime<Utc>,
+    content_hash: String,
+    suggest_terms: serde_json::Value,
+    site_authority: f32,
+    content_type: String,
+    word_count: i32,
+    network: String,
+    source_job_id: Option<String>,
+    parser_version: i32,
+    schema_version: i32,
+    index_version: i32,
+    duplicate_of: Option<String>,
 }
 
 #[derive(Deserialize)]

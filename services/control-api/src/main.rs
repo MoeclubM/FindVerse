@@ -21,6 +21,8 @@ enum Command {
         #[arg(long)]
         postgres_acquire_timeout_secs: Option<u64>,
         #[arg(long)]
+        blob_storage_url: Option<String>,
+        #[arg(long)]
         dev_auth_store: Option<PathBuf>,
         #[arg(long)]
         developer_store: Option<PathBuf>,
@@ -35,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
             postgres_url,
             postgres_max_connections,
             postgres_acquire_timeout_secs,
+            blob_storage_url,
             dev_auth_store,
             developer_store,
         } => {
@@ -56,6 +59,8 @@ async fn main() -> anyhow::Result<()> {
                         .and_then(|value| value.parse().ok())
                         .unwrap_or(5)
                 }),
+                blob_storage_url: blob_storage_url
+                    .or_else(|| env::var("FINDVERSE_BLOB_STORAGE_URL").ok()),
                 dev_auth_store_path: dev_auth_store,
                 developer_store_path: developer_store,
             })

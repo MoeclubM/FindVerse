@@ -16,6 +16,7 @@ pub mod query;
 pub mod ranking;
 pub mod rate_limit;
 pub mod store;
+pub mod task_bus;
 
 use std::time::Duration;
 
@@ -26,7 +27,9 @@ use axum::{
     routing::{delete, get, patch, post, put},
 };
 use config::{Config, ServiceKind};
-use crawler::{ControlCrawlerStore, SchedulerCrawlerStore, TaskCrawlerStore};
+use crawler::{
+    ControlCrawlerStore, ProjectorCrawlerStore, SchedulerCrawlerStore, TaskCrawlerStore,
+};
 use db::DatabaseBackends;
 use dev_auth::DevAuthStore;
 use sqlx::migrate;
@@ -39,6 +42,7 @@ use tracing::{error, info};
 use crate::{
     blob_store::BlobStore,
     store::{DeveloperStore, SearchIndex},
+    task_bus::TaskBus,
 };
 
 #[derive(Clone)]
@@ -62,12 +66,22 @@ pub struct TaskState {
     pub crawl_store: TaskCrawlerStore,
     pub db: DatabaseBackends,
     pub default_crawler_owner_id: String,
+    pub task_bus: TaskBus,
 }
 
 #[derive(Clone)]
 struct SchedulerState {
     crawl_store: SchedulerCrawlerStore,
+}
+
+#[derive(Clone)]
+struct ProjectorState {
+    crawl_store: ProjectorCrawlerStore,
     search_index: SearchIndex,
+    default_claim_timeout_secs: u64,
+    batch_size: usize,
+    interval: Duration,
+    task_bus: TaskBus,
 }
 
 impl FromRef<ControlState> for QueryState {
@@ -183,12 +197,99 @@ pub async fn run_scheduler() -> anyhow::Result<()> {
         let claim_timeout = Duration::from_secs(timeout_secs.max(1));
         if let Err(error) = state
             .crawl_store
-            .run_maintenance(claim_timeout, &state.search_index)
+            .run_scheduler_maintenance(claim_timeout)
             .await
         {
             error!(?error, "scheduler maintenance pass failed");
         }
     }
+}
+
+pub async fn run_projector() -> anyhow::Result<()> {
+    init_tracing();
+
+    let config = Config::from_env(ServiceKind::Projector)?;
+    let state = bootstrap_projector_state(&config).await?;
+
+    info!(
+        service = "projector",
+        postgres_url = %config.postgres_url,
+        redis_url = %config.redis_url,
+        opensearch_url = %config.opensearch_url,
+        interval_secs = state.interval.as_secs(),
+        batch_size = state.batch_size,
+        "findverse projector ready"
+    );
+
+    loop {
+        let message_ids = state
+            .task_bus
+            .read_batch(state.batch_size, state.interval, state.interval)
+            .await?;
+        let timeout_secs = state
+            .crawl_store
+            .get_system_config("crawler.claim_timeout_secs")
+            .await
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(state.default_claim_timeout_secs);
+        let claim_timeout = Duration::from_secs(timeout_secs.max(1));
+
+        if let Err(error) = state.crawl_store.recover_stale_ingests(claim_timeout).await {
+            error!(?error, "projector stale ingest recovery failed");
+            continue;
+        }
+
+        if let Err(error) = state
+            .crawl_store
+            .process_pending_ingests(&state.search_index, state.batch_size)
+            .await
+        {
+            error!(?error, "projector ingest pass failed");
+            continue;
+        }
+
+        state.task_bus.ack(&message_ids).await?;
+    }
+}
+
+pub async fn run_bootstrap() -> anyhow::Result<()> {
+    init_tracing();
+
+    let config = Config::from_env(ServiceKind::Bootstrap)?;
+    let db = connect_backends(&config, true).await?;
+    db.prepare_control_plane(&config).await?;
+
+    seed_default_system_config(&db.pg_pool, &config).await?;
+
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_storage_url.clone());
+    let search_index = SearchIndex::connect(
+        db.pg_pool.clone(),
+        config.opensearch_url.clone(),
+        config.opensearch_index.clone(),
+        blob_store.clone(),
+        db.redis_client.clone(),
+    )
+    .await?;
+    let blob_backfill = migration::backfill_blob_storage(&db.pg_pool, &blob_store).await?;
+    search_index.bootstrap_storage().await?;
+    let reindexed_documents = search_index.reindex_existing_documents(256).await?;
+    info!(
+        document_text_blobs_backfilled = blob_backfill.document_text_blobs_backfilled,
+        crawl_result_blobs_backfilled = blob_backfill.crawl_result_blobs_backfilled,
+        reindexed_documents,
+        "findverse bootstrap migration pass completed"
+    );
+    search_index
+        .bootstrap_from_path(config.index_path.clone())
+        .await?;
+
+    info!("findverse bootstrap completed");
+    Ok(())
+}
+
+pub async fn run_blob_storage() -> anyhow::Result<()> {
+    init_tracing();
+    blob_store::run_blob_storage().await
 }
 
 fn init_tracing() {
@@ -200,19 +301,25 @@ fn init_tracing() {
         .try_init();
 }
 
-async fn connect_backends(config: &Config) -> anyhow::Result<DatabaseBackends> {
+async fn connect_backends(
+    config: &Config,
+    apply_migrations: bool,
+) -> anyhow::Result<DatabaseBackends> {
     let db = DatabaseBackends::connect(config).await?;
-    migrate!("./migrations").run(&db.pg_pool).await?;
+    if apply_migrations {
+        migrate!("./migrations").run(&db.pg_pool).await?;
+    }
     Ok(db)
 }
 
 async fn bootstrap_query_state(config: &Config) -> anyhow::Result<QueryState> {
-    let db = connect_backends(config).await?;
+    let db = connect_backends(config, false).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_storage_url.clone());
     let search_index = SearchIndex::connect(
         db.pg_pool.clone(),
         config.opensearch_url.clone(),
         config.opensearch_index.clone(),
-        config.blob_store_dir.clone(),
+        blob_store,
         db.redis_client.clone(),
     )
     .await?;
@@ -225,22 +332,17 @@ async fn bootstrap_query_state(config: &Config) -> anyhow::Result<QueryState> {
 }
 
 async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState> {
-    let db = connect_backends(config).await?;
-    db.prepare_control_plane(config).await?;
-    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_store_dir.clone());
-    blob_store.ensure_ready().await?;
+    let db = connect_backends(config, false).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_storage_url.clone());
 
     let search_index = SearchIndex::connect(
         db.pg_pool.clone(),
         config.opensearch_url.clone(),
         config.opensearch_index.clone(),
-        config.blob_store_dir.clone(),
+        blob_store.clone(),
         db.redis_client.clone(),
     )
     .await?;
-    search_index
-        .bootstrap_from_path(config.index_path.clone())
-        .await?;
 
     Ok(ControlState {
         query: QueryState {
@@ -256,34 +358,71 @@ async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState
 }
 
 async fn bootstrap_task_state(config: &Config) -> anyhow::Result<TaskState> {
-    let db = connect_backends(config).await?;
-    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_store_dir.clone());
-    blob_store.ensure_ready().await?;
+    let db = connect_backends(config, false).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_storage_url.clone());
 
     Ok(TaskState {
         crawl_store: TaskCrawlerStore::new(db.pg_pool.clone(), blob_store),
-        db,
+        db: db.clone(),
         default_crawler_owner_id: format!("local:{}", config.local_admin_username),
+        task_bus: TaskBus::new(db.redis_client.clone()),
     })
 }
 
 async fn bootstrap_scheduler_state(config: &Config) -> anyhow::Result<SchedulerState> {
-    let db = connect_backends(config).await?;
-    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_store_dir.clone());
-    blob_store.ensure_ready().await?;
+    let db = connect_backends(config, false).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_storage_url.clone());
+
+    Ok(SchedulerState {
+        crawl_store: SchedulerCrawlerStore::new(db.pg_pool.clone(), blob_store),
+    })
+}
+
+async fn bootstrap_projector_state(config: &Config) -> anyhow::Result<ProjectorState> {
+    let db = connect_backends(config, false).await?;
+    let blob_store = BlobStore::new(db.pg_pool.clone(), config.blob_storage_url.clone());
     let search_index = SearchIndex::connect(
         db.pg_pool.clone(),
         config.opensearch_url.clone(),
         config.opensearch_index.clone(),
-        config.blob_store_dir.clone(),
+        blob_store.clone(),
         db.redis_client.clone(),
     )
     .await?;
 
-    Ok(SchedulerState {
-        crawl_store: SchedulerCrawlerStore::new(db.pg_pool.clone(), blob_store),
+    Ok(ProjectorState {
+        crawl_store: ProjectorCrawlerStore::new(db.pg_pool.clone(), blob_store),
         search_index,
+        default_claim_timeout_secs: config.crawler_claim_timeout_secs,
+        batch_size: config.projector_batch_size.max(1),
+        interval: Duration::from_secs(config.projector_interval_secs.max(1)),
+        task_bus: TaskBus::new(db.redis_client.clone()),
     })
+}
+
+async fn seed_default_system_config(pg_pool: &sqlx::PgPool, config: &Config) -> anyhow::Result<()> {
+    let defaults = [
+        (
+            "crawler.claim_timeout_secs",
+            config.crawler_claim_timeout_secs.to_string(),
+        ),
+        ("crawler.total_concurrency", "16".to_string()),
+        ("crawler.js_render_concurrency", "1".to_string()),
+    ];
+
+    for (key, value) in defaults {
+        sqlx::query(
+            "insert into system_config (key, value, updated_at)
+             values ($1, $2, now())
+             on conflict (key) do nothing",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(pg_pool)
+        .await?;
+    }
+
+    Ok(())
 }
 
 fn build_query_router(config: &Config, state: QueryState) -> Router {
