@@ -209,13 +209,6 @@
         "system": "系统",
         "crawl": "抓取"
       },
-      "header": {
-        "eyebrow": "控制中心",
-        "queued": "排队",
-        "in_flight": "进行中",
-        "workers": "节点",
-        "documents": "文档"
-      },
       "footer": {
         "label": "当前会话",
         "rules": "规则",

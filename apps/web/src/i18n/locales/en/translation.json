@@ -209,13 +209,6 @@
         "system": "System",
         "crawl": "Crawl"
       },
-      "header": {
-        "eyebrow": "Operations",
-        "queued": "Queued",
-        "in_flight": "In flight",
-        "workers": "Workers",
-        "documents": "Docs"
-      },
       "footer": {
         "label": "Current session",
         "rules": "Rules",

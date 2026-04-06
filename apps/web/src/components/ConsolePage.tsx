@@ -438,55 +438,8 @@ export function ConsolePage(props: {
   const sidebar = (
     <>
       <SidebarHeader>
-        <div className="rounded-[24px] bg-sidebar-primary p-4 text-sidebar-primary-foreground">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-sidebar-primary-foreground/70">
-                {t("console.sidebar.header.eyebrow")}
-              </div>
-              <div className="mt-2 text-lg font-semibold">{SITE_NAME}</div>
-              <p className="mt-1 text-sm text-sidebar-primary-foreground/80">
-                {consoleLabel}
-              </p>
-            </div>
-            <LayoutDashboard className="mt-0.5 opacity-80" />
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
-                {t("console.sidebar.header.queued")}
-              </div>
-              <div className="mt-1 text-base font-semibold">{queuedJobs}</div>
-            </div>
-            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
-                {t("console.sidebar.header.in_flight")}
-              </div>
-              <div className="mt-1 text-base font-semibold">{inFlightJobs}</div>
-            </div>
-            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
-                {t("console.sidebar.header.workers")}
-              </div>
-              <div className="mt-1 text-base font-semibold">
-                {onlineWorkers}/{totalWorkers}
-              </div>
-            </div>
-            <div className="rounded-2xl bg-sidebar-primary-foreground/10 px-3 py-2">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-primary-foreground/70">
-                {t("console.sidebar.header.documents")}
-              </div>
-              <div className="mt-1 text-base font-semibold">
-                {indexedDocuments}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center justify-between gap-3 rounded-2xl border border-sidebar-border bg-sidebar-accent/60 px-3 py-2 text-sm">
-          <span className="text-sidebar-foreground/65">
-            {t("console.live_refresh")}
-          </span>
-          <SidebarMenuBadge>{terminalFailures}</SidebarMenuBadge>
+        <div className="rounded-[24px] bg-sidebar-primary px-4 py-5 text-sidebar-primary-foreground">
+          <div className="text-lg font-semibold tracking-[-0.03em]">{SITE_NAME}</div>
         </div>
       </SidebarHeader>
 
