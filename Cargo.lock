@@ -959,7 +959,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "findverse-api"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "argon2",
@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-blob-storage"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "findverse-api",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-bootstrap"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "findverse-api",
@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-common"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "serde",
  "sha2 0.11.0",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-control-api"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "clap",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-crawler"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1050,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-projector"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "findverse-api",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-query-api"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "findverse-api",
@@ -1068,7 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-scheduler"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "findverse-api",
@@ -1077,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "findverse-task-api"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "anyhow",
  "findverse-api",
