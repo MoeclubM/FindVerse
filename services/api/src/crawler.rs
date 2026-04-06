@@ -2465,6 +2465,8 @@ impl CrawlerStore {
         let now = Utc::now();
         self.apply_due_rules(now).await?;
         self.requeue_stale_jobs(now, claim_timeout).await?;
+        self.recover_stale_ingesting_jobs(now, claim_timeout)
+            .await?;
         self.trim_events().await?;
         self.schedule_adaptive_recrawl(now).await?;
         crate::ranking::update_site_authority(&self.pg_pool).await?;
@@ -3270,6 +3272,148 @@ impl CrawlerStore {
         Ok(())
     }
 
+    async fn recover_stale_ingesting_jobs(
+        &self,
+        now: DateTime<Utc>,
+        claim_timeout: Duration,
+    ) -> Result<(), ApiError> {
+        let timeout_secs = claim_timeout.as_secs() as i64;
+        let cutoff = now - chrono::Duration::seconds(timeout_secs);
+        let next_retry_at = now + chrono::Duration::seconds(30);
+        let ingest_timeout_message = "ingest projection timed out before finishing";
+
+        let stale = sqlx::query_as::<_, StaleIngestJobRow>(
+            "with candidates as (
+                 select
+                     id,
+                     owner_developer_id,
+                     origin_key,
+                     url,
+                     claimed_by,
+                     lease_id,
+                     attempt_count,
+                     max_attempts
+                 from crawl_jobs
+                 where status = 'ingesting'
+                   and claimed_at < $1
+             ),
+             stale as (
+                 update crawl_jobs job
+                 set status = case
+                         when greatest(job.max_attempts, 1) <= greatest(job.attempt_count, 1) then 'dead_letter'
+                         else 'queued'
+                     end,
+                     claimed_by = null,
+                     claimed_at = null,
+                     lease_id = null,
+                     next_retry_at = case
+                         when greatest(job.max_attempts, 1) <= greatest(job.attempt_count, 1) then null
+                         else $2
+                     end,
+                     failure_kind = 'ingest_timeout',
+                     failure_message = $4,
+                     finished_at = case
+                         when greatest(job.max_attempts, 1) <= greatest(job.attempt_count, 1) then $3
+                         else null
+                     end
+                 from candidates
+                 where job.id = candidates.id
+                   and job.owner_developer_id = candidates.owner_developer_id
+                 returning
+                     job.id,
+                     job.owner_developer_id,
+                     candidates.origin_key,
+                     candidates.url,
+                     candidates.claimed_by,
+                     candidates.lease_id,
+                     job.status,
+                     job.attempt_count,
+                     job.max_attempts
+             ),
+             touched_origins as (
+                 update crawl_origins origin
+                 set in_flight_count = greatest(origin.in_flight_count - touched.stale_count, 0),
+                     next_allowed_at = greatest(origin.next_allowed_at, $2),
+                     updated_at = $3
+                 from (
+                     select owner_developer_id, origin_key, count(*)::integer as stale_count
+                     from stale
+                     group by owner_developer_id, origin_key
+                 ) touched
+                 where origin.owner_developer_id = touched.owner_developer_id
+                   and origin.origin_key = touched.origin_key
+             ),
+             failed_items as (
+                 update crawl_ingest_items item
+                 set status = 'failed',
+                     finished_at = $3,
+                     error_message = $4
+                 from stale
+                 where stale.lease_id is not null
+                   and item.lease_id = stale.lease_id
+                   and item.crawl_job_id = stale.id
+                   and item.status in ('pending', 'processing')
+                 returning item.lease_id
+             ),
+             touched_batches as (
+                 update crawl_ingest_batches batch
+                 set status = 'failed',
+                     finished_at = $3,
+                     error_message = $4
+                 where batch.lease_id in (select distinct lease_id from failed_items)
+                   and batch.status <> 'completed'
+             )
+             select
+                 id,
+                 owner_developer_id,
+                 url,
+                 claimed_by,
+                 status,
+                 attempt_count,
+                 max_attempts
+             from stale",
+        )
+        .bind(cutoff)
+        .bind(next_retry_at)
+        .bind(now)
+        .bind(ingest_timeout_message)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
+        for job in stale {
+            if job.status == "dead_letter" {
+                self.push_event(
+                    &job.owner_developer_id,
+                    "stale-ingest-dead-lettered",
+                    "error",
+                    format!(
+                        "moved stale ingesting job {} to dead letter after {}/{} attempts",
+                        job.id, job.attempt_count, job.max_attempts
+                    ),
+                    Some(job.url),
+                    job.claimed_by,
+                )
+                .await?;
+            } else {
+                self.push_event(
+                    &job.owner_developer_id,
+                    "stale-ingest-requeued",
+                    "error",
+                    format!(
+                        "requeued stale ingesting job {} after {}/{} attempts",
+                        job.id, job.attempt_count, job.max_attempts
+                    ),
+                    Some(job.url),
+                    job.claimed_by,
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn release_claimed_jobs_for_deleted_crawler(
         &self,
         owner_developer_id: &str,
@@ -3525,6 +3669,17 @@ struct DueRuleRow {
 
 #[derive(sqlx::FromRow)]
 struct StaleJobRow {
+    id: String,
+    owner_developer_id: String,
+    url: String,
+    claimed_by: Option<String>,
+    status: String,
+    attempt_count: i32,
+    max_attempts: i32,
+}
+
+#[derive(sqlx::FromRow)]
+struct StaleIngestJobRow {
     id: String,
     owner_developer_id: String,
     url: String,

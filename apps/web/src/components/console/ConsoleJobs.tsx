@@ -54,6 +54,10 @@ function formatTimestamp(value: string | null) {
   return value ? value.replace("T", " ").replace("Z", "").slice(0, 16) : "-";
 }
 
+function formatRetryTimestamp(status: string, value: string | null) {
+  return status === "queued" && value ? formatTimestamp(value) : "-";
+}
+
 function getStatusVariant(status: string): BadgeProps["variant"] {
   switch (status) {
     case "succeeded":
@@ -384,7 +388,7 @@ export function ConsoleJobs() {
                           <div className="flex flex-col gap-1 text-sm">
                             <span className="font-medium text-foreground">{formatTimestamp(job.finished_at)}</span>
                             <span className="text-xs text-muted-foreground">
-                              {t("console.jobs.retry_after")}: {formatTimestamp(job.next_retry_at)}
+                              {t("console.jobs.retry_after")}: {formatRetryTimestamp(job.status, job.next_retry_at)}
                             </span>
                           </div>
                         </TableCell>
@@ -509,7 +513,9 @@ export function ConsoleJobs() {
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.retry_after")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{formatTimestamp(selectedJob.next_retry_at)}</strong>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {formatRetryTimestamp(selectedJob.status, selectedJob.next_retry_at)}
+                </strong>
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.finished")}</span>
