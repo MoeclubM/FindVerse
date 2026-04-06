@@ -217,6 +217,8 @@ load_existing_config() {
   EXISTING_POLL_INTERVAL_SECS=""
   EXISTING_ALLOWED_DOMAINS=""
   EXISTING_PROXY=""
+  EXISTING_SERVICE_NAME=""
+  EXISTING_REPO=""
 
   if [[ -f "$ENV_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -229,6 +231,8 @@ load_existing_config() {
     EXISTING_POLL_INTERVAL_SECS="${POLL_INTERVAL_SECS:-}"
     EXISTING_ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-}"
     EXISTING_PROXY="${PROXY:-}"
+    EXISTING_SERVICE_NAME="${FINDVERSE_CRAWLER_SERVICE_NAME:-}"
+    EXISTING_REPO="${FINDVERSE_GITHUB_REPO:-}"
   fi
 }
 
@@ -282,6 +286,8 @@ MAX_JOBS=$final_max_jobs
 POLL_INTERVAL_SECS=$final_poll_interval
 ALLOWED_DOMAINS=$final_allowed_domains
 PROXY=$final_proxy
+FINDVERSE_CRAWLER_SERVICE_NAME=$SERVICE_NAME
+FINDVERSE_GITHUB_REPO=$REPO
 EOF
 
   run_as_root install -m 600 "$env_tmp" "$ENV_FILE"
@@ -348,6 +354,12 @@ main() {
   TMP_DIR="$(mktemp -d)"
   suffix="$(machine_suffix)"
   load_existing_config
+  if [[ "$SERVICE_NAME" == "findverse-crawler" && -n "$EXISTING_SERVICE_NAME" ]]; then
+    SERVICE_NAME="$EXISTING_SERVICE_NAME"
+  fi
+  if [[ "$REPO" == "MoeclubM/FindVerse" && -n "$EXISTING_REPO" ]]; then
+    REPO="$EXISTING_REPO"
+  fi
   SERVER_URL="${SERVER_URL:-${EXISTING_SERVER:-}}"
   [[ -n "$SERVER_URL" ]] || fail "--server is required on first install"
   ensure_browser

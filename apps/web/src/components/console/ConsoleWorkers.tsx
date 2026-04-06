@@ -1,8 +1,22 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Activity, Bot, Clock3, Trash2 } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  Clock3,
+  HardDriveDownload,
+  Package,
+  RefreshCw,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 
-import { deleteCrawler, renameCrawler, updateCrawlerRuntime } from "../../api";
+import {
+  deleteCrawler,
+  renameCrawler,
+  requestCrawlerUpdate,
+  updateCrawlerRuntime,
+} from "../../api";
 import {
   DetailDialog,
   FieldShell,
@@ -32,9 +46,28 @@ function formatTimestamp(value: string | null) {
   return value ? value.replace("T", " ").replace("Z", "").slice(0, 16) : "-";
 }
 
+function formatCrawlerVersion(value: string | null) {
+  return value ?? "-";
+}
+
+function getCrawlerUpdateVariant(status: string) {
+  switch (status) {
+    case "failed":
+      return "destructive" as const;
+    case "downloading":
+    case "restarting":
+      return "warning" as const;
+    case "pending":
+      return "default" as const;
+    default:
+      return "outline" as const;
+  }
+}
+
 export function ConsoleWorkers() {
   const { token, busy, setBusy, setFlash, refreshAll, overview } = useConsole();
   const { t } = useTranslation();
+  const platformVersion = overview?.platform_version ?? "-";
   const crawlers = useMemo(
     () =>
       [...(overview?.crawlers ?? [])].sort((left, right) => {
@@ -108,6 +141,29 @@ export function ConsoleWorkers() {
       runtimeJsRenderConcurrency !==
         String(selectedCrawler.js_render_concurrency)
     : false;
+  const selectedCrawlerRemoteUpdateReady = Boolean(
+    selectedCrawler?.version && selectedCrawler?.platform,
+  );
+  const selectedCrawlerUpdateQueued =
+    selectedCrawler?.desired_version === platformVersion &&
+    selectedCrawler?.version !== platformVersion;
+  const selectedCrawlerUpToDate =
+    selectedCrawler?.version === platformVersion && platformVersion !== "-";
+
+  function formatCrawlerUpdateStatus(status: string) {
+    switch (status) {
+      case "pending":
+        return t("console.workers.update_status_pending");
+      case "downloading":
+        return t("console.workers.update_status_downloading");
+      case "restarting":
+        return t("console.workers.update_status_restarting");
+      case "failed":
+        return t("console.workers.update_status_failed");
+      default:
+        return t("console.workers.update_status_idle");
+    }
+  }
 
   function startEditing(crawlerId: string, currentName: string) {
     setEditingId(crawlerId);
@@ -172,6 +228,27 @@ export function ConsoleWorkers() {
     }
   }
 
+  async function handleRequestUpdate(crawlerId: string) {
+    if (platformVersion === "-") {
+      return;
+    }
+    setBusy(true);
+    setFlash(null);
+    try {
+      await requestCrawlerUpdate(token, crawlerId, platformVersion);
+      await refreshAll();
+      setFlash(
+        t("console.workers.update_requested", { version: platformVersion }),
+      );
+    } catch (error) {
+      setFlash(
+        getErrorMessage(error, t("console.workers.update_request_failed")),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <PanelSection
       title={t("console.workers.title")}
@@ -181,6 +258,11 @@ export function ConsoleWorkers() {
       <p className="text-sm text-muted-foreground">
         {t("console.workers.setup_hint")}
       </p>
+      <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        {t("console.workers.platform_version_hint", {
+          version: platformVersion,
+        })}
+      </div>
       <StatStrip
         className="xl:grid-cols-6"
         items={[
@@ -238,11 +320,31 @@ export function ConsoleWorkers() {
                         ? t("console.workers.delete_ready")
                         : t("console.workers.delete_waiting")}
                     </Badge>
+                    <Badge variant="outline">
+                      {t("console.workers.version_badge", {
+                        version: formatCrawlerVersion(crawler.version),
+                      })}
+                    </Badge>
+                    <Badge variant={getCrawlerUpdateVariant(crawler.update_status)}>
+                      {formatCrawlerUpdateStatus(crawler.update_status)}
+                    </Badge>
                     <Badge variant="outline">{crawler.id.slice(0, 8)}</Badge>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     {crawler.preview}
                   </p>
+                  <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <span>
+                      {t("console.workers.platform_label")}:{" "}
+                      {crawler.platform ?? t("console.workers.platform_unknown")}
+                    </span>
+                    {crawler.desired_version ? (
+                      <span>
+                        {t("console.workers.target_version")}:{" "}
+                        {crawler.desired_version}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="grid gap-1 text-sm text-muted-foreground md:text-right">
                   <span>{t("console.workers.last_seen")}</span>
@@ -480,6 +582,106 @@ export function ConsoleWorkers() {
                   {formatTimestamp(selectedCrawler.created_at)}
                 </div>
               </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Package className="size-4" />
+                  {t("console.workers.current_version")}
+                </div>
+                <div className="mt-2 text-lg font-semibold text-foreground">
+                  {selectedCrawler.version ??
+                    t("console.workers.version_unknown")}
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <HardDriveDownload className="size-4" />
+                  {t("console.workers.target_version")}
+                </div>
+                <div className="mt-2 text-lg font-semibold text-foreground">
+                  {selectedCrawler.desired_version ?? "-"}
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Package className="size-4" />
+                  {t("console.workers.platform_label")}
+                </div>
+                <div className="mt-2 text-lg font-semibold text-foreground">
+                  {selectedCrawler.platform ??
+                    t("console.workers.platform_unknown")}
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  {selectedCrawler.update_status === "failed" ? (
+                    <TriangleAlert className="size-4" />
+                  ) : (
+                    <RefreshCw className="size-4" />
+                  )}
+                  {t("console.workers.update_status_label")}
+                </div>
+                <div className="mt-2">
+                  <Badge
+                    variant={getCrawlerUpdateVariant(
+                      selectedCrawler.update_status,
+                    )}
+                  >
+                    {formatCrawlerUpdateStatus(selectedCrawler.update_status)}
+                  </Badge>
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Package className="size-4" />
+                  {t("console.workers.available_version")}
+                </div>
+                <div className="mt-2 text-lg font-semibold text-foreground">
+                  {platformVersion}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">
+                    {t("console.workers.remote_update_title")}
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {selectedCrawlerRemoteUpdateReady
+                      ? t("console.workers.remote_update_hint")
+                      : t("console.workers.remote_update_bootstrap_hint")}
+                  </p>
+                </div>
+                <Button
+                  disabled={
+                    busy ||
+                    !selectedCrawlerRemoteUpdateReady ||
+                    selectedCrawlerUpdateQueued ||
+                    selectedCrawlerUpToDate
+                  }
+                  onClick={() => void handleRequestUpdate(selectedCrawler.id)}
+                >
+                  <HardDriveDownload data-icon="inline-start" />
+                  {selectedCrawlerUpToDate
+                    ? t("console.workers.up_to_date")
+                    : selectedCrawlerUpdateQueued
+                      ? t("console.workers.update_queued")
+                      : !selectedCrawlerRemoteUpdateReady
+                        ? t("console.workers.remote_update_bootstrap_required")
+                        : t("console.workers.update_to", {
+                            version: platformVersion,
+                          })}
+                </Button>
+              </div>
+              {selectedCrawler.update_message ? (
+                <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  {selectedCrawler.update_message}
+                </div>
+              ) : null}
             </div>
 
             <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">

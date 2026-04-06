@@ -76,6 +76,20 @@ pub struct CrawlerCapabilities {
     pub js_render: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlerRuntimeSnapshot {
+    pub version: String,
+    pub platform: String,
+    #[serde(default = "default_crawler_update_status")]
+    pub update_status: String,
+    #[serde(default)]
+    pub update_message: Option<String>,
+}
+
+fn default_crawler_update_status() -> String {
+    "idle".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchParams {
     pub q: String,
@@ -285,6 +299,7 @@ pub struct UpdateCrawlerRequest {
     pub name: Option<String>,
     pub worker_concurrency: Option<usize>,
     pub js_render_concurrency: Option<usize>,
+    pub desired_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -304,6 +319,11 @@ pub struct CrawlerMetadata {
     pub supports_js_render: bool,
     pub worker_concurrency: usize,
     pub js_render_concurrency: usize,
+    pub version: Option<String>,
+    pub platform: Option<String>,
+    pub desired_version: Option<String>,
+    pub update_status: String,
+    pub update_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -394,6 +414,7 @@ pub struct CrawlEvent {
 #[derive(Debug, Clone, Serialize)]
 pub struct CrawlOverviewResponse {
     pub owner_id: String,
+    pub platform_version: String,
     pub frontier_depth: usize,
     pub known_urls: usize,
     pub in_flight_jobs: usize,
@@ -470,6 +491,8 @@ pub struct ClaimJobsResponse {
 pub struct CrawlerHeartbeatResponse {
     pub worker_concurrency: usize,
     pub js_render_concurrency: usize,
+    pub desired_version: Option<String>,
+    pub update_status: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

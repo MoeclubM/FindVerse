@@ -154,6 +154,7 @@ export type CrawlEvent = {
 
 export type CrawlOverview = {
   owner_id: string;
+  platform_version: string;
   frontier_depth: number;
   known_urls: number;
   in_flight_jobs: number;
@@ -176,6 +177,11 @@ export type CrawlOverview = {
     supports_js_render: boolean;
     worker_concurrency: number;
     js_render_concurrency: number;
+    version: string | null;
+    platform: string | null;
+    desired_version: string | null;
+    update_status: string;
+    update_message: string | null;
   }>;
   rules: CrawlRule[];
   recent_events: CrawlEvent[];
@@ -292,6 +298,7 @@ function updateCrawler(
     name?: string;
     worker_concurrency?: number;
     js_render_concurrency?: number;
+    desired_version?: string;
   },
 ) {
   return request<void>(`/v1/admin/crawlers/${id}`, {
@@ -314,6 +321,16 @@ export function updateCrawlerRuntime(
   return updateCrawler(token, id, {
     worker_concurrency: workerConcurrency,
     js_render_concurrency: jsRenderConcurrency,
+  });
+}
+
+export function requestCrawlerUpdate(
+  token: string,
+  id: string,
+  desiredVersion: string,
+) {
+  return updateCrawler(token, id, {
+    desired_version: desiredVersion,
   });
 }
 

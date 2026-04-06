@@ -1,5 +1,8 @@
 use std::{
     collections::BTreeSet,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -8,8 +11,11 @@ use std::{
 };
 
 use chrono::Utc;
+use flate2::read::GzDecoder;
 use futures::stream::{self, StreamExt};
 use reqwest::header::CONTENT_TYPE;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, Notify, RwLock, Semaphore};
@@ -26,8 +32,8 @@ use crate::js_render::{needs_js_rendering, render_with_js};
 use crate::llm_filter::evaluate_page;
 use crate::models::{
     ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, CrawlerCapabilities,
-    CrawlerHeartbeatResponse, LlmFilterConfig, SubmitCrawlReportRequest, SubmitCrawlReportResponse,
-    WorkerConfig,
+    CrawlerHeartbeatResponse, CrawlerRuntimeSnapshot, LlmFilterConfig, SubmitCrawlReportRequest,
+    SubmitCrawlReportResponse, WorkerConfig,
 };
 use crate::sitemap::fetch_and_parse_sitemap;
 use crate::url_normalize::normalize_url_advanced;
@@ -53,6 +59,124 @@ impl RuntimeConcurrencyConfig {
             worker_concurrency: config.concurrency.max(1),
             js_render_concurrency: config.js_render_concurrency.max(1),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CrawlerRuntimeState {
+    version: String,
+    platform: String,
+    desired_version: Option<String>,
+    update_status: String,
+    update_message: Option<String>,
+    failed_target: Option<String>,
+}
+
+impl CrawlerRuntimeState {
+    fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            version: current_release_tag(),
+            platform: current_platform_tag()?,
+            desired_version: None,
+            update_status: "idle".to_string(),
+            update_message: None,
+            failed_target: None,
+        })
+    }
+
+    fn snapshot(&self) -> CrawlerRuntimeSnapshot {
+        CrawlerRuntimeSnapshot {
+            version: self.version.clone(),
+            platform: self.platform.clone(),
+            update_status: self.update_status.clone(),
+            update_message: self.update_message.clone(),
+        }
+    }
+
+    fn apply_server_instruction(
+        &mut self,
+        desired_version: Option<String>,
+        server_update_status: &str,
+    ) -> bool {
+        let before = self.snapshot();
+        let desired_version = desired_version.and_then(|value| {
+            let clean = value.trim();
+            if clean.is_empty() {
+                None
+            } else {
+                Some(clean.to_string())
+            }
+        });
+
+        if let Some(target) = desired_version.as_deref() {
+            if target == self.version {
+                self.desired_version = None;
+                self.failed_target = None;
+                if !matches!(self.update_status.as_str(), "downloading" | "restarting") {
+                    self.update_status = "idle".to_string();
+                    self.update_message = None;
+                }
+            } else {
+                let target_changed = self.desired_version.as_deref() != Some(target);
+                let server_forces_retry = server_update_status == "pending";
+                self.desired_version = Some(target.to_string());
+                if target_changed || server_forces_retry {
+                    self.failed_target = None;
+                }
+                if self.failed_target.as_deref() == Some(target) {
+                    self.update_status = "failed".to_string();
+                } else if !matches!(self.update_status.as_str(), "downloading" | "restarting") {
+                    self.update_status = "pending".to_string();
+                    if target_changed || server_forces_retry || self.update_message.is_none() {
+                        self.update_message = Some(format!("waiting to update to {target}"));
+                    }
+                }
+            }
+        } else {
+            self.desired_version = None;
+            self.failed_target = None;
+            if !matches!(self.update_status.as_str(), "downloading" | "restarting") {
+                self.update_status = "idle".to_string();
+                self.update_message = None;
+            }
+        }
+
+        self.snapshot() != before
+    }
+
+    fn pending_target(&self) -> Option<String> {
+        let target = self.desired_version.as_ref()?;
+        if target == &self.version {
+            return None;
+        }
+        if self.failed_target.as_deref() == Some(target.as_str()) {
+            return None;
+        }
+        if self.update_status == "pending" {
+            Some(target.clone())
+        } else {
+            None
+        }
+    }
+
+    fn mark_downloading(&mut self, target: &str) {
+        self.desired_version = Some(target.to_string());
+        self.update_status = "downloading".to_string();
+        self.update_message = Some(format!("downloading {target}"));
+    }
+
+    fn mark_restarting(&mut self, target: &str) {
+        self.desired_version = Some(target.to_string());
+        self.update_status = "restarting".to_string();
+        self.update_message = Some(format!("restarting service into {target}"));
+    }
+
+    fn mark_failed(&mut self, target: &str, message: impl Into<String>) {
+        let message = message.into();
+        self.desired_version = Some(target.to_string());
+        self.failed_target = Some(target.to_string());
+        self.update_status = "failed".to_string();
+        self.update_message = Some(message.chars().take(240).collect());
     }
 }
 
@@ -119,9 +243,12 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
     let runtime_config = Arc::new(RwLock::new(RuntimeConcurrencyConfig::from_worker_config(
         &config,
     )));
+    let runtime_state = Arc::new(Mutex::new(CrawlerRuntimeState::new()?));
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let shutdown_notify = Arc::new(Notify::new());
-    if let Err(error) = sync_runtime_config(&api_client, &config, &runtime_config).await {
+    if let Err(error) =
+        sync_runtime_config(&api_client, &config, &runtime_config, &runtime_state).await
+    {
         warn!(
             ?error,
             "initial crawler heartbeat/config sync failed; using local concurrency defaults"
@@ -143,6 +270,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         let api_client = api_client.clone();
         let config = config.clone();
         let runtime_config = Arc::clone(&runtime_config);
+        let runtime_state = Arc::clone(&runtime_state);
         let shutdown_requested = Arc::clone(&shutdown_requested);
         let shutdown_notify = Arc::clone(&shutdown_notify);
         async move {
@@ -154,7 +282,8 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                 if shutdown_requested.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Err(error) = sync_runtime_config(&api_client, &config, &runtime_config).await
+                if let Err(error) =
+                    sync_runtime_config(&api_client, &config, &runtime_config, &runtime_state).await
                 {
                     warn!(?error, "crawler heartbeat failed");
                 }
@@ -166,6 +295,30 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         if shutdown_requested.load(Ordering::Relaxed) {
             info!("shutdown requested, stopping before claiming more jobs");
             break;
+        }
+
+        if let Some(target_version) = {
+            let state = runtime_state.lock().await;
+            state.pending_target()
+        } {
+            match apply_pending_update(
+                &api_client,
+                &config,
+                &runtime_config,
+                &runtime_state,
+                &target_version,
+            )
+            .await
+            {
+                Ok(true) => {
+                    info!(target = %target_version, "crawler restart queued after self-update");
+                    return Ok(());
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(?error, target = %target_version, "crawler self-update failed");
+                }
+            }
         }
 
         let current_runtime = *runtime_config.read().await;
@@ -371,9 +524,14 @@ async fn sync_runtime_config(
     client: &reqwest::Client,
     config: &WorkerConfig,
     runtime_config: &Arc<RwLock<RuntimeConcurrencyConfig>>,
+    runtime_state: &Arc<Mutex<CrawlerRuntimeState>>,
 ) -> anyhow::Result<()> {
     let caps_json = serde_json::to_string(&config.capabilities)
         .unwrap_or_else(|_| r#"{"js_render":false}"#.to_string());
+    let runtime_json = {
+        let state = runtime_state.lock().await;
+        serde_json::to_string(&state.snapshot())?
+    };
     let response = client
         .post(format!(
             "{}/internal/crawlers/heartbeat",
@@ -385,6 +543,7 @@ async fn sync_runtime_config(
             config.crawler_name.as_deref().unwrap_or(""),
         )
         .header("x-crawler-capabilities", &caps_json)
+        .header("x-crawler-runtime", runtime_json)
         .bearer_auth(&config.auth_token)
         .send()
         .await?;
@@ -394,6 +553,20 @@ async fn sync_runtime_config(
     }
 
     let next: CrawlerHeartbeatResponse = response.json().await?;
+    {
+        let mut state = runtime_state.lock().await;
+        let changed =
+            state.apply_server_instruction(next.desired_version.clone(), &next.update_status);
+        if changed {
+            info!(
+                version = %state.version,
+                platform = %state.platform,
+                desired_version = state.desired_version.as_deref().unwrap_or("-"),
+                update_status = %state.update_status,
+                "updated crawler runtime state from heartbeat"
+            );
+        }
+    }
     let next = RuntimeConcurrencyConfig {
         worker_concurrency: next.worker_concurrency.max(1),
         js_render_concurrency: next.js_render_concurrency.max(1),
@@ -409,6 +582,176 @@ async fn sync_runtime_config(
     }
 
     Ok(())
+}
+
+async fn apply_pending_update(
+    client: &reqwest::Client,
+    config: &WorkerConfig,
+    runtime_config: &Arc<RwLock<RuntimeConcurrencyConfig>>,
+    runtime_state: &Arc<Mutex<CrawlerRuntimeState>>,
+    target_version: &str,
+) -> anyhow::Result<bool> {
+    {
+        let mut state = runtime_state.lock().await;
+        state.mark_downloading(target_version);
+    }
+    let _ = sync_runtime_config(client, config, runtime_config, runtime_state).await;
+
+    let update_result = async {
+        let platform = {
+            let state = runtime_state.lock().await;
+            state.platform.clone()
+        };
+        let archive = download_release_archive(client, target_version, &platform).await?;
+        let current_executable = std::env::current_exe()?;
+        install_downloaded_binary(archive, current_executable).await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    if let Err(error) = update_result {
+        let message = format!("update to {target_version} failed: {error}");
+        {
+            let mut state = runtime_state.lock().await;
+            state.mark_failed(target_version, message);
+        }
+        let _ = sync_runtime_config(client, config, runtime_config, runtime_state).await;
+        return Err(error);
+    }
+
+    {
+        let mut state = runtime_state.lock().await;
+        state.mark_restarting(target_version);
+    }
+    let _ = sync_runtime_config(client, config, runtime_config, runtime_state).await;
+    restart_crawler_service()?;
+    Ok(true)
+}
+
+async fn download_release_archive(
+    client: &reqwest::Client,
+    version: &str,
+    platform: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let repo = env::var("FINDVERSE_GITHUB_REPO").unwrap_or_else(|_| "MoeclubM/FindVerse".into());
+    let url = format!(
+        "https://github.com/{repo}/releases/download/{version}/findverse-{platform}.tar.gz"
+    );
+    let response = client
+        .get(&url)
+        .header(
+            "user-agent",
+            format!("FindVerseCrawler/{}", current_release_tag()),
+        )
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("download failed with status {}", response.status());
+    }
+
+    Ok(response.bytes().await?.to_vec())
+}
+
+async fn install_downloaded_binary(
+    archive_bytes: Vec<u8>,
+    current_executable: PathBuf,
+) -> anyhow::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        install_downloaded_binary_blocking(archive_bytes, current_executable)
+    })
+    .await??;
+    Ok(())
+}
+
+fn install_downloaded_binary_blocking(
+    archive_bytes: Vec<u8>,
+    current_executable: PathBuf,
+) -> anyhow::Result<()> {
+    let temp_root = env::temp_dir().join(format!(
+        "findverse-crawler-update-{}-{}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&temp_root)?;
+
+    let update_result = (|| -> anyhow::Result<()> {
+        let archive_path = temp_root.join("crawler.tar.gz");
+        fs::write(&archive_path, &archive_bytes)?;
+
+        let unpack_dir = temp_root.join("unpack");
+        fs::create_dir_all(&unpack_dir)?;
+        let archive_file = fs::File::open(&archive_path)?;
+        let decoder = GzDecoder::new(archive_file);
+        let mut archive = tar::Archive::new(decoder);
+        archive.unpack(&unpack_dir)?;
+
+        let extracted_binary = find_extracted_binary(&unpack_dir)
+            .ok_or_else(|| anyhow::anyhow!("release archive did not contain findverse-crawler"))?;
+        let staged_binary = current_executable.with_extension("new");
+        fs::copy(&extracted_binary, &staged_binary)?;
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&staged_binary)?.permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&staged_binary, permissions)?;
+        }
+        fs::rename(&staged_binary, &current_executable)?;
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&temp_root);
+    update_result
+}
+
+fn find_extracted_binary(root: &Path) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let entries = fs::read_dir(path).ok()?;
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry.file_type().ok()?.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+            if entry.file_name().to_string_lossy() == "findverse-crawler" {
+                return Some(entry_path);
+            }
+        }
+    }
+    None
+}
+
+fn restart_crawler_service() -> anyhow::Result<()> {
+    let service_name =
+        env::var("FINDVERSE_CRAWLER_SERVICE_NAME").unwrap_or_else(|_| "findverse-crawler".into());
+    let unit = if service_name.ends_with(".service") {
+        service_name
+    } else {
+        format!("{service_name}.service")
+    };
+    let status = Command::new("systemctl")
+        .arg("restart")
+        .arg("--no-block")
+        .arg(&unit)
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("systemctl restart failed for {unit}");
+    }
+    Ok(())
+}
+
+fn current_release_tag() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn current_platform_tag() -> anyhow::Result<String> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" | "amd64" => "linux-x86_64",
+        "aarch64" | "arm64" => "linux-arm64",
+        other => anyhow::bail!("unsupported crawler update architecture: {other}"),
+    };
+    Ok(arch.to_string())
 }
 
 // ---------------------------------------------------------------------------

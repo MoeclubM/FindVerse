@@ -21,6 +21,7 @@ scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+tar = "0.4"
 texting_robots = "0.2.2"
 tokio.workspace = true
 tracing.workspace = true

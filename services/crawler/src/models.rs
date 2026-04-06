@@ -192,6 +192,16 @@ pub struct ClaimJobsResponse {
 pub struct CrawlerHeartbeatResponse {
     pub worker_concurrency: usize,
     pub js_render_concurrency: usize,
+    pub desired_version: Option<String>,
+    pub update_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CrawlerRuntimeSnapshot {
+    pub version: String,
+    pub platform: String,
+    pub update_status: String,
+    pub update_message: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

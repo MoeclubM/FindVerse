@@ -16,10 +16,10 @@ use crate::{
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlEvent, CrawlJobDetail, CrawlJobListResponse,
         CrawlJobStats, CrawlOriginState, CrawlOverviewResponse, CrawlResultInput, CrawlRule,
-        CrawlerCapabilities, CrawlerMetadata, CreateCrawlRuleRequest, DeveloperDomainDocument,
-        DeveloperDomainFacet, DeveloperDomainInsightResponse, DeveloperDomainJob,
-        DeveloperDomainSubmitRequest, DeveloperDomainSubmitResponse, IndexedDocument,
-        SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
+        CrawlerCapabilities, CrawlerMetadata, CrawlerRuntimeSnapshot, CreateCrawlRuleRequest,
+        DeveloperDomainDocument, DeveloperDomainFacet, DeveloperDomainInsightResponse,
+        DeveloperDomainJob, DeveloperDomainSubmitRequest, DeveloperDomainSubmitResponse,
+        IndexedDocument, SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
         SubmitCrawlReportResponse, UpdateCrawlRuleRequest, UpdateCrawlerRequest,
     },
     store::{
@@ -262,6 +262,7 @@ impl TaskCrawlerStore {
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
         capabilities: Option<&CrawlerCapabilities>,
+        runtime_snapshot: Option<&CrawlerRuntimeSnapshot>,
     ) -> Result<crate::models::CrawlerHeartbeatResponse, ApiError> {
         self.inner
             .heartbeat_crawler(
@@ -270,6 +271,7 @@ impl TaskCrawlerStore {
                 auth_header,
                 default_owner_developer_id,
                 capabilities,
+                runtime_snapshot,
             )
             .await
     }
@@ -376,7 +378,14 @@ impl CrawlerStore {
         crawler_id: &str,
         request: UpdateCrawlerRequest,
     ) -> Result<(), ApiError> {
-        let worker_concurrency = match request.worker_concurrency {
+        let UpdateCrawlerRequest {
+            name,
+            worker_concurrency,
+            js_render_concurrency,
+            desired_version,
+        } = request;
+
+        let worker_concurrency = match worker_concurrency {
             Some(0) => {
                 return Err(ApiError::BadRequest(
                     "worker_concurrency must be a positive integer".to_string(),
@@ -385,7 +394,7 @@ impl CrawlerStore {
             Some(value) => Some(value),
             None => None,
         };
-        let js_render_concurrency = match request.js_render_concurrency {
+        let js_render_concurrency = match js_render_concurrency {
             Some(0) => {
                 return Err(ApiError::BadRequest(
                     "js_render_concurrency must be a positive integer".to_string(),
@@ -394,19 +403,25 @@ impl CrawlerStore {
             Some(value) => Some(value),
             None => None,
         };
+        let desired_version = desired_version
+            .as_deref()
+            .map(normalize_release_tag)
+            .transpose()?;
         let has_runtime_update = worker_concurrency.is_some() || js_render_concurrency.is_some();
+        let has_version_update = desired_version.is_some();
+        let has_metadata_update = has_runtime_update || has_version_update;
 
-        if request.name.is_none() && !has_runtime_update {
+        if name.is_none() && !has_metadata_update {
             return Err(ApiError::BadRequest(
                 "no crawler fields provided".to_string(),
             ));
         }
 
-        if let Some(name) = request.name.as_deref() {
+        if let Some(name) = name.as_deref() {
             self.rename_crawler(developer_id, crawler_id, name).await?;
         }
 
-        if !has_runtime_update {
+        if !has_metadata_update {
             return Ok(());
         }
 
@@ -419,6 +434,11 @@ impl CrawlerStore {
                 "js_render_concurrency".to_string(),
                 serde_json::json!(value),
             );
+        }
+        if let Some(value) = desired_version.as_deref() {
+            metadata_patch.insert("desired_version".to_string(), serde_json::json!(value));
+            metadata_patch.insert("update_status".to_string(), serde_json::json!("pending"));
+            metadata_patch.insert("update_message".to_string(), serde_json::Value::Null);
         }
 
         let result = sqlx::query(
@@ -437,15 +457,29 @@ impl CrawlerStore {
             return Err(ApiError::NotFound("crawler not found".to_string()));
         }
 
-        self.push_event(
-            developer_id,
-            "crawler-runtime-updated",
-            "ok",
-            format!("updated runtime config for crawler {crawler_id}"),
-            None,
-            Some(crawler_id.to_string()),
-        )
-        .await?;
+        if has_runtime_update {
+            self.push_event(
+                developer_id,
+                "crawler-runtime-updated",
+                "ok",
+                format!("updated runtime config for crawler {crawler_id}"),
+                None,
+                Some(crawler_id.to_string()),
+            )
+            .await?;
+        }
+
+        if let Some(version) = desired_version.as_deref() {
+            self.push_event(
+                developer_id,
+                "crawler-update-requested",
+                "ok",
+                format!("requested crawler {crawler_id} to update to {version}"),
+                None,
+                Some(crawler_id.to_string()),
+            )
+            .await?;
+        }
 
         Ok(())
     }
@@ -860,6 +894,11 @@ impl CrawlerStore {
                     .js_render_concurrency
                     .filter(|value| *value > 0)
                     .unwrap_or(default_js_render_concurrency),
+                version: metadata.version,
+                platform: metadata.platform,
+                desired_version: metadata.desired_version,
+                update_status: metadata.update_status,
+                update_message: metadata.update_message,
             }
         })
         .collect();
@@ -952,6 +991,7 @@ impl CrawlerStore {
 
         Ok(CrawlOverviewResponse {
             owner_id: developer_id.to_string(),
+            platform_version: current_release_tag(),
             frontier_depth: frontier_depth as usize,
             known_urls: known_urls as usize,
             in_flight_jobs: in_flight_jobs as usize,
@@ -2358,18 +2398,57 @@ impl CrawlerStore {
         auth_header: Option<&str>,
         default_owner_developer_id: &str,
         capabilities: Option<&CrawlerCapabilities>,
+        runtime_snapshot: Option<&CrawlerRuntimeSnapshot>,
     ) -> Result<crate::models::CrawlerHeartbeatResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
-        self.validate_crawler_auth(
-            crawler_id,
-            crawler_name,
-            &token_hash,
-            default_owner_developer_id,
-        )
-        .await?;
+        let crawler = self
+            .validate_crawler_auth(
+                crawler_id,
+                crawler_name,
+                &token_hash,
+                default_owner_developer_id,
+            )
+            .await?;
 
-        let metadata: serde_json::Value = if let Some(caps) = capabilities {
-            let caps_json = serde_json::to_value(caps).map_err(|e| ApiError::Internal(e.into()))?;
+        let now = Utc::now();
+        let mut metadata_patch = serde_json::Map::new();
+        if let Some(caps) = capabilities {
+            metadata_patch.insert("js_render".to_string(), serde_json::json!(caps.js_render));
+        }
+        if let Some(snapshot) = runtime_snapshot {
+            if let Some(version) = normalize_runtime_value(&snapshot.version, 64) {
+                metadata_patch.insert("version".to_string(), serde_json::json!(version));
+            }
+            if let Some(platform) = normalize_runtime_value(&snapshot.platform, 64) {
+                metadata_patch.insert("platform".to_string(), serde_json::json!(platform));
+            }
+            metadata_patch.insert(
+                "update_status".to_string(),
+                serde_json::json!(normalize_update_status(&snapshot.update_status)),
+            );
+            metadata_patch.insert(
+                "update_message".to_string(),
+                snapshot
+                    .update_message
+                    .as_deref()
+                    .and_then(|value| normalize_runtime_value(value, 240))
+                    .map_or(serde_json::Value::Null, serde_json::Value::String),
+            );
+        }
+
+        let mut metadata: serde_json::Value = if metadata_patch.is_empty() {
+            sqlx::query_scalar(
+                "update crawlers
+                 set last_seen_at = $2
+                 where id = $1
+                 returning metadata",
+            )
+            .bind(crawler_id)
+            .bind(now)
+            .fetch_one(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?
+        } else {
             sqlx::query_scalar(
                 "update crawlers
                  set last_seen_at = $2,
@@ -2378,26 +2457,49 @@ impl CrawlerStore {
                  returning metadata",
             )
             .bind(crawler_id)
-            .bind(Utc::now())
-            .bind(&caps_json)
-            .fetch_one(&self.pg_pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.into()))?
-        } else {
-            sqlx::query_scalar(
-                "update crawlers
-                 set last_seen_at = $2
-                 where id = $1
-                 returning metadata",
-            )
-            .bind(crawler_id)
-            .bind(Utc::now())
+            .bind(now)
+            .bind(serde_json::Value::Object(metadata_patch))
             .fetch_one(&self.pg_pool)
             .await
             .map_err(|e| ApiError::Internal(e.into()))?
         };
 
-        let metadata = crawler_runtime_metadata(&metadata);
+        let mut metadata_view = crawler_runtime_metadata(&metadata);
+        if runtime_snapshot.is_some()
+            && metadata_view
+                .desired_version
+                .as_deref()
+                .is_some_and(|target| metadata_view.version.as_deref() == Some(target))
+        {
+            metadata = sqlx::query_scalar(
+                "update crawlers
+                 set metadata = metadata || $2::jsonb
+                 where id = $1
+                 returning metadata",
+            )
+            .bind(crawler_id)
+            .bind(serde_json::json!({
+                "desired_version": serde_json::Value::Null,
+                "update_status": "idle",
+                "update_message": serde_json::Value::Null,
+            }))
+            .fetch_one(&self.pg_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.into()))?;
+            if let Some(version) = metadata_view.version.clone() {
+                self.push_event(
+                    &crawler.owner_developer_id,
+                    "crawler-update-applied",
+                    "ok",
+                    format!("crawler {crawler_id} is now running {version}"),
+                    None,
+                    Some(crawler_id.to_string()),
+                )
+                .await?;
+            }
+            metadata_view = crawler_runtime_metadata(&metadata);
+        }
+
         let default_worker_concurrency = parse_positive_usize_config(
             self.get_system_config("crawler.total_concurrency").await,
             16,
@@ -2409,14 +2511,16 @@ impl CrawlerStore {
         );
 
         Ok(crate::models::CrawlerHeartbeatResponse {
-            worker_concurrency: metadata
+            worker_concurrency: metadata_view
                 .worker_concurrency
                 .filter(|value| *value > 0)
                 .unwrap_or(default_worker_concurrency),
-            js_render_concurrency: metadata
+            js_render_concurrency: metadata_view
                 .js_render_concurrency
                 .filter(|value| *value > 0)
                 .unwrap_or(default_js_render_concurrency),
+            desired_version: metadata_view.desired_version,
+            update_status: metadata_view.update_status,
         })
     }
 
@@ -3622,6 +3726,16 @@ struct StoredCrawlerMetadata {
     worker_concurrency: Option<usize>,
     #[serde(default)]
     js_render_concurrency: Option<usize>,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    platform: Option<String>,
+    #[serde(default)]
+    desired_version: Option<String>,
+    #[serde(default = "default_stored_crawler_update_status")]
+    update_status: String,
+    #[serde(default)]
+    update_message: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -4145,6 +4259,50 @@ fn parse_positive_usize_config(value: Option<String>, default: usize) -> usize {
         .and_then(|raw| raw.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default)
+}
+
+fn current_release_tag() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn normalize_release_tag(input: &str) -> Result<String, ApiError> {
+    let clean = input.trim().trim_start_matches(['v', 'V']);
+    if clean.is_empty() {
+        return Err(ApiError::BadRequest(
+            "desired_version must not be empty".to_string(),
+        ));
+    }
+    if !clean
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
+    {
+        return Err(ApiError::BadRequest(
+            "desired_version must look like a release tag".to_string(),
+        ));
+    }
+    Ok(format!("v{clean}"))
+}
+
+fn default_stored_crawler_update_status() -> String {
+    "idle".to_string()
+}
+
+fn normalize_runtime_value(input: &str, max_len: usize) -> Option<String> {
+    let clean = input.trim();
+    if clean.is_empty() {
+        return None;
+    }
+    Some(clean.chars().take(max_len).collect())
+}
+
+fn normalize_update_status(input: &str) -> &'static str {
+    match input.trim() {
+        "pending" => "pending",
+        "downloading" => "downloading",
+        "restarting" => "restarting",
+        "failed" => "failed",
+        _ => "idle",
+    }
 }
 
 fn crawler_runtime_metadata(value: &serde_json::Value) -> StoredCrawlerMetadata {

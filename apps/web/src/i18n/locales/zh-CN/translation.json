@@ -267,7 +267,9 @@
         "site_purged": "站点已清理",
         "developer_deleted": "开发者已删除",
         "crawler_runtime_updated": "节点并发已更新",
-        "crawler_delete_detached_jobs": "离线节点任务已脱钩"
+        "crawler_delete_detached_jobs": "离线节点任务已脱钩",
+        "crawler_update_requested": "节点升级已下发",
+        "crawler_update_applied": "节点升级已完成"
       }
     },
     "users": {
@@ -483,6 +485,7 @@
       "runtime_saved": "节点并发已保存",
       "runtime_save_failed": "保存节点并发失败",
       "setup_hint": "在设置页维护共享 crawler key。节点首次安装会自动生成 crawler_id，并持久化到本地配置文件。",
+      "platform_version_hint": "控制面当前支持的爬虫版本：{{version}}",
       "name_placeholder": "节点名称",
       "name_too_short": "节点名称至少需要 2 个字符",
       "rename_failed": "重命名失败",
@@ -490,7 +493,29 @@
       "delete_confirm": "确认删除节点 {{name}} 吗？",
       "delete_ready_hint": "当前节点没有进行中任务，可以直接删除。",
       "delete_release_hint": "当前节点已离线。删除后会释放仍处于认领中的任务，已经进入收录阶段的任务会继续完成。",
-      "delete_waiting_hint": "当前节点仍有进行中任务，只有任务完成或认领超时后才能删除。"
+      "delete_waiting_hint": "当前节点仍有进行中任务，只有任务完成或认领超时后才能删除。",
+      "version_badge": "版本 {{version}}",
+      "platform_label": "平台",
+      "platform_unknown": "未知平台",
+      "version_unknown": "版本未知",
+      "current_version": "当前版本",
+      "target_version": "目标版本",
+      "available_version": "可用版本",
+      "update_status_label": "升级状态",
+      "remote_update_title": "远程升级",
+      "remote_update_hint": "节点会在当前批次完成后下载目标版本并自动重启，无需手动执行安装脚本。",
+      "remote_update_bootstrap_hint": "这个节点还没有上报版本与平台信息，说明仍是旧爬虫。需要先手动升级一次到支持远程升级的版本。",
+      "remote_update_bootstrap_required": "需先手动升级一次",
+      "update_to": "升级到 {{version}}",
+      "up_to_date": "已是最新版本",
+      "update_queued": "升级已排队",
+      "update_requested": "已向节点下发升级请求：{{version}}",
+      "update_request_failed": "下发节点升级请求失败",
+      "update_status_idle": "空闲",
+      "update_status_pending": "等待升级",
+      "update_status_downloading": "下载中",
+      "update_status_restarting": "重启中",
+      "update_status_failed": "升级失败"
     },
     "documents": {
       "title": "索引文档",

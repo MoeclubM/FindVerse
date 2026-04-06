@@ -267,7 +267,9 @@
         "site_purged": "Site Purged",
         "developer_deleted": "Developer Deleted",
         "crawler_runtime_updated": "Worker Runtime Updated",
-        "crawler_delete_detached_jobs": "Offline Worker Jobs Detached"
+        "crawler_delete_detached_jobs": "Offline Worker Jobs Detached",
+        "crawler_update_requested": "Worker Update Requested",
+        "crawler_update_applied": "Worker Update Applied"
       }
     },
     "users": {
@@ -483,6 +485,7 @@
       "runtime_saved": "Worker runtime saved",
       "runtime_save_failed": "Failed to save worker runtime",
       "setup_hint": "Manage one shared crawler key in Settings. First install auto-generates crawler_id and persists it locally.",
+      "platform_version_hint": "Control-plane crawler version: {{version}}",
       "name_placeholder": "Crawler name",
       "name_too_short": "Crawler name must be at least 2 characters",
       "rename_failed": "Rename failed",
@@ -490,7 +493,29 @@
       "delete_confirm": "Delete worker {{name}}?",
       "delete_ready_hint": "This worker has no in-flight jobs and can be deleted immediately.",
       "delete_release_hint": "This worker is already offline. Deleting it releases claimed jobs, while jobs already in ingest continue to finish.",
-      "delete_waiting_hint": "This worker still has in-flight jobs. Delete becomes available after those jobs finish or the claim times out."
+      "delete_waiting_hint": "This worker still has in-flight jobs. Delete becomes available after those jobs finish or the claim times out.",
+      "version_badge": "Version {{version}}",
+      "platform_label": "Platform",
+      "platform_unknown": "Unknown platform",
+      "version_unknown": "Unknown version",
+      "current_version": "Current version",
+      "target_version": "Target version",
+      "available_version": "Available version",
+      "update_status_label": "Update status",
+      "remote_update_title": "Remote update",
+      "remote_update_hint": "The worker downloads the target version after finishing its current batch, then restarts itself automatically.",
+      "remote_update_bootstrap_hint": "This worker has not reported version and platform yet, which means it is still on an older crawler. Upgrade it manually once before using remote updates.",
+      "remote_update_bootstrap_required": "Manual bootstrap required",
+      "update_to": "Update to {{version}}",
+      "up_to_date": "Already up to date",
+      "update_queued": "Update queued",
+      "update_requested": "Queued worker update to {{version}}",
+      "update_request_failed": "Failed to queue worker update",
+      "update_status_idle": "Idle",
+      "update_status_pending": "Pending",
+      "update_status_downloading": "Downloading",
+      "update_status_restarting": "Restarting",
+      "update_status_failed": "Failed"
     },
     "documents": {
       "title": "Indexed Documents",

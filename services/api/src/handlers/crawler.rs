@@ -5,7 +5,7 @@ use crate::{
     error::ApiError,
     models::{
         ClaimJobsRequest, ClaimJobsResponse, CrawlerCapabilities, CrawlerHeartbeatResponse,
-        SubmitCrawlReportRequest, SubmitCrawlReportResponse,
+        CrawlerRuntimeSnapshot, SubmitCrawlReportRequest, SubmitCrawlReportResponse,
     },
 };
 
@@ -79,6 +79,7 @@ pub async fn heartbeat_crawler(
     let crawler_id = crawler_id_from_headers(&headers)?;
     let crawler_name = crawler_name_from_headers(&headers);
     let capabilities = capabilities_from_headers(&headers);
+    let runtime_snapshot = runtime_snapshot_from_headers(&headers)?;
     Ok(Json(
         state
             .crawl_store
@@ -90,6 +91,7 @@ pub async fn heartbeat_crawler(
                     .and_then(|value| value.to_str().ok()),
                 &state.default_crawler_owner_id,
                 capabilities.as_ref(),
+                runtime_snapshot.as_ref(),
             )
             .await?,
     ))
@@ -119,4 +121,18 @@ fn capabilities_from_headers(headers: &HeaderMap) -> Option<CrawlerCapabilities>
         .get("x-crawler-capabilities")
         .and_then(|value| value.to_str().ok())
         .and_then(|s| serde_json::from_str(s).ok())
+}
+
+fn runtime_snapshot_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<CrawlerRuntimeSnapshot>, ApiError> {
+    let Some(value) = headers.get("x-crawler-runtime") else {
+        return Ok(None);
+    };
+    let raw = value
+        .to_str()
+        .map_err(|_| ApiError::BadRequest("invalid x-crawler-runtime header".to_string()))?;
+    serde_json::from_str(raw)
+        .map(Some)
+        .map_err(|_| ApiError::BadRequest("invalid x-crawler-runtime header".to_string()))
 }
