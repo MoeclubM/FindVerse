@@ -177,7 +177,6 @@
     },
     "title": "FindVerse 控制台",
     "refresh_failed": "刷新失败",
-    "live_refresh": "实时刷新 · 每 1 秒",
     "search": "搜索",
     "logout": "退出登录",
     "actions": {

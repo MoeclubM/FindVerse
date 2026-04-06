@@ -220,7 +220,7 @@ export function ConsoleJobs() {
     <>
       <PanelSection
         title={t("console.jobs.status_title")}
-        meta={`${t("console.jobs.visible_jobs", { count: jobs?.total ?? 0 })} · ${t("console.live_refresh")}`}
+        meta={t("console.jobs.visible_jobs", { count: jobs?.total ?? 0 })}
         contentClassName="space-y-4"
       >
         <StatStrip

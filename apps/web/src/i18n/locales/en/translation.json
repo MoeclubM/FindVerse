@@ -177,7 +177,6 @@
     },
     "title": "FindVerse Console",
     "refresh_failed": "Refresh failed",
-    "live_refresh": "Live refresh · every second",
     "search": "Search",
     "logout": "Logout",
     "actions": {
