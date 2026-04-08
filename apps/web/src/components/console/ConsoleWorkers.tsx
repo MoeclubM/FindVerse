@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Activity,
@@ -69,28 +69,7 @@ export function ConsoleWorkers() {
   const { token, busy, setBusy, setFlash, refreshAll, overview } = useConsole();
   const { t } = useTranslation();
   const platformVersion = overview?.platform_version ?? "-";
-  const crawlers = useMemo(
-    () =>
-      [...(overview?.crawlers ?? [])].sort((left, right) => {
-        if (left.online !== right.online) {
-          return Number(right.online) - Number(left.online);
-        }
-        if (left.sort_order !== null && right.sort_order !== null) {
-          const sortOrderDiff = left.sort_order - right.sort_order;
-          if (sortOrderDiff !== 0) {
-            return sortOrderDiff;
-          }
-        }
-        if (left.sort_order !== null && right.sort_order === null) {
-          return -1;
-        }
-        if (left.sort_order === null && right.sort_order !== null) {
-          return 1;
-        }
-        return left.id.localeCompare(right.id);
-      }),
-    [overview?.crawlers],
-  );
+  const crawlers = overview?.crawlers ?? [];
   const onlineWorkers = crawlers.filter((crawler) => crawler.online).length;
   const deletableWorkers = crawlers.filter(
     (crawler) => crawler.can_delete,
