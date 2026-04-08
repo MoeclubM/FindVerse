@@ -5,7 +5,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential pkg-config perl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.docker.toml ./Cargo.toml
+COPY Cargo.lock ./
 COPY crates/findverse-common/Cargo.toml crates/findverse-common/Cargo.toml
 COPY services/api/Cargo.toml services/api/Cargo.toml
 COPY services/bootstrap/Cargo.toml services/bootstrap/Cargo.toml
@@ -15,17 +16,15 @@ COPY services/projector/Cargo.toml services/projector/Cargo.toml
 COPY services/query-api/Cargo.toml services/query-api/Cargo.toml
 COPY services/task-api/Cargo.toml services/task-api/Cargo.toml
 COPY services/scheduler/Cargo.toml services/scheduler/Cargo.toml
-COPY services/crawler/Cargo.toml services/crawler/Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api services/api
 COPY services/bootstrap/src services/bootstrap/src
 COPY services/blob-storage/src services/blob-storage/src
 COPY services/control-api/src services/control-api/src
-COPY services/projector services/projector
+COPY services/projector/src services/projector/src
 COPY services/query-api/src services/query-api/src
 COPY services/task-api/src services/task-api/src
 COPY services/scheduler/src services/scheduler/src
-COPY services/crawler/src services/crawler/src
 
 RUN cargo build --release -p findverse-projector
 
