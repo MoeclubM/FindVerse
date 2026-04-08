@@ -30,7 +30,7 @@ docker compose up -d --build
 curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install
 ```
 
-Control-plane data is stored under `./data`. Docker Compose deploys only the control plane; crawler nodes are separate host services. If a crawler node still predates the split crawler package, run `install-crawler.sh` once manually on that machine before using console-triggered remote updates.
+Control-plane data is stored under `./data`. Docker Compose deploys only the control plane; crawler nodes are separate host services. If a crawler node still predates the split crawler package, run `install-crawler.sh` once manually on that machine before using console-triggered remote updates. On low-memory hosts, prefer `COMPOSE_PARALLEL_LIMIT=1 docker compose up -d --build`. Rust service images also default to `FINDVERSE_CARGO_BUILD_JOBS=1`.
 
 ## Documentation
 

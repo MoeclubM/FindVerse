@@ -1,5 +1,7 @@
 FROM rust:1-slim-bookworm AS builder
 WORKDIR /app
+ARG FINDVERSE_CARGO_BUILD_JOBS=1
+ENV CARGO_BUILD_JOBS=${FINDVERSE_CARGO_BUILD_JOBS}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential pkg-config perl ca-certificates \

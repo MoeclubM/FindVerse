@@ -27,11 +27,18 @@ Set at minimum:
 - `FINDVERSE_FRONTEND_ORIGIN`
 - `FINDVERSE_LOCAL_ADMIN_PASSWORD`
 - `FINDVERSE_POSTGRES_PASSWORD`
+- `FINDVERSE_CARGO_BUILD_JOBS`
 
 Start or update the control plane:
 
 ```bash
 docker compose up -d --build
+```
+
+On low-memory hosts, prefer:
+
+```bash
+COMPOSE_PARALLEL_LIMIT=1 docker compose up -d --build
 ```
 
 Control-plane data is persisted under:
