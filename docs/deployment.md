@@ -1,8 +1,8 @@
 # Deployment And Operations
 
-## Main Stack
+## Control Plane
 
-Main services:
+The control plane includes:
 
 - `postgres`
 - `valkey`
@@ -16,42 +16,40 @@ Main services:
 - `projector`
 - `web`
 
-Use one compose file and one `.env` file for both online deployment and long-lived development.
-
 Bootstrap the env file:
 
 ```bash
 cp .env.example .env
 ```
 
-At minimum, set:
+Set at minimum:
 
 - `FINDVERSE_FRONTEND_ORIGIN`
 - `FINDVERSE_LOCAL_ADMIN_PASSWORD`
 - `FINDVERSE_POSTGRES_PASSWORD`
 
-Start or update the main stack:
+Start or update the control plane:
 
 ```bash
 docker compose up -d --build
 ```
 
-`bootstrap` is a one-shot service. It runs database migrations, seeds default system config, initializes the versioned OpenSearch aliases, backfills legacy document/result blobs into `blob-storage`, reindexes PostgreSQL documents into the current OpenSearch aliases when needed, and creates the bootstrap admin when enabled.
-
-Main service data is persisted under:
+Control-plane data is persisted under:
 
 - `./data/postgres`
 - `./data/valkey`
 - `./data/opensearch`
 - `./data/blobs`
 
-After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false` in `.env` and run the same compose command again. Runtime services no longer create the bootstrap admin on startup by themselves.
+`bootstrap` is a one-shot service. It runs database migrations, seeds default system config, initializes the active OpenSearch aliases, backfills legacy document and result blobs into `blob-storage`, and creates the bootstrap admin when enabled.
 
-## Legacy Data Migration
+After the first successful admin login, set `FINDVERSE_BOOTSTRAP_ADMIN_ENABLED=false` in `.env` and run the same compose command again.
+
+## Legacy Migration
 
 Legacy developer JSON stores are no longer imported automatically during startup.
 
-If you still have the old auth store and developer store files, run the migration explicitly before starting the new stack:
+If you still have the old auth store and developer store files, run the migration before starting the new control plane:
 
 ```bash
 findverse-control-api migrate-legacy \
@@ -59,60 +57,58 @@ findverse-control-api migrate-legacy \
   --developer-store /path/to/developer_store.json
 ```
 
-The command connects to `FINDVERSE_POSTGRES_URL`, imports developer records, rewrites non-argon passwords into fresh temporary passwords, and prints the generated temporary credentials as JSON. If `--blob-storage-url` or `FINDVERSE_BLOB_STORAGE_URL` is provided, it also backfills legacy document/result blobs immediately. Legacy sessions are not migrated, and any missing blob backfill will still be completed by `bootstrap`.
+The command imports developer records, rewrites non-argon passwords into temporary passwords, and can backfill legacy document and result blobs immediately when `--blob-storage-url` or `FINDVERSE_BLOB_STORAGE_URL` is provided.
 
-## Crawler Workers
+## Crawler Nodes
 
-Crawler workers are host services, not Docker services.
+Crawler nodes are host services, not Docker services.
 
-Set one shared crawler auth key in `/console -> Settings`, then install or update a node with the same command:
+Install or update a node:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install
 ```
 
-The installer supports both `x86_64/amd64` and `aarch64/arm64` Linux hosts. It selects the matching release asset automatically from the current machine architecture and always downloads from GitHub Releases.
+Pin a specific crawler release when needed:
 
-`--max-jobs` is a local claim cap for that node. The real claim count is still capped by the concurrency delivered from the control plane heartbeat.
+```bash
+curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.15 --max-jobs 16 --skip-browser-install
+```
 
-What the installer writes:
+The installer supports both `x86_64/amd64` and `aarch64/arm64` Linux hosts and downloads the matching crawler release asset automatically.
+
+It writes:
 
 - binary: `/opt/findverse-crawler/findverse-crawler`
 - launcher: `/opt/findverse-crawler/run-crawler.sh`
 - config: `/etc/findverse-crawler/crawler.env`
 - service: `findverse-crawler.service`
 
-The first install auto-generates `CRAWLER_ID` locally and writes it into `/etc/findverse-crawler/crawler.env`. Re-running the same command updates the binary and restarts the service in place. Existing `SERVER`, `CRAWLER_ID`, and `CRAWLER_KEY` are reused from the env file if you omit them later.
+The first install auto-generates `CRAWLER_ID` locally. Re-running the same command updates the binary in place and restarts the service. Existing `SERVER`, `CRAWLER_ID`, and `CRAWLER_KEY` are reused from the env file when omitted.
 
-Pin a specific release during rollout when needed:
+If a node is still on a crawler version from before the split release packaging change, run `install-crawler.sh` once manually on that machine before using console-triggered remote updates.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.15 --max-jobs 16 --skip-browser-install
-```
+`--max-jobs` is only the local claim cap for that node. The actual claim count is still bounded by the concurrency sent from the control-plane heartbeat.
 
-## Online Deployment
+## Recommended Topology
 
-Recommended topology:
-
-- one Linux host for the main Docker stack
+- one Linux host for the control-plane Docker stack
 - one or more Linux hosts for crawler workers
-- only `web` exposed publicly
-- `postgres`, `valkey`, `opensearch`, `blob-storage`, `control-api`, `query-api`, and `task-api` kept on private bind addresses
+- expose only `web` publicly
+- keep `postgres`, `valkey`, `opensearch`, `blob-storage`, `control-api`, `query-api`, and `task-api` on private bind addresses
 
-Main stack:
+Control-plane update:
 
 ```bash
 git pull --ff-only
 docker compose up -d --build
 ```
 
-Crawler nodes:
+Crawler node update:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s --
 ```
-
-That update command is enough once the node already has `/etc/findverse-crawler/crawler.env`.
 
 ## Maintenance
 
@@ -125,7 +121,7 @@ systemctl restart findverse-crawler.service
 cat /etc/findverse-crawler/crawler.env
 ```
 
-Clean reset of local compose data:
+Clean reset of local control-plane data:
 
 ```bash
 docker compose down
@@ -139,12 +135,5 @@ rm -rf data/postgres data/valkey data/opensearch data/blobs
 It:
 
 - validates Rust tests and web typecheck
-- builds Linux release binaries for `bootstrap`, `blob-storage`, `control-api`, `projector`, `query-api`, `task-api`, `scheduler`, and `crawler` on both `x86_64` and `arm64`
-- creates a GitHub Release with binary artifacts
-
-Release example:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+- publishes `findverse-control-plane-linux-*` packages for `x86_64` and `arm64`
+- publishes `findverse-crawler-linux-*` packages for `x86_64` and `arm64`

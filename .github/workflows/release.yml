@@ -44,13 +44,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          tar -czf dist/findverse-linux-${{ matrix.suffix }}.tar.gz -C target/release findverse-bootstrap findverse-blob-storage findverse-control-api findverse-projector findverse-query-api findverse-task-api findverse-scheduler findverse-crawler
+          tar -czf dist/findverse-control-plane-linux-${{ matrix.suffix }}.tar.gz -C target/release findverse-bootstrap findverse-blob-storage findverse-control-api findverse-projector findverse-query-api findverse-task-api findverse-scheduler
+          tar -czf dist/findverse-crawler-linux-${{ matrix.suffix }}.tar.gz -C target/release findverse-crawler
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
         with:
           name: binaries-linux-${{ matrix.suffix }}
-          path: dist/findverse-linux-${{ matrix.suffix }}.tar.gz
+          path: dist/*.tar.gz
 
   create-release:
     needs:

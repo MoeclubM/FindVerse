@@ -24,7 +24,7 @@ Usage:
   install-crawler.sh --server <url> [options]
 
 Install or update the FindVerse crawler binary and systemd service on this machine.
-The script downloads the latest GitHub release artifact,
+The script downloads the latest GitHub crawler release artifact,
 installs the binary into /opt, writes config into /etc, and enables a systemd service.
 
 Options:
@@ -49,7 +49,7 @@ Notes:
   - On first install the script uses the local hostname as the default crawler name.
   - Once the env file exists, updates can reuse the saved server, crawler_id, and crawler_key.
   - The same release command can be used for both first install and updates.
-  - Without --version the script downloads the latest public GitHub release asset.
+  - Without --version the script downloads the latest public GitHub crawler release asset.
   - Use --version to pin a specific release tag during rollout.
 EOF
 }
@@ -177,7 +177,7 @@ download_release_archive() {
   local release_url
   local release_json
   local asset_url
-  local archive_path="$TMP_DIR/findverse-${suffix}.tar.gz"
+  local archive_path="$TMP_DIR/findverse-crawler-${suffix}.tar.gz"
 
   if [[ -n "$VERSION" ]]; then
     release_url="https://api.github.com/repos/${REPO}/releases/tags/${VERSION}"
@@ -188,8 +188,8 @@ download_release_archive() {
   fi
 
   release_json="$(github_api_json "$release_url")"
-  asset_url="$(printf '%s' "$release_json" | jq -r --arg name "findverse-${suffix}.tar.gz" '.assets[] | select(.name == $name) | .browser_download_url' | head -n 1)"
-  [[ -n "$asset_url" && "$asset_url" != "null" ]] || fail "release asset findverse-${suffix}.tar.gz not found for ${REPO}"
+  asset_url="$(printf '%s' "$release_json" | jq -r --arg name "findverse-crawler-${suffix}.tar.gz" '.assets[] | select(.name == $name) | .browser_download_url' | head -n 1)"
+  [[ -n "$asset_url" && "$asset_url" != "null" ]] || fail "release asset findverse-crawler-${suffix}.tar.gz not found for ${REPO}"
 
   github_download "$asset_url" "$archive_path"
   DOWNLOADED_ARCHIVE_PATH="$archive_path"

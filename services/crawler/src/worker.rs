@@ -635,7 +635,7 @@ async fn download_release_archive(
 ) -> anyhow::Result<Vec<u8>> {
     let repo = env::var("FINDVERSE_GITHUB_REPO").unwrap_or_else(|_| "MoeclubM/FindVerse".into());
     let url = format!(
-        "https://github.com/{repo}/releases/download/{version}/findverse-{platform}.tar.gz"
+        "https://github.com/{repo}/releases/download/{version}/findverse-crawler-{platform}.tar.gz"
     );
     let response = client
         .get(&url)

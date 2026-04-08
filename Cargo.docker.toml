@@ -1,3 +1,5 @@
+# Mirror the root workspace for Docker builds, but keep crawler out so
+# control-plane images do not need crawler sources in the build context.
 [workspace]
 members = [
   "crates/findverse-common",

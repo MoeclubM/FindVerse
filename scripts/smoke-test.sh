@@ -214,7 +214,7 @@ echo "$search_smoke_payload" | jq -e '.results | any(.url | contains("smoke-craw
 echo "PASS  smoke document is searchable"
 
 step "Docker rebuild verification"
-echo "Rebuild the main stack directly with Docker Compose when needed:"
+echo "Rebuild the control plane directly with Docker Compose when needed:"
 echo "  docker compose up -d --build"
 
 if $RUN_PLAYWRIGHT; then
