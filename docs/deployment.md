@@ -142,5 +142,6 @@ rm -rf data/postgres data/valkey data/opensearch data/blobs
 It:
 
 - validates Rust tests and web typecheck
-- publishes `findverse-control-plane-linux-*` packages for `x86_64` and `arm64`
 - publishes `findverse-crawler-linux-*` packages for `x86_64` and `arm64`
+
+Control-plane deployment stays source and Docker Compose based. Release assets are only for crawler nodes.

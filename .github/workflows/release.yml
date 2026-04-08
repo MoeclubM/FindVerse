@@ -38,13 +38,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binaries
-        run: cargo build --release -p findverse-bootstrap -p findverse-blob-storage -p findverse-control-api -p findverse-projector -p findverse-query-api -p findverse-task-api -p findverse-scheduler -p findverse-crawler
+        run: cargo build --release -p findverse-crawler
 
       - name: Package binaries
         shell: bash
         run: |
           mkdir -p dist
-          tar -czf dist/findverse-control-plane-linux-${{ matrix.suffix }}.tar.gz -C target/release findverse-bootstrap findverse-blob-storage findverse-control-api findverse-projector findverse-query-api findverse-task-api findverse-scheduler
           tar -czf dist/findverse-crawler-linux-${{ matrix.suffix }}.tar.gz -C target/release findverse-crawler
 
       - name: Upload binary artifact
