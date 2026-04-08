@@ -1,6 +1,11 @@
 x-rust-build-args: &rust-build-args
   FINDVERSE_CARGO_BUILD_JOBS: ${FINDVERSE_CARGO_BUILD_JOBS:-1}
 
+x-control-plane-build: &control-plane-build
+  context: .
+  dockerfile: services/control-plane.Dockerfile
+  args: *rust-build-args
+
 services:
   postgres:
     image: postgres:17
@@ -66,9 +71,8 @@ services:
   blob-storage:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-blob-storage:${FINDVERSE_IMAGE_TAG:-dev}
     build:
-      context: .
-      dockerfile: services/blob-storage/Dockerfile
-      args: *rust-build-args
+      <<: *control-plane-build
+      target: blob-storage-runner
     restart: unless-stopped
     environment:
       FINDVERSE_BLOB_STORAGE_BIND: ${FINDVERSE_BLOB_STORAGE_BIND:-0.0.0.0:8090}
@@ -87,9 +91,8 @@ services:
   bootstrap:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-bootstrap:${FINDVERSE_IMAGE_TAG:-dev}
     build:
-      context: .
-      dockerfile: services/bootstrap/Dockerfile
-      args: *rust-build-args
+      <<: *control-plane-build
+      target: bootstrap-runner
     restart: "no"
     depends_on:
       postgres:
@@ -120,9 +123,8 @@ services:
   control-api:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-control-api:${FINDVERSE_IMAGE_TAG:-dev}
     build:
-      context: .
-      dockerfile: services/control-api/Dockerfile
-      args: *rust-build-args
+      <<: *control-plane-build
+      target: control-api-runner
     restart: unless-stopped
     depends_on:
       postgres:
@@ -157,9 +159,8 @@ services:
   query-api:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-query-api:${FINDVERSE_IMAGE_TAG:-dev}
     build:
-      context: .
-      dockerfile: services/query-api/Dockerfile
-      args: *rust-build-args
+      <<: *control-plane-build
+      target: query-api-runner
     restart: unless-stopped
     depends_on:
       postgres:
@@ -191,9 +192,8 @@ services:
   task-api:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-task-api:${FINDVERSE_IMAGE_TAG:-dev}
     build:
-      context: .
-      dockerfile: services/task-api/Dockerfile
-      args: *rust-build-args
+      <<: *control-plane-build
+      target: task-api-runner
     restart: unless-stopped
     depends_on:
       postgres:
@@ -219,9 +219,8 @@ services:
   scheduler:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-scheduler:${FINDVERSE_IMAGE_TAG:-dev}
     build:
-      context: .
-      dockerfile: services/scheduler/Dockerfile
-      args: *rust-build-args
+      <<: *control-plane-build
+      target: scheduler-runner
     restart: unless-stopped
     depends_on:
       postgres:
@@ -247,9 +246,8 @@ services:
   projector:
     image: ${FINDVERSE_IMAGE_PREFIX:-findverse}/findverse-projector:${FINDVERSE_IMAGE_TAG:-dev}
     build:
-      context: .
-      dockerfile: services/projector/Dockerfile
-      args: *rust-build-args
+      <<: *control-plane-build
+      target: projector-runner
     restart: unless-stopped
     depends_on:
       postgres:
