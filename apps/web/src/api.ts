@@ -180,6 +180,7 @@ export type CrawlOverview = {
     version: string | null;
     platform: string | null;
     desired_version: string | null;
+    sort_order: number | null;
     update_status: string;
     update_message: string | null;
   }>;
@@ -299,6 +300,7 @@ function updateCrawler(
     worker_concurrency?: number;
     js_render_concurrency?: number;
     desired_version?: string;
+    sort_order?: number | null;
   },
 ) {
   return request<void>(`/v1/admin/crawlers/${id}`, {
@@ -331,6 +333,16 @@ export function requestCrawlerUpdate(
 ) {
   return updateCrawler(token, id, {
     desired_version: desiredVersion,
+  });
+}
+
+export function updateCrawlerSortOrder(
+  token: string,
+  id: string,
+  sortOrder: number | null,
+) {
+  return updateCrawler(token, id, {
+    sort_order: sortOrder,
   });
 }
 

@@ -300,6 +300,8 @@ pub struct UpdateCrawlerRequest {
     pub worker_concurrency: Option<usize>,
     pub js_render_concurrency: Option<usize>,
     pub desired_version: Option<String>,
+    #[serde(default)]
+    pub sort_order: Option<Option<i32>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -322,6 +324,7 @@ pub struct CrawlerMetadata {
     pub version: Option<String>,
     pub platform: Option<String>,
     pub desired_version: Option<String>,
+    pub sort_order: Option<i32>,
     pub update_status: String,
     pub update_message: Option<String>,
 }

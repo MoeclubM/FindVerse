@@ -15,6 +15,7 @@ import {
   deleteCrawler,
   renameCrawler,
   requestCrawlerUpdate,
+  updateCrawlerSortOrder,
   updateCrawlerRuntime,
 } from "../../api";
 import {
@@ -74,19 +75,19 @@ export function ConsoleWorkers() {
         if (left.online !== right.online) {
           return Number(right.online) - Number(left.online);
         }
-        const leftSeen = left.last_seen_at
-          ? new Date(left.last_seen_at).getTime()
-          : 0;
-        const rightSeen = right.last_seen_at
-          ? new Date(right.last_seen_at).getTime()
-          : 0;
-        if (leftSeen !== rightSeen) {
-          return rightSeen - leftSeen;
+        if (left.sort_order !== null && right.sort_order !== null) {
+          const sortOrderDiff = left.sort_order - right.sort_order;
+          if (sortOrderDiff !== 0) {
+            return sortOrderDiff;
+          }
         }
-        return (
-          new Date(right.created_at).getTime() -
-          new Date(left.created_at).getTime()
-        );
+        if (left.sort_order !== null && right.sort_order === null) {
+          return -1;
+        }
+        if (left.sort_order === null && right.sort_order !== null) {
+          return 1;
+        }
+        return left.id.localeCompare(right.id);
       }),
     [overview?.crawlers],
   );
@@ -116,6 +117,7 @@ export function ConsoleWorkers() {
   const [runtimeWorkerConcurrency, setRuntimeWorkerConcurrency] = useState("");
   const [runtimeJsRenderConcurrency, setRuntimeJsRenderConcurrency] =
     useState("");
+  const [sortOrder, setSortOrder] = useState("");
   const selectedCrawler =
     crawlers.find((crawler) => crawler.id === selectedCrawlerId) ?? null;
   const deleteCrawlerTarget =
@@ -141,9 +143,11 @@ export function ConsoleWorkers() {
       runtimeJsRenderConcurrency !==
         String(selectedCrawler.js_render_concurrency)
     : false;
-  const selectedCrawlerRemoteUpdateReady = Boolean(
-    selectedCrawler?.version && selectedCrawler?.platform,
-  );
+  const nextSortOrder =
+    sortOrder.trim() === "" ? null : Number(sortOrder.trim());
+  const sortOrderDirty = selectedCrawler
+    ? (selectedCrawler.sort_order ?? null) !== nextSortOrder
+    : false;
   const selectedCrawlerUpdateQueued =
     selectedCrawler?.desired_version === platformVersion &&
     selectedCrawler?.version !== platformVersion;
@@ -249,6 +253,27 @@ export function ConsoleWorkers() {
     }
   }
 
+  async function handleSaveSortOrder(crawlerId: string) {
+    if (nextSortOrder !== null && !Number.isInteger(nextSortOrder)) {
+      setFlash(t("console.workers.sort_order_invalid"));
+      return;
+    }
+    setBusy(true);
+    setFlash(null);
+    try {
+      await updateCrawlerSortOrder(token, crawlerId, nextSortOrder);
+      setSortOrder(nextSortOrder === null ? "" : String(nextSortOrder));
+      await refreshAll();
+      setFlash(t("console.workers.sort_order_saved"));
+    } catch (error) {
+      setFlash(
+        getErrorMessage(error, t("console.workers.sort_order_save_failed")),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <PanelSection
       title={t("console.workers.title")}
@@ -292,6 +317,9 @@ export function ConsoleWorkers() {
                 setRuntimeJsRenderConcurrency(
                   String(crawler.js_render_concurrency),
                 );
+                setSortOrder(
+                  crawler.sort_order === null ? "" : String(crawler.sort_order),
+                );
               }}
               className="grid w-full gap-4 rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/40"
             >
@@ -328,6 +356,13 @@ export function ConsoleWorkers() {
                     <Badge variant={getCrawlerUpdateVariant(crawler.update_status)}>
                       {formatCrawlerUpdateStatus(crawler.update_status)}
                     </Badge>
+                    {crawler.sort_order !== null ? (
+                      <Badge variant="outline">
+                        {t("console.workers.sort_order_badge", {
+                          value: crawler.sort_order,
+                        })}
+                      </Badge>
+                    ) : null}
                     <Badge variant="outline">{crawler.id.slice(0, 8)}</Badge>
                   </div>
                   <p className="text-sm text-muted-foreground">
@@ -424,6 +459,7 @@ export function ConsoleWorkers() {
           setSelectedCrawlerId(null);
           setRuntimeWorkerConcurrency("");
           setRuntimeJsRenderConcurrency("");
+          setSortOrder("");
         }}
         actions={
           selectedCrawler ? (
@@ -651,15 +687,13 @@ export function ConsoleWorkers() {
                     {t("console.workers.remote_update_title")}
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {selectedCrawlerRemoteUpdateReady
-                      ? t("console.workers.remote_update_hint")
-                      : t("console.workers.remote_update_bootstrap_hint")}
+                    {t("console.workers.remote_update_hint")}
                   </p>
                 </div>
                 <Button
                   disabled={
                     busy ||
-                    !selectedCrawlerRemoteUpdateReady ||
+                    platformVersion === "-" ||
                     selectedCrawlerUpdateQueued ||
                     selectedCrawlerUpToDate
                   }
@@ -670,11 +704,9 @@ export function ConsoleWorkers() {
                     ? t("console.workers.up_to_date")
                     : selectedCrawlerUpdateQueued
                       ? t("console.workers.update_queued")
-                      : !selectedCrawlerRemoteUpdateReady
-                        ? t("console.workers.remote_update_bootstrap_required")
-                        : t("console.workers.update_to", {
-                            version: platformVersion,
-                          })}
+                      : t("console.workers.update_to", {
+                          version: platformVersion,
+                        })}
                 </Button>
               </div>
               {selectedCrawler.update_message ? (
@@ -682,6 +714,46 @@ export function ConsoleWorkers() {
                   {selectedCrawler.update_message}
                 </div>
               ) : null}
+            </div>
+
+            <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">
+                    {t("console.workers.sort_order_title")}
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t("console.workers.sort_order_hint")}
+                  </p>
+                </div>
+                <Badge variant="outline">
+                  {selectedCrawler.sort_order === null
+                    ? t("console.workers.sort_order_default")
+                    : t("console.workers.sort_order_value", {
+                        value: selectedCrawler.sort_order,
+                      })}
+                </Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                <FieldShell
+                  label={t("console.workers.sort_order_label")}
+                  hint={t("console.workers.sort_order_field_hint")}
+                >
+                  <Input
+                    type="number"
+                    step={1}
+                    value={sortOrder}
+                    placeholder={t("console.workers.sort_order_placeholder")}
+                    onChange={(event) => setSortOrder(event.target.value)}
+                  />
+                </FieldShell>
+                <Button
+                  disabled={busy || !sortOrderDirty}
+                  onClick={() => void handleSaveSortOrder(selectedCrawler.id)}
+                >
+                  {t("console.workers.save")}
+                </Button>
+              </div>
             </div>
 
             <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">

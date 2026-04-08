@@ -383,6 +383,7 @@ impl CrawlerStore {
             worker_concurrency,
             js_render_concurrency,
             desired_version,
+            sort_order,
         } = request;
 
         let worker_concurrency = match worker_concurrency {
@@ -409,7 +410,9 @@ impl CrawlerStore {
             .transpose()?;
         let has_runtime_update = worker_concurrency.is_some() || js_render_concurrency.is_some();
         let has_version_update = desired_version.is_some();
-        let has_metadata_update = has_runtime_update || has_version_update;
+        let has_sort_order_update = sort_order.is_some();
+        let has_metadata_update =
+            has_runtime_update || has_version_update || has_sort_order_update;
 
         if name.is_none() && !has_metadata_update {
             return Err(ApiError::BadRequest(
@@ -439,6 +442,12 @@ impl CrawlerStore {
             metadata_patch.insert("desired_version".to_string(), serde_json::json!(value));
             metadata_patch.insert("update_status".to_string(), serde_json::json!("pending"));
             metadata_patch.insert("update_message".to_string(), serde_json::Value::Null);
+        }
+        if let Some(value) = sort_order {
+            metadata_patch.insert(
+                "sort_order".to_string(),
+                value.map_or(serde_json::Value::Null, serde_json::Value::from),
+            );
         }
 
         let result = sqlx::query(
@@ -475,6 +484,18 @@ impl CrawlerStore {
                 "crawler-update-requested",
                 "ok",
                 format!("requested crawler {crawler_id} to update to {version}"),
+                None,
+                Some(crawler_id.to_string()),
+            )
+            .await?;
+        }
+
+        if has_sort_order_update {
+            self.push_event(
+                developer_id,
+                "crawler-sort-order-updated",
+                "ok",
+                format!("updated display order for crawler {crawler_id}"),
                 None,
                 Some(crawler_id.to_string()),
             )
@@ -849,7 +870,7 @@ impl CrawlerStore {
             .unwrap_or(DEFAULT_CRAWLER_CLAIM_TIMEOUT_SECS);
         let claim_timeout = Duration::from_secs(claim_timeout_secs.max(1));
         let now = Utc::now();
-        let crawlers: Vec<CrawlerMetadata> = sqlx::query_as::<_, CrawlerMetadataRow>(
+        let mut crawlers: Vec<CrawlerMetadata> = sqlx::query_as::<_, CrawlerMetadataRow>(
             "select crawlers.id, crawlers.name, crawlers.preview, crawlers.created_at, crawlers.revoked_at, crawlers.last_seen_at, crawlers.last_claimed_at, crawlers.jobs_claimed, crawlers.jobs_reported, coalesce(job_counts.in_flight_jobs, 0) as in_flight_jobs, crawlers.metadata
              from crawlers
              left join (
@@ -897,11 +918,26 @@ impl CrawlerStore {
                 version: metadata.version,
                 platform: metadata.platform,
                 desired_version: metadata.desired_version,
+                sort_order: metadata.sort_order,
                 update_status: metadata.update_status,
                 update_message: metadata.update_message,
             }
         })
         .collect();
+        crawlers.sort_by(|left, right| {
+            right
+                .online
+                .cmp(&left.online)
+                .then_with(|| match (left.sort_order, right.sort_order) {
+                    (Some(left_sort_order), Some(right_sort_order)) => {
+                        left_sort_order.cmp(&right_sort_order)
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                })
+                .then_with(|| left.id.cmp(&right.id))
+        });
 
         let rules: Vec<CrawlRule> = sqlx::query_as::<_, CrawlRuleRow>(
             "select id, owner_developer_id, name, seed_url, interval_minutes, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at, last_enqueued_at
@@ -3732,6 +3768,8 @@ struct StoredCrawlerMetadata {
     platform: Option<String>,
     #[serde(default)]
     desired_version: Option<String>,
+    #[serde(default)]
+    sort_order: Option<i32>,
     #[serde(default = "default_stored_crawler_update_status")]
     update_status: String,
     #[serde(default)]
