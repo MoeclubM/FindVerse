@@ -322,10 +322,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         }
 
         let current_runtime = *runtime_config.read().await;
-        let claim_batch_size = config
-            .max_jobs
-            .min(current_runtime.worker_concurrency)
-            .max(1);
+        let claim_batch_size = config.max_jobs.max(1);
         let claim = claim_jobs(&api_client, &config, claim_batch_size).await?;
         if claim.jobs.is_empty() {
             info!(
@@ -398,14 +395,14 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
             })
             .buffer_unordered(current_runtime.worker_concurrency);
 
-        let mut reported_jobs = 0usize;
-        let mut last_report: Option<SubmitCrawlReportResponse> = None;
-        while let Some(result) = pending_results.next().await {
-            let report =
-                submit_report(&api_client, &config, lease_id.as_deref(), vec![result]).await?;
-            reported_jobs += 1;
-            last_report = Some(report);
-        }
+        let all_results: Vec<CrawlResultReport> = pending_results.collect().await;
+        let reported_jobs = all_results.len();
+
+        let last_report = if reported_jobs > 0 {
+            Some(submit_report(&api_client, &config, lease_id.as_deref(), all_results).await?)
+        } else {
+            None
+        };
 
         if let Some(report) = last_report {
             info!(

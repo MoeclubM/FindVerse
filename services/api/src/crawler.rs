@@ -1754,24 +1754,24 @@ impl CrawlerStore {
                 .map_err(|e| ApiError::Internal(e.into()))?;
 
                 if in_flight.depth < in_flight.max_depth {
-                    for discovered_url in &scoped_discovered_urls {
+                    if !scoped_discovered_urls.is_empty() {
                         let _ = sqlx::query(
                             "update documents set inlink_count = inlink_count + 1
-                             where canonical_url = $1",
+                             where canonical_url = any($1)",
                         )
-                        .bind(discovered_url)
+                        .bind(&scoped_discovered_urls)
                         .execute(&self.pg_pool)
                         .await;
-                    }
 
-                    for discovered_url in &scoped_discovered_urls {
+                        let source_urls: Vec<String> =
+                            vec![finalized_url.clone(); scoped_discovered_urls.len()];
                         let _ = sqlx::query(
                             "INSERT INTO link_edges (source_url, target_url, discovered_at)
-                             VALUES ($1, $2, now())
+                             SELECT unnest($1::text[]), unnest($2::text[]), now()
                              ON CONFLICT (source_url, target_url) DO UPDATE SET discovered_at = now()",
                         )
-                        .bind(&finalized_url)
-                        .bind(discovered_url)
+                        .bind(&source_urls)
+                        .bind(&scoped_discovered_urls)
                         .execute(&self.pg_pool)
                         .await;
                     }
