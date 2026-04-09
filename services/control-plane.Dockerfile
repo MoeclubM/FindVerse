@@ -7,7 +7,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential pkg-config perl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.docker.toml ./Cargo.toml
+COPY Cargo.toml ./Cargo.toml
 COPY Cargo.lock ./
 COPY crates/findverse-common/Cargo.toml crates/findverse-common/Cargo.toml
 COPY services/api/Cargo.toml services/api/Cargo.toml
@@ -18,6 +18,8 @@ COPY services/projector/Cargo.toml services/projector/Cargo.toml
 COPY services/query-api/Cargo.toml services/query-api/Cargo.toml
 COPY services/task-api/Cargo.toml services/task-api/Cargo.toml
 COPY services/scheduler/Cargo.toml services/scheduler/Cargo.toml
+RUN grep -v '"services/crawler"' Cargo.toml > Cargo.toml.tmp \
+    && mv Cargo.toml.tmp Cargo.toml
 COPY crates/findverse-common/src crates/findverse-common/src
 COPY services/api/src services/api/src
 COPY services/api/migrations services/api/migrations
