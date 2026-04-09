@@ -14,7 +14,7 @@ flate2 = "1"
 futures = "0.3.32"
 headless_chrome = { version = "1.0.21", optional = true }
 hostname = "0.4.2"
-quick-xml = "0.37"
+quick-xml = "0.39"
 rand.workspace = true
 reqwest = { workspace = true, features = ["cookies", "socks"] }
 scraper.workspace = true
