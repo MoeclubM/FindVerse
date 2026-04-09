@@ -490,7 +490,7 @@
       "sort_order_save_failed": "Failed to save worker order",
       "sort_order_invalid": "Worker order must be an integer",
       "runtime_title": "Worker runtime",
-      "runtime_hint": "Workers report Chromium capability on heartbeat. Jobs that require browser rendering are re-queued and claimed only by compatible workers.",
+      "runtime_hint": "Controls how many jobs this worker processes in parallel. The number of jobs claimed per round is set by the --max-jobs flag on the worker node. Workers also report Chromium capability on heartbeat; jobs requiring browser rendering are re-queued and claimed only by compatible workers.",
       "worker_concurrency_label": "Job concurrency",
       "js_render_concurrency_label": "Browser render concurrency",
       "runtime_saved": "Worker runtime saved",

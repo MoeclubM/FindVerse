@@ -490,7 +490,7 @@
       "sort_order_save_failed": "保存节点顺序失败",
       "sort_order_invalid": "节点顺序必须是整数",
       "runtime_title": "节点并发",
-      "runtime_hint": "节点会通过心跳上报 Chromium 能力；需要浏览器渲染的任务只会重新排队并交给支持的节点。",
+      "runtime_hint": "控制该节点并行处理的任务数。每轮认领多少任务由节点启动时的 --max-jobs 参数决定，与此处设置无关。节点也会通过心跳上报 Chromium 能力；需要浏览器渲染的任务只会重新排队并交给支持的节点。",
       "worker_concurrency_label": "任务并发",
       "js_render_concurrency_label": "浏览器渲染并发",
       "runtime_saved": "节点并发已保存",
