@@ -3,7 +3,6 @@
 docs
 scripts
 services/crawler
-Cargo.toml
 node_modules
 **/node_modules
 target
