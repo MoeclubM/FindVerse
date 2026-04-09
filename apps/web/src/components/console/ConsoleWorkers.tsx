@@ -259,9 +259,6 @@ export function ConsoleWorkers() {
       meta={t("console.workers.registered", { count: crawlers.length })}
       contentClassName="space-y-5"
     >
-      <p className="text-sm text-muted-foreground">
-        {t("console.workers.setup_hint")}
-      </p>
       <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
         {t("console.workers.platform_version_hint", {
           version: platformVersion,
@@ -665,9 +662,6 @@ export function ConsoleWorkers() {
                   <div className="text-sm font-semibold text-foreground">
                     {t("console.workers.remote_update_title")}
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("console.workers.remote_update_hint")}
-                  </p>
                 </div>
                 <Button
                   disabled={
@@ -701,9 +695,6 @@ export function ConsoleWorkers() {
                   <div className="text-sm font-semibold text-foreground">
                     {t("console.workers.sort_order_title")}
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("console.workers.sort_order_hint")}
-                  </p>
                 </div>
                 <Badge variant="outline">
                   {selectedCrawler.sort_order === null
@@ -741,9 +732,6 @@ export function ConsoleWorkers() {
                   <div className="text-sm font-semibold text-foreground">
                     {t("console.workers.runtime_title")}
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("console.workers.runtime_hint")}
-                  </p>
                 </div>
                 <Badge
                   variant={

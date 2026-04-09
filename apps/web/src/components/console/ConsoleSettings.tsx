@@ -190,7 +190,6 @@ export function ConsoleSettings() {
     <div className="space-y-4">
       <PanelSection
         title={t("console.settings.crawler_config_section")}
-        meta={t("console.settings.runtime_hint")}
         contentClassName="space-y-5"
       >
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
@@ -265,7 +264,6 @@ export function ConsoleSettings() {
               </Button>
             </div>
             <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs leading-6 text-background/90">{installCommand}</pre>
-            <p className="mt-3 text-xs text-background/70">{t("console.settings.install_hint")}</p>
           </div>
         ) : null}
       </PanelSection>
