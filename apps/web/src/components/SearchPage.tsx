@@ -414,8 +414,8 @@ export function SearchPage(props: {
         onThemeModeChange={props.onThemeModeChange}
         containerClassName={
           resultsMode
-            ? "mx-auto flex min-h-10 w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:min-h-14 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8"
-            : "mx-auto flex min-h-10 w-full max-w-7xl items-center justify-end px-4 py-4 sm:min-h-14 sm:px-6 lg:px-8"
+            ? "mx-auto flex min-h-10 w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:min-h-14 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4 lg:px-8"
+            : "mx-auto flex min-h-10 w-full max-w-7xl items-center justify-end px-4 py-3 sm:min-h-14 sm:px-6 sm:py-4 lg:px-8"
         }
         title={
           resultsMode ? (
@@ -430,6 +430,8 @@ export function SearchPage(props: {
           <TopbarActionButton
             leading={<CodeIcon className="size-4" />}
             onClick={props.onNavigateDev}
+            ariaLabel={t("search.developer_portal")}
+            compactOnMobile
           >
             {t("search.developer_portal")}
           </TopbarActionButton>

@@ -29,7 +29,10 @@ export function LanguageSwitcher() {
         localStorage.setItem("findverse_lang", nextLanguage);
       }}
     >
-      <SelectTrigger aria-label={t("language.label")} className="h-10 w-auto min-w-0 rounded-full px-3.5">
+      <SelectTrigger
+        aria-label={t("language.label")}
+        className="h-9 w-auto min-w-0 rounded-full px-2.5 sm:h-10 sm:px-3.5"
+      >
         <GlobeIcon data-icon="inline-start" />
         <span>{selectedLanguage.buttonLabel}</span>
       </SelectTrigger>

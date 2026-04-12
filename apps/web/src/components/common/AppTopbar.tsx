@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { cn } from "../../lib/utils";
 import { LanguageSwitcher } from "../LanguageSwitcher";
 import { ThemeMode, ThemeSwitcher } from "../ThemeSwitcher";
 import { Badge } from "../ui/badge";
@@ -9,7 +10,10 @@ export function TopbarBadge(props: {
   children: ReactNode;
 }) {
   return (
-    <Badge variant="outline" className="h-10 rounded-full px-3 text-xs font-medium uppercase tracking-[0.12em]">
+    <Badge
+      variant="outline"
+      className="h-9 rounded-full px-3 text-xs font-medium uppercase tracking-[0.12em] sm:h-10"
+    >
       {props.children}
     </Badge>
   );
@@ -20,17 +24,25 @@ export function TopbarActionButton(props: {
   onClick?: () => void;
   disabled?: boolean;
   leading?: ReactNode;
+  ariaLabel?: string;
+  compactOnMobile?: boolean;
 }) {
   return (
     <Button
       type="button"
       variant="outline"
-      className="h-10 rounded-full px-3"
+      className={cn(
+        "h-9 rounded-full px-2.5 sm:h-10 sm:px-3",
+        props.compactOnMobile && "sm:gap-1.5",
+      )}
       onClick={props.onClick}
       disabled={props.disabled}
+      aria-label={props.ariaLabel}
     >
       {props.leading}
-      <span className="truncate">{props.children}</span>
+      <span className={cn("truncate", props.compactOnMobile && "hidden sm:inline")}>
+        {props.children}
+      </span>
     </Button>
   );
 }
@@ -51,9 +63,9 @@ export function AppTopbar(props: {
   const subtitleTone = props.theme === "dark" ? "text-[#a89d8f]" : "text-[#7c6e61]";
   const hasHeading = Boolean(props.title || props.subtitle || props.leading);
   const titleBlock = (
-    <div className="flex min-w-0 items-baseline gap-2">
+    <div className="flex min-w-0 items-center gap-2 sm:items-baseline">
       {props.title ? (
-        <div className="truncate text-lg font-semibold tracking-[-0.04em] sm:text-[1.1rem]">
+        <div className="truncate text-base font-semibold tracking-[-0.04em] sm:text-[1.1rem]">
           {props.title}
         </div>
       ) : null}
@@ -62,13 +74,20 @@ export function AppTopbar(props: {
       ) : null}
     </div>
   );
+  const controlsClassName = cn(
+    "flex max-w-full items-center gap-2 self-start pb-1 sm:self-auto sm:pb-0",
+    "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+    hasHeading
+      ? "w-full overflow-x-auto sm:w-auto sm:flex-wrap sm:justify-end sm:overflow-visible"
+      : "overflow-x-auto justify-end sm:flex-wrap sm:overflow-visible",
+  );
 
   return (
     <header className={`sticky top-0 z-40 border-b bg-background/92 backdrop-blur ${borderTone}`}>
       <div
         className={
           props.containerClassName ??
-          "mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8"
+          "mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4 lg:px-8"
         }
       >
         {hasHeading ? (
@@ -88,7 +107,7 @@ export function AppTopbar(props: {
             </div>
           )
         ) : null}
-        <div className="flex max-w-full flex-wrap items-center gap-2 self-start sm:self-auto">
+        <div className={controlsClassName}>
           {props.beforeControls}
           <LanguageSwitcher />
           <ThemeSwitcher

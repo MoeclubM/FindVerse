@@ -536,6 +536,8 @@ export function ConsolePage(props: {
             <TopbarActionButton
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateHome}
+              ariaLabel={t("console.login.search_link")}
+              compactOnMobile
             >
               {t("console.login.search_link")}
             </TopbarActionButton>
@@ -586,7 +588,7 @@ export function ConsolePage(props: {
             theme={props.theme}
             themeMode={props.themeMode}
             onThemeModeChange={props.onThemeModeChange}
-            containerClassName="flex w-full flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8 xl:px-10"
+            containerClassName="flex w-full flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4 lg:px-8 xl:px-10"
             title={`${SITE_NAME} · ${consoleLabel}`}
             onTitleClick={props.onNavigateHome}
             afterControls={
@@ -594,12 +596,16 @@ export function ConsolePage(props: {
                 <TopbarActionButton
                   leading={<MagnifyingGlassIcon className="size-4" />}
                   onClick={props.onNavigateHome}
+                  ariaLabel={t("console.search")}
+                  compactOnMobile
                 >
                   {t("console.search")}
                 </TopbarActionButton>
                 <TopbarActionButton
                   leading={<ExitIcon className="size-4" />}
                   onClick={() => void handleLogout()}
+                  ariaLabel={t("console.logout")}
+                  compactOnMobile
                 >
                   {t("console.logout")}
                 </TopbarActionButton>

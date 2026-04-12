@@ -36,9 +36,12 @@ export function ThemeSwitcher(props: {
         props.onChange(value === "dark" || value === "light" || value === "system" ? value : "system")
       }
     >
-      <SelectTrigger aria-label={t("theme.label")} className="h-10 w-auto min-w-0 rounded-full px-3.5">
+      <SelectTrigger
+        aria-label={t("theme.label")}
+        className="h-9 w-auto min-w-0 rounded-full px-2.5 sm:h-10 sm:px-3.5"
+      >
         {prefix}
-        <span>{selectedLabel}</span>
+        <span className="hidden sm:inline">{selectedLabel}</span>
       </SelectTrigger>
       <SelectContent>
         <SelectGroup>

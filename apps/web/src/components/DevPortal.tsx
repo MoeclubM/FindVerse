@@ -339,6 +339,8 @@ export function DevPortalPage(props: {
             <TopbarActionButton
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateSearch}
+              ariaLabel={t("dev_portal.search")}
+              compactOnMobile
             >
               {t("dev_portal.search")}
             </TopbarActionButton>
@@ -415,6 +417,8 @@ export function DevPortalPage(props: {
             <TopbarActionButton
               leading={<MagnifyingGlassIcon className="size-4" />}
               onClick={props.onNavigateSearch}
+              ariaLabel={t("dev_portal.search")}
+              compactOnMobile
             >
               {t("dev_portal.search")}
             </TopbarActionButton>
@@ -422,6 +426,8 @@ export function DevPortalPage(props: {
               leading={<ExitIcon className="size-4" />}
               disabled={busy}
               onClick={() => void handleSignOut()}
+              ariaLabel={t("dev_portal.sign_out")}
+              compactOnMobile
             >
               {t("dev_portal.sign_out")}
             </TopbarActionButton>
