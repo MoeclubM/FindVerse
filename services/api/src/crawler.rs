@@ -382,6 +382,7 @@ impl CrawlerStore {
             name,
             worker_concurrency,
             js_render_concurrency,
+            max_jobs,
             desired_version,
             sort_order,
         } = request;
@@ -404,11 +405,21 @@ impl CrawlerStore {
             Some(value) => Some(value),
             None => None,
         };
+        let max_jobs = match max_jobs {
+            Some(0) => {
+                return Err(ApiError::BadRequest(
+                    "max_jobs must be a positive integer".to_string(),
+                ));
+            }
+            Some(value) => Some(value),
+            None => None,
+        };
         let desired_version = desired_version
             .as_deref()
             .map(normalize_release_tag)
             .transpose()?;
-        let has_runtime_update = worker_concurrency.is_some() || js_render_concurrency.is_some();
+        let has_runtime_update =
+            worker_concurrency.is_some() || js_render_concurrency.is_some() || max_jobs.is_some();
         let has_version_update = desired_version.is_some();
         let has_sort_order_update = sort_order.is_some();
         let has_metadata_update =
@@ -437,6 +448,9 @@ impl CrawlerStore {
                 "js_render_concurrency".to_string(),
                 serde_json::json!(value),
             );
+        }
+        if let Some(value) = max_jobs {
+            metadata_patch.insert("max_jobs".to_string(), serde_json::json!(value));
         }
         if let Some(value) = desired_version.as_deref() {
             metadata_patch.insert("desired_version".to_string(), serde_json::json!(value));
@@ -538,22 +552,22 @@ impl CrawlerStore {
         .map_err(|e| ApiError::Internal(e.into()))?;
         let claimed_jobs = in_flight_jobs.claimed_jobs.max(0) as usize;
         let ingesting_jobs = in_flight_jobs.ingesting_jobs.max(0) as usize;
+        let claim_timeout_secs = self
+            .get_system_config("crawler.claim_timeout_secs")
+            .await
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CRAWLER_CLAIM_TIMEOUT_SECS);
+        let now = Utc::now();
+        let claim_timeout = Duration::from_secs(claim_timeout_secs.max(1));
+        let online = crawler_seen_within_timeout(row.last_seen_at, now, claim_timeout);
+
+        if online {
+            return Err(ApiError::Conflict(
+                "online crawler cannot be deleted".to_string(),
+            ));
+        }
 
         if claimed_jobs > 0 || ingesting_jobs > 0 {
-            let claim_timeout_secs = self
-                .get_system_config("crawler.claim_timeout_secs")
-                .await
-                .and_then(|value| value.parse::<u64>().ok())
-                .unwrap_or(DEFAULT_CRAWLER_CLAIM_TIMEOUT_SECS);
-            let now = Utc::now();
-            let claim_timeout = Duration::from_secs(claim_timeout_secs.max(1));
-
-            if crawler_seen_within_timeout(row.last_seen_at, now, claim_timeout) {
-                return Err(ApiError::Conflict(
-                    "crawler still has in-flight jobs".to_string(),
-                ));
-            }
-
             let (requeued_count, dead_letter_count) = if claimed_jobs > 0 {
                 self.release_claimed_jobs_for_deleted_crawler(developer_id, crawler_id, now)
                     .await?
@@ -863,6 +877,8 @@ impl CrawlerStore {
                 .await,
             1,
         );
+        let default_max_jobs =
+            parse_positive_usize_config(self.get_system_config("crawler.max_jobs").await, 16);
         let claim_timeout_secs = self
             .get_system_config("crawler.claim_timeout_secs")
             .await
@@ -903,7 +919,7 @@ impl CrawlerStore {
                 last_seen_at: r.last_seen_at,
                 last_claimed_at: r.last_claimed_at,
                 online,
-                can_delete: in_flight_jobs == 0 || !online,
+                can_delete: !online,
                 in_flight_jobs,
                 jobs_claimed: r.jobs_claimed as u64,
                 jobs_reported: r.jobs_reported as u64,
@@ -915,6 +931,10 @@ impl CrawlerStore {
                     .js_render_concurrency
                     .filter(|value| *value > 0)
                     .unwrap_or(default_js_render_concurrency),
+                max_jobs: metadata
+                    .max_jobs
+                    .filter(|value| *value > 0)
+                    .unwrap_or(default_max_jobs),
                 version: metadata.version,
                 platform: metadata.platform,
                 desired_version: metadata.desired_version,
@@ -2545,6 +2565,8 @@ impl CrawlerStore {
                 .await,
             1,
         );
+        let default_max_jobs =
+            parse_positive_usize_config(self.get_system_config("crawler.max_jobs").await, 16);
 
         Ok(crate::models::CrawlerHeartbeatResponse {
             worker_concurrency: metadata_view
@@ -2555,6 +2577,10 @@ impl CrawlerStore {
                 .js_render_concurrency
                 .filter(|value| *value > 0)
                 .unwrap_or(default_js_render_concurrency),
+            max_jobs: metadata_view
+                .max_jobs
+                .filter(|value| *value > 0)
+                .unwrap_or(default_max_jobs),
             desired_version: metadata_view.desired_version,
             update_status: metadata_view.update_status,
         })
@@ -3762,6 +3788,8 @@ struct StoredCrawlerMetadata {
     worker_concurrency: Option<usize>,
     #[serde(default)]
     js_render_concurrency: Option<usize>,
+    #[serde(default)]
+    max_jobs: Option<usize>,
     #[serde(default)]
     version: Option<String>,
     #[serde(default)]

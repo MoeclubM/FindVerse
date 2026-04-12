@@ -177,6 +177,7 @@ export type CrawlOverview = {
     supports_js_render: boolean;
     worker_concurrency: number;
     js_render_concurrency: number;
+    max_jobs: number;
     version: string | null;
     platform: string | null;
     desired_version: string | null;
@@ -299,6 +300,7 @@ function updateCrawler(
     name?: string;
     worker_concurrency?: number;
     js_render_concurrency?: number;
+    max_jobs?: number;
     desired_version?: string;
     sort_order?: number | null;
   },
@@ -319,10 +321,12 @@ export function updateCrawlerRuntime(
   id: string,
   workerConcurrency: number,
   jsRenderConcurrency: number,
+  maxJobs: number,
 ) {
   return updateCrawler(token, id, {
     worker_concurrency: workerConcurrency,
     js_render_concurrency: jsRenderConcurrency,
+    max_jobs: maxJobs,
   });
 }
 

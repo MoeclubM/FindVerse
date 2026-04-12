@@ -71,9 +71,6 @@ export function ConsoleWorkers() {
   const platformVersion = overview?.platform_version ?? "-";
   const crawlers = overview?.crawlers ?? [];
   const onlineWorkers = crawlers.filter((crawler) => crawler.online).length;
-  const deletableWorkers = crawlers.filter(
-    (crawler) => crawler.can_delete,
-  ).length;
   const totalClaimed = crawlers.reduce(
     (sum, crawler) => sum + crawler.jobs_claimed,
     0,
@@ -96,6 +93,7 @@ export function ConsoleWorkers() {
   const [runtimeWorkerConcurrency, setRuntimeWorkerConcurrency] = useState("");
   const [runtimeJsRenderConcurrency, setRuntimeJsRenderConcurrency] =
     useState("");
+  const [runtimeMaxJobs, setRuntimeMaxJobs] = useState("");
   const [sortOrder, setSortOrder] = useState("");
   const selectedCrawler =
     crawlers.find((crawler) => crawler.id === selectedCrawlerId) ?? null;
@@ -117,10 +115,14 @@ export function ConsoleWorkers() {
         1,
     ),
   );
+  const nextRuntimeMaxJobs = String(
+    Math.max(1, Number(runtimeMaxJobs) || selectedCrawler?.max_jobs || 1),
+  );
   const runtimeDirty = selectedCrawler
     ? runtimeWorkerConcurrency !== String(selectedCrawler.worker_concurrency) ||
       runtimeJsRenderConcurrency !==
-        String(selectedCrawler.js_render_concurrency)
+        String(selectedCrawler.js_render_concurrency) ||
+      runtimeMaxJobs !== String(selectedCrawler.max_jobs)
     : false;
   const nextSortOrder =
     sortOrder.trim() === "" ? null : Number(sortOrder.trim());
@@ -197,9 +199,11 @@ export function ConsoleWorkers() {
         crawlerId,
         Number(nextRuntimeWorkerConcurrency),
         Number(nextRuntimeJsRenderConcurrency),
+        Number(nextRuntimeMaxJobs),
       );
       setRuntimeWorkerConcurrency(nextRuntimeWorkerConcurrency);
       setRuntimeJsRenderConcurrency(nextRuntimeJsRenderConcurrency);
+      setRuntimeMaxJobs(nextRuntimeMaxJobs);
       await refreshAll();
       setFlash(t("console.workers.runtime_saved"));
     } catch (error) {
@@ -265,17 +269,13 @@ export function ConsoleWorkers() {
         })}
       </div>
       <StatStrip
-        className="xl:grid-cols-6"
+        className="xl:grid-cols-5"
         items={[
           { label: t("console.overview.workers"), value: crawlers.length },
           { label: t("console.workers.online_count"), value: onlineWorkers },
           { label: t("console.workers.in_flight_jobs"), value: totalInFlight },
           { label: t("console.workers.jobs_claimed"), value: totalClaimed },
           { label: t("console.workers.jobs_reported"), value: totalReported },
-          {
-            label: t("console.workers.delete_ready_count"),
-            value: deletableWorkers,
-          },
         ]}
       />
 
@@ -293,6 +293,7 @@ export function ConsoleWorkers() {
                 setRuntimeJsRenderConcurrency(
                   String(crawler.js_render_concurrency),
                 );
+                setRuntimeMaxJobs(String(crawler.max_jobs));
                 setSortOrder(
                   crawler.sort_order === null ? "" : String(crawler.sort_order),
                 );
@@ -318,11 +319,6 @@ export function ConsoleWorkers() {
                       {crawler.supports_js_render
                         ? t("console.workers.chromium_enabled")
                         : t("console.workers.chromium_disabled")}
-                    </Badge>
-                    <Badge variant={crawler.can_delete ? "default" : "outline"}>
-                      {crawler.can_delete
-                        ? t("console.workers.delete_ready")
-                        : t("console.workers.delete_waiting")}
                     </Badge>
                     <Badge variant="outline">
                       {t("console.workers.version_badge", {
@@ -364,7 +360,7 @@ export function ConsoleWorkers() {
                   </strong>
                 </div>
               </div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
                 <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
                   <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                     {t("console.workers.in_flight_jobs")}
@@ -407,6 +403,14 @@ export function ConsoleWorkers() {
                 </div>
                 <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
                   <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                    {t("console.workers.max_jobs_label")}
+                  </span>
+                  <div className="mt-2 text-lg font-semibold text-foreground">
+                    {crawler.max_jobs}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
+                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
                     {t("console.workers.created")}
                   </span>
                   <div className="mt-2 text-lg font-semibold text-foreground">
@@ -435,6 +439,7 @@ export function ConsoleWorkers() {
           setSelectedCrawlerId(null);
           setRuntimeWorkerConcurrency("");
           setRuntimeJsRenderConcurrency("");
+          setRuntimeMaxJobs("");
           setSortOrder("");
         }}
         actions={
@@ -491,15 +496,7 @@ export function ConsoleWorkers() {
               </div>
             ) : null}
 
-            <div className="rounded-2xl border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
-              {selectedCrawler.can_delete
-                ? selectedCrawler.in_flight_jobs > 0
-                  ? t("console.workers.delete_release_hint")
-                  : t("console.workers.delete_ready_hint")
-                : t("console.workers.delete_waiting_hint")}
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Bot className="size-4" />
@@ -584,6 +581,14 @@ export function ConsoleWorkers() {
                 </span>
                 <div className="mt-2 text-2xl font-semibold text-foreground">
                   {selectedCrawler.js_render_concurrency}
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  {t("console.workers.max_jobs_label")}
+                </span>
+                <div className="mt-2 text-2xl font-semibold text-foreground">
+                  {selectedCrawler.max_jobs}
                 </div>
               </div>
               <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -743,7 +748,7 @@ export function ConsoleWorkers() {
                     : t("console.workers.chromium_disabled")}
                 </Badge>
               </div>
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
                 <FieldShell
                   label={t("console.workers.worker_concurrency_label")}
                 >
@@ -766,6 +771,14 @@ export function ConsoleWorkers() {
                     onChange={(event) =>
                       setRuntimeJsRenderConcurrency(event.target.value)
                     }
+                  />
+                </FieldShell>
+                <FieldShell label={t("console.workers.max_jobs_label")}>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={runtimeMaxJobs}
+                    onChange={(event) => setRuntimeMaxJobs(event.target.value)}
                   />
                 </FieldShell>
                 <Button

@@ -54,7 +54,7 @@ pub enum Command {
         /// Fixed crawler key
         #[arg(long)]
         crawler_key: String,
-        /// Local claim cap. Actual claim count is also capped by server-delivered concurrency.
+        /// Local default claim cap used before control-plane runtime config arrives.
         #[arg(long, default_value_t = 16)]
         max_jobs: usize,
         #[arg(long, default_value_t = 5)]
@@ -192,6 +192,7 @@ pub struct ClaimJobsResponse {
 pub struct CrawlerHeartbeatResponse {
     pub worker_concurrency: usize,
     pub js_render_concurrency: usize,
+    pub max_jobs: usize,
     pub desired_version: Option<String>,
     pub update_status: String,
 }

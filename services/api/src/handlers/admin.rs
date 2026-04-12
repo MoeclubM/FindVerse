@@ -303,6 +303,7 @@ pub async fn admin_set_system_config(
             | "crawler.claim_timeout_secs"
             | "crawler.total_concurrency"
             | "crawler.js_render_concurrency"
+            | "crawler.max_jobs"
             | "crawler.max_attempts"
             | "crawler.tor_proxy_url"
             | "crawler.tor_enabled"
@@ -312,7 +313,7 @@ pub async fn admin_set_system_config(
     }
     if matches!(
         key.as_str(),
-        "crawler.total_concurrency" | "crawler.js_render_concurrency"
+        "crawler.total_concurrency" | "crawler.js_render_concurrency" | "crawler.max_jobs"
     ) {
         if let Some(value) = body.value.as_deref() {
             let parsed = value

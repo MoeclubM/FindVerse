@@ -51,6 +51,7 @@ struct NetworkClients {
 struct RuntimeConcurrencyConfig {
     worker_concurrency: usize,
     js_render_concurrency: usize,
+    max_jobs: usize,
 }
 
 impl RuntimeConcurrencyConfig {
@@ -58,6 +59,7 @@ impl RuntimeConcurrencyConfig {
         Self {
             worker_concurrency: config.concurrency.max(1),
             js_render_concurrency: config.js_render_concurrency.max(1),
+            max_jobs: config.max_jobs.max(1),
         }
     }
 }
@@ -322,7 +324,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         }
 
         let current_runtime = *runtime_config.read().await;
-        let claim_batch_size = config.max_jobs.max(1);
+        let claim_batch_size = current_runtime.max_jobs;
         let claim = claim_jobs(&api_client, &config, claim_batch_size).await?;
         if claim.jobs.is_empty() {
             info!(
@@ -567,12 +569,14 @@ async fn sync_runtime_config(
     let next = RuntimeConcurrencyConfig {
         worker_concurrency: next.worker_concurrency.max(1),
         js_render_concurrency: next.js_render_concurrency.max(1),
+        max_jobs: next.max_jobs.max(1),
     };
     let mut current = runtime_config.write().await;
     if *current != next {
         info!(
             worker_concurrency = next.worker_concurrency,
             js_render_concurrency = next.js_render_concurrency,
+            max_jobs = next.max_jobs,
             "updated crawler runtime concurrency from heartbeat"
         );
         *current = next;

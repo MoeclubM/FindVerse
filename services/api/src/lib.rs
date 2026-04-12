@@ -408,6 +408,7 @@ async fn seed_default_system_config(pg_pool: &sqlx::PgPool, config: &Config) -> 
         ),
         ("crawler.total_concurrency", "16".to_string()),
         ("crawler.js_render_concurrency", "1".to_string()),
+        ("crawler.max_jobs", "16".to_string()),
     ];
 
     for (key, value) in defaults {

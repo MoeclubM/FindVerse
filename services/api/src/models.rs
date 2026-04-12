@@ -299,6 +299,7 @@ pub struct UpdateCrawlerRequest {
     pub name: Option<String>,
     pub worker_concurrency: Option<usize>,
     pub js_render_concurrency: Option<usize>,
+    pub max_jobs: Option<usize>,
     pub desired_version: Option<String>,
     #[serde(default)]
     pub sort_order: Option<Option<i32>>,
@@ -321,6 +322,7 @@ pub struct CrawlerMetadata {
     pub supports_js_render: bool,
     pub worker_concurrency: usize,
     pub js_render_concurrency: usize,
+    pub max_jobs: usize,
     pub version: Option<String>,
     pub platform: Option<String>,
     pub desired_version: Option<String>,
@@ -494,6 +496,7 @@ pub struct ClaimJobsResponse {
 pub struct CrawlerHeartbeatResponse {
     pub worker_concurrency: usize,
     pub js_render_concurrency: usize,
+    pub max_jobs: usize,
     pub desired_version: Option<String>,
     pub update_status: String,
 }

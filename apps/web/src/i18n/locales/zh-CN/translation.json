@@ -491,6 +491,7 @@
       "runtime_title": "节点并发",
       "worker_concurrency_label": "任务并发",
       "js_render_concurrency_label": "浏览器渲染并发",
+      "max_jobs_label": "单次认领任务数",
       "runtime_saved": "节点并发已保存",
       "runtime_save_failed": "保存节点并发失败",
       "platform_version_hint": "控制面当前支持的爬虫版本：{{version}}",
@@ -569,6 +570,7 @@
         "auth": "认证",
         "total": "默认任务并发",
         "render": "默认浏览器并发",
+        "max_jobs": "默认单次认领任务数",
         "claim": "认领",
         "retry": "重试"
       },
@@ -576,6 +578,7 @@
       "auth_key_placeholder": "所有节点共享的固定 crawler key",
       "total_concurrency_label": "默认任务并发",
       "js_render_concurrency_label": "默认浏览器渲染并发",
+      "max_jobs_label": "默认单次认领任务数",
       "claim_timeout_label": "认领超时（秒）",
       "max_attempts_label": "最大重试次数",
       "tor_section": "Tor 爬取",

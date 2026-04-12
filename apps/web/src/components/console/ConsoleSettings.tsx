@@ -32,6 +32,7 @@ export function ConsoleSettings() {
   const [crawlerAuthKey, setCrawlerAuthKey] = useState("");
   const [workerConcurrency, setWorkerConcurrency] = useState("16");
   const [jsRenderConcurrency, setJsRenderConcurrency] = useState("1");
+  const [maxJobs, setMaxJobs] = useState("16");
   const [claimTimeout, setClaimTimeout] = useState("");
   const [maxAttempts, setMaxAttempts] = useState("");
   const [torEnabled, setTorEnabled] = useState(false);
@@ -48,6 +49,7 @@ export function ConsoleSettings() {
         setCrawlerAuthKey(nextConfig["crawler.auth_key"] ?? "");
         setWorkerConcurrency(nextConfig["crawler.total_concurrency"] ?? "16");
         setJsRenderConcurrency(nextConfig["crawler.js_render_concurrency"] ?? "1");
+        setMaxJobs(nextConfig["crawler.max_jobs"] ?? "16");
         setClaimTimeout(nextConfig["crawler.claim_timeout_secs"] ?? "");
         setMaxAttempts(nextConfig["crawler.max_attempts"] ?? "");
         setTorEnabled(nextConfig["crawler.tor_enabled"] === "true");
@@ -67,15 +69,25 @@ export function ConsoleSettings() {
 
   const nextWorkerConcurrency = String(Math.max(1, Number(workerConcurrency) || 16));
   const nextJsRenderConcurrency = String(Math.max(1, Number(jsRenderConcurrency) || 1));
+  const nextMaxJobs = String(Math.max(1, Number(maxJobs) || 16));
 
   const crawlerDirty = useMemo(
     () =>
       crawlerAuthKey !== (config["crawler.auth_key"] ?? "") ||
       workerConcurrency !== (config["crawler.total_concurrency"] ?? "16") ||
       jsRenderConcurrency !== (config["crawler.js_render_concurrency"] ?? "1") ||
+      maxJobs !== (config["crawler.max_jobs"] ?? "16") ||
       claimTimeout !== (config["crawler.claim_timeout_secs"] ?? "") ||
       maxAttempts !== (config["crawler.max_attempts"] ?? ""),
-    [crawlerAuthKey, workerConcurrency, jsRenderConcurrency, claimTimeout, maxAttempts, config],
+    [
+      crawlerAuthKey,
+      workerConcurrency,
+      jsRenderConcurrency,
+      maxJobs,
+      claimTimeout,
+      maxAttempts,
+      config,
+    ],
   );
 
   const torDirty = useMemo(
@@ -97,6 +109,7 @@ export function ConsoleSettings() {
         setSystemConfig(token, "crawler.auth_key", crawlerAuthKey.trim() || null),
         setSystemConfig(token, "crawler.total_concurrency", nextWorkerConcurrency),
         setSystemConfig(token, "crawler.js_render_concurrency", nextJsRenderConcurrency),
+        setSystemConfig(token, "crawler.max_jobs", nextMaxJobs),
         setSystemConfig(token, "crawler.claim_timeout_secs", claimTimeout.trim() || null),
         setSystemConfig(token, "crawler.max_attempts", maxAttempts.trim() || null),
       ]);
@@ -105,11 +118,13 @@ export function ConsoleSettings() {
         "crawler.auth_key": crawlerAuthKey.trim(),
         "crawler.total_concurrency": nextWorkerConcurrency,
         "crawler.js_render_concurrency": nextJsRenderConcurrency,
+        "crawler.max_jobs": nextMaxJobs,
         "crawler.claim_timeout_secs": claimTimeout.trim(),
         "crawler.max_attempts": maxAttempts.trim(),
       }));
       setWorkerConcurrency(nextWorkerConcurrency);
       setJsRenderConcurrency(nextJsRenderConcurrency);
+      setMaxJobs(nextMaxJobs);
       setFlash(t("console.settings.save_success"));
     } catch (error) {
       setFlash(getErrorMessage(error, t("console.settings.save_error")));
@@ -155,7 +170,8 @@ export function ConsoleSettings() {
         <div className="rounded-2xl border border-border p-6">
           <div className="grid gap-5">
             <Skeleton className="h-5 w-56" />
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
+              <Skeleton className="h-10 rounded-lg" />
               <Skeleton className="h-10 rounded-lg" />
               <Skeleton className="h-10 rounded-lg" />
               <Skeleton className="h-10 rounded-lg" />
@@ -163,7 +179,8 @@ export function ConsoleSettings() {
               <Skeleton className="h-10 rounded-lg" />
               <Skeleton className="h-8 w-24 rounded-lg" />
             </div>
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-3 md:grid-cols-6">
+              <Skeleton className="h-24 rounded-xl" />
               <Skeleton className="h-24 rounded-xl" />
               <Skeleton className="h-24 rounded-xl" />
               <Skeleton className="h-24 rounded-xl" />
@@ -192,7 +209,7 @@ export function ConsoleSettings() {
         title={t("console.settings.crawler_config_section")}
         contentClassName="space-y-5"
       >
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
           <FieldShell className="lg:col-span-1" label={t("console.settings.auth_key_label")}>
             <Input
               value={crawlerAuthKey}
@@ -216,6 +233,14 @@ export function ConsoleSettings() {
               onChange={(event) => setJsRenderConcurrency(event.target.value)}
             />
           </FieldShell>
+          <FieldShell label={t("console.settings.max_jobs_label")}>
+            <Input
+              type="number"
+              min={1}
+              value={maxJobs}
+              onChange={(event) => setMaxJobs(event.target.value)}
+            />
+          </FieldShell>
           <FieldShell label={t("console.settings.claim_timeout_label")}>
             <Input value={claimTimeout} onChange={(event) => setClaimTimeout(event.target.value)} />
           </FieldShell>
@@ -228,7 +253,7 @@ export function ConsoleSettings() {
           </Button>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-6">
           <div className="rounded-xl border border-border bg-muted/40 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Shield className="size-4" />{t("console.settings.summary.auth")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.auth_key_label")}</p>
@@ -240,6 +265,10 @@ export function ConsoleSettings() {
           <div className="rounded-xl border border-border bg-muted/40 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.render")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{nextJsRenderConcurrency}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.max_jobs")}</div>
+            <p className="mt-2 text-sm text-muted-foreground">{nextMaxJobs}</p>
           </div>
           <div className="rounded-xl border border-border bg-muted/40 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.claim")}</div>

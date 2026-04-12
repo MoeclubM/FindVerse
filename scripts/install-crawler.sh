@@ -8,7 +8,7 @@ CRAWLER_KEY_ARG=""
 SERVICE_NAME="findverse-crawler"
 INSTALL_DIR="/opt/findverse-crawler"
 ENV_FILE="/etc/findverse-crawler/crawler.env"
-MAX_JOBS=""
+LOCAL_MAX_JOBS=""
 POLL_INTERVAL_SECS=""
 ALLOWED_DOMAINS=""
 PROXY=""
@@ -35,7 +35,7 @@ Options:
   --service-name <name>         systemd service name. Default: findverse-crawler
   --install-dir <dir>           Install directory. Default: /opt/findverse-crawler
   --env-file <path>             Config file path. Default: /etc/findverse-crawler/crawler.env
-  --max-jobs <n>                Local claim cap. Actual claim count also follows server concurrency
+  --max-jobs <n>                Local default claim cap, used until control-plane config arrives
   --poll-interval-secs <n>      Poll interval. Reuses existing config if omitted
   --allowed-domains <csv>       Optional domain allowlist
   --proxy <url>                 Optional outbound proxy
@@ -80,7 +80,7 @@ while [[ $# -gt 0 ]]; do
     --service-name) SERVICE_NAME="$2"; shift 2 ;;
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
-    --max-jobs) MAX_JOBS="$2"; shift 2 ;;
+    --max-jobs) LOCAL_MAX_JOBS="$2"; shift 2 ;;
     --poll-interval-secs) POLL_INTERVAL_SECS="$2"; shift 2 ;;
     --allowed-domains) ALLOWED_DOMAINS="$2"; shift 2 ;;
     --proxy) PROXY="$2"; shift 2 ;;
@@ -209,10 +209,16 @@ extract_crawler_binary() {
 }
 
 load_existing_config() {
+  local provided_local_max_jobs="$LOCAL_MAX_JOBS"
+  local provided_poll_interval_secs="$POLL_INTERVAL_SECS"
+  local provided_allowed_domains="$ALLOWED_DOMAINS"
+  local provided_proxy="$PROXY"
+
   EXISTING_SERVER=""
   EXISTING_CRAWLER_ID=""
   EXISTING_CRAWLER_NAME=""
   EXISTING_CRAWLER_KEY=""
+  EXISTING_LOCAL_MAX_JOBS=""
   EXISTING_MAX_JOBS=""
   EXISTING_POLL_INTERVAL_SECS=""
   EXISTING_ALLOWED_DOMAINS=""
@@ -227,6 +233,7 @@ load_existing_config() {
     EXISTING_CRAWLER_ID="${CRAWLER_ID:-}"
     EXISTING_CRAWLER_NAME="${CRAWLER_NAME:-}"
     EXISTING_CRAWLER_KEY="${CRAWLER_KEY:-}"
+    EXISTING_LOCAL_MAX_JOBS="${LOCAL_MAX_JOBS:-}"
     EXISTING_MAX_JOBS="${MAX_JOBS:-}"
     EXISTING_POLL_INTERVAL_SECS="${POLL_INTERVAL_SECS:-}"
     EXISTING_ALLOWED_DOMAINS="${ALLOWED_DOMAINS:-}"
@@ -234,6 +241,11 @@ load_existing_config() {
     EXISTING_SERVICE_NAME="${FINDVERSE_CRAWLER_SERVICE_NAME:-}"
     EXISTING_REPO="${FINDVERSE_GITHUB_REPO:-}"
   fi
+
+  LOCAL_MAX_JOBS="$provided_local_max_jobs"
+  POLL_INTERVAL_SECS="$provided_poll_interval_secs"
+  ALLOWED_DOMAINS="$provided_allowed_domains"
+  PROXY="$provided_proxy"
 }
 
 default_crawler_name() {
@@ -266,10 +278,10 @@ write_env_file() {
   local final_crawler_key="$3"
   local env_dir
   local env_tmp="$TMP_DIR/crawler.env"
-  local final_max_jobs final_poll_interval
+  local final_local_max_jobs final_poll_interval
   local final_allowed_domains final_proxy
 
-  final_max_jobs="${MAX_JOBS:-${EXISTING_MAX_JOBS:-16}}"
+  final_local_max_jobs="${LOCAL_MAX_JOBS:-${EXISTING_LOCAL_MAX_JOBS:-${EXISTING_MAX_JOBS:-16}}}"
   final_poll_interval="${POLL_INTERVAL_SECS:-${EXISTING_POLL_INTERVAL_SECS:-5}}"
   final_allowed_domains="${ALLOWED_DOMAINS:-${EXISTING_ALLOWED_DOMAINS:-}}"
   final_proxy="${PROXY:-${EXISTING_PROXY:-}}"
@@ -282,7 +294,7 @@ SERVER=$SERVER_URL
 CRAWLER_ID=$final_crawler_id
 CRAWLER_NAME=$final_crawler_name
 CRAWLER_KEY=$final_crawler_key
-MAX_JOBS=$final_max_jobs
+LOCAL_MAX_JOBS=$final_local_max_jobs
 POLL_INTERVAL_SECS=$final_poll_interval
 ALLOWED_DOMAINS=$final_allowed_domains
 PROXY=$final_proxy
@@ -307,7 +319,7 @@ args=(
   --crawler-id "\${CRAWLER_ID}"
   --crawler-name "\${CRAWLER_NAME:-}"
   --crawler-key "\${CRAWLER_KEY}"
-  --max-jobs "\${MAX_JOBS:-16}"
+  --max-jobs "\${LOCAL_MAX_JOBS:-\${MAX_JOBS:-16}}"
   --poll-interval-secs "\${POLL_INTERVAL_SECS:-5}"
 )
 if [[ -n "\${ALLOWED_DOMAINS:-}" ]]; then

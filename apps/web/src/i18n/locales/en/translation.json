@@ -491,6 +491,7 @@
       "runtime_title": "Worker runtime",
       "worker_concurrency_label": "Job concurrency",
       "js_render_concurrency_label": "Browser render concurrency",
+      "max_jobs_label": "Claim batch size",
       "runtime_saved": "Worker runtime saved",
       "runtime_save_failed": "Failed to save worker runtime",
       "platform_version_hint": "Control-plane crawler version: {{version}}",
@@ -569,6 +570,7 @@
         "auth": "Auth",
         "total": "Default job concurrency",
         "render": "Default browser concurrency",
+        "max_jobs": "Default claim batch size",
         "claim": "Claim",
         "retry": "Retry"
       },
@@ -576,6 +578,7 @@
       "auth_key_placeholder": "Shared fixed crawler key for every node",
       "total_concurrency_label": "Default job concurrency",
       "js_render_concurrency_label": "Default browser render concurrency",
+      "max_jobs_label": "Default claim batch size",
       "claim_timeout_label": "Claim timeout (seconds)",
       "max_attempts_label": "Max retry attempts",
       "tor_section": "Tor Crawling",
