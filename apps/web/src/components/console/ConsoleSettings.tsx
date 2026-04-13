@@ -20,6 +20,10 @@ function toConfigMap(entries: Array<{ key: string; value: string }>): ConfigMap 
   return Object.fromEntries(entries.map((entry) => [entry.key, entry.value]));
 }
 
+const INSTALL_SCRIPT_URL =
+  "https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh";
+const INSTALL_SCRIPT_PROXY_URL = `https://gh-proxy.net/${INSTALL_SCRIPT_URL}`;
+
 export function ConsoleSettings() {
   const { token, setFlash } = useConsole();
   const { t } = useTranslation();
@@ -98,7 +102,7 @@ export function ConsoleSettings() {
   );
 
   const installCommand = crawlerAuthKey.trim()
-    ? `curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server ${installServer} --crawler-key ${crawlerAuthKey.trim()}`
+    ? `tmp="$(mktemp)" && { curl -fsSL ${INSTALL_SCRIPT_URL} -o "$tmp" || curl -fsSL ${INSTALL_SCRIPT_PROXY_URL} -o "$tmp"; } && sudo bash "$tmp" -- --server ${installServer} --crawler-key ${crawlerAuthKey.trim()}; status=$?; rm -f "$tmp"; [ $status -eq 0 ]`
     : "";
 
   async function handleSaveCrawlerConfig() {

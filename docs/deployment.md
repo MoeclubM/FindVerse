@@ -73,16 +73,25 @@ Crawler nodes are host services, not Docker services.
 Install or update a node:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install
+tmp="$(mktemp)" && \
+{ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp" || \
+  curl -fsSL https://gh-proxy.net/https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp"; } && \
+sudo bash "$tmp" -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install; \
+status=$?; rm -f "$tmp"; [ $status -eq 0 ]
 ```
 
 Pin a specific crawler release when needed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.15 --max-jobs 16 --skip-browser-install
+tmp="$(mktemp)" && \
+{ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp" || \
+  curl -fsSL https://gh-proxy.net/https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp"; } && \
+sudo bash "$tmp" -- --server https://search.example.com/api --crawler-key "<crawler-key>" --version v0.0.15 --max-jobs 16 --skip-browser-install; \
+status=$?; rm -f "$tmp"; [ $status -eq 0 ]
 ```
 
 The installer supports both `x86_64/amd64` and `aarch64/arm64` Linux hosts and downloads the matching crawler release asset automatically.
+If direct GitHub access fails, the script retries script and crawler package downloads through `gh-proxy.net` automatically.
 
 It writes:
 
@@ -114,7 +123,11 @@ docker compose up -d --build
 Crawler node update:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s --
+tmp="$(mktemp)" && \
+{ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp" || \
+  curl -fsSL https://gh-proxy.net/https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp"; } && \
+sudo bash "$tmp" --; \
+status=$?; rm -f "$tmp"; [ $status -eq 0 ]
 ```
 
 ## Maintenance

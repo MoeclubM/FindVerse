@@ -27,7 +27,11 @@ docker compose up -d --build
 4. Set one shared crawler auth key in `/console -> Settings`, then install a crawler node.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install
+tmp="$(mktemp)" && \
+{ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp" || \
+  curl -fsSL https://gh-proxy.net/https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp"; } && \
+sudo bash "$tmp" -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install; \
+status=$?; rm -f "$tmp"; [ $status -eq 0 ]
 ```
 
 Control-plane data is stored under `./data`. Docker Compose deploys only the control plane; crawler nodes are separate host services. If a crawler node still predates the split crawler package, run `install-crawler.sh` once manually on that machine before using console-triggered remote updates. On low-memory hosts, prefer `COMPOSE_PARALLEL_LIMIT=1 docker compose up -d --build`. Rust service images also default to `FINDVERSE_CARGO_BUILD_JOBS=1`.

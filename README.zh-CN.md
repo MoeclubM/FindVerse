@@ -27,7 +27,11 @@ docker compose up -d --build
 4. 先在 `/console -> Settings` 设置一组共享 crawler 认证密钥，再安装 crawler 节点。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh | sudo bash -s -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install
+tmp="$(mktemp)" && \
+{ curl -fsSL https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp" || \
+  curl -fsSL https://gh-proxy.net/https://raw.githubusercontent.com/MoeclubM/FindVerse/main/scripts/install-crawler.sh -o "$tmp"; } && \
+sudo bash "$tmp" -- --server https://search.example.com/api --crawler-key "<crawler-key>" --max-jobs 16 --skip-browser-install; \
+status=$?; rm -f "$tmp"; [ $status -eq 0 ]
 ```
 
 控制层数据保存在 `./data`。Docker Compose 只负责控制层，crawler 节点需要作为独立宿主机服务部署。如果某个 crawler 节点还停留在拆包之前的旧版本，需要先手动执行一次 `install-crawler.sh`，之后控制台远程升级才能继续正常工作。若机器内存偏紧，优先用 `COMPOSE_PARALLEL_LIMIT=1 docker compose up -d --build`。现在 Rust 服务镜像默认也会使用 `FINDVERSE_CARGO_BUILD_JOBS=1`。

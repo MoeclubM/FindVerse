@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO="${FINDVERSE_GITHUB_REPO:-MoeclubM/FindVerse}"
+GH_PROXY_PREFIX="https://gh-proxy.net"
 VERSION=""
 SERVER_URL=""
 CRAWLER_KEY_ARG=""
@@ -51,6 +52,7 @@ Notes:
   - The same release command can be used for both first install and updates.
   - Without --version the script downloads the latest public GitHub crawler release asset.
   - Use --version to pin a specific release tag during rollout.
+  - If direct GitHub access fails, the script retries through gh-proxy.net automatically.
 EOF
 }
 
@@ -91,7 +93,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 require_cmd curl
-require_cmd jq
 require_cmd tar
 require_cmd systemctl
 require_cmd install
@@ -129,21 +130,15 @@ machine_suffix() {
   esac
 }
 
-github_api_json() {
-  local url="$1"
-  local -a args=(
-    -fsSL
-    -H "Accept: application/vnd.github+json"
-    -H "X-GitHub-Api-Version: 2022-11-28"
-  )
-  curl "${args[@]}" "$url"
-}
-
 github_download() {
   local url="$1"
   local output="$2"
   local -a args=(-fsSL -o "$output")
-  curl "${args[@]}" "$url"
+  if curl "${args[@]}" "$url"; then
+    return 0
+  fi
+  echo "Warning: direct GitHub download failed, retrying via ${GH_PROXY_PREFIX}" >&2
+  curl "${args[@]}" "${GH_PROXY_PREFIX%/}/$url"
 }
 
 browser_exists() {
@@ -174,22 +169,16 @@ ensure_browser() {
 
 download_release_archive() {
   local suffix="$1"
-  local release_url
-  local release_json
   local asset_url
   local archive_path="$TMP_DIR/findverse-crawler-${suffix}.tar.gz"
 
   if [[ -n "$VERSION" ]]; then
-    release_url="https://api.github.com/repos/${REPO}/releases/tags/${VERSION}"
+    asset_url="https://github.com/${REPO}/releases/download/${VERSION}/findverse-crawler-${suffix}.tar.gz"
     SOURCE_LABEL="release:${VERSION}"
   else
-    release_url="https://api.github.com/repos/${REPO}/releases/latest"
+    asset_url="https://github.com/${REPO}/releases/latest/download/findverse-crawler-${suffix}.tar.gz"
     SOURCE_LABEL="release:latest"
   fi
-
-  release_json="$(github_api_json "$release_url")"
-  asset_url="$(printf '%s' "$release_json" | jq -r --arg name "findverse-crawler-${suffix}.tar.gz" '.assets[] | select(.name == $name) | .browser_download_url' | head -n 1)"
-  [[ -n "$asset_url" && "$asset_url" != "null" ]] || fail "release asset findverse-crawler-${suffix}.tar.gz not found for ${REPO}"
 
   github_download "$asset_url" "$archive_path"
   DOWNLOADED_ARCHIVE_PATH="$archive_path"
