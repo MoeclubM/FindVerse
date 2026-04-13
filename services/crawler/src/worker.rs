@@ -620,23 +620,51 @@ async fn download_release_archive(
     platform: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let repo = env::var("FINDVERSE_GITHUB_REPO").unwrap_or_else(|_| "MoeclubM/FindVerse".into());
-    let url = format!(
+    let github_url = format!(
         "https://github.com/{repo}/releases/download/{version}/findverse-crawler-{platform}.tar.gz"
     );
-    let response = client
-        .get(&url)
-        .header(
-            "user-agent",
-            format!("FindVerseCrawler/{}", current_release_tag()),
-        )
-        .send()
-        .await?;
+    let proxy_url = format!("https://gh-proxy.net/{github_url}");
+    let user_agent = format!("FindVerseCrawler/{}", current_release_tag());
+    let mut last_error = None;
 
-    if !response.status().is_success() {
-        anyhow::bail!("download failed with status {}", response.status());
+    for (url, source) in [(github_url.as_str(), "github"), (proxy_url.as_str(), "gh-proxy.net")] {
+        match client
+            .get(url)
+            .header("user-agent", &user_agent)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                return Ok(response.bytes().await?.to_vec());
+            }
+            Ok(response) => {
+                let error =
+                    anyhow::anyhow!("download from {source} failed with status {}", response.status());
+                if source == "github" {
+                    warn!(
+                        target_version = %version,
+                        platform = %platform,
+                        ?error,
+                        "direct GitHub crawler package download failed, retrying via gh-proxy.net"
+                    );
+                }
+                last_error = Some(error);
+            }
+            Err(error) => {
+                if source == "github" {
+                    warn!(
+                        target_version = %version,
+                        platform = %platform,
+                        ?error,
+                        "direct GitHub crawler package download failed, retrying via gh-proxy.net"
+                    );
+                }
+                last_error = Some(error.into());
+            }
+        }
     }
 
-    Ok(response.bytes().await?.to_vec())
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("crawler package download failed")))
 }
 
 async fn install_downloaded_binary(
