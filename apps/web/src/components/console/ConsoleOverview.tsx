@@ -9,7 +9,7 @@ import { Badge } from "../ui/badge";
 import { Card, CardContent } from "../ui/card";
 
 export function ConsoleOverview() {
-  const { overview, developers } = useConsole();
+  const { overview, users } = useConsole();
   const { t } = useTranslation();
   const recentEvents = overview?.recent_events ?? [];
   const totalCrawlerCount = overview?.crawlers.length ?? 0;
@@ -61,8 +61,8 @@ export function ConsoleOverview() {
               value: overview?.terminal_failures ?? 0,
             },
             {
-              label: t("console.overview.developer_accounts"),
-              value: developers.length,
+              label: t("console.overview.user_accounts"),
+              value: users.length,
             },
           ]}
           className="xl:grid-cols-3"

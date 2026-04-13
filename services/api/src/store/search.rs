@@ -583,24 +583,26 @@ impl SearchIndex {
     }
 
     pub async fn purge_site(&self, site: &str) -> Result<PurgeSiteResponse, ApiError> {
-        let normalized = site.trim().to_lowercase();
-        if normalized.is_empty() {
-            return Err(ApiError::BadRequest("site must not be empty".to_string()));
-        }
-
-        let pattern = format!("%{normalized}%");
+        let normalized = normalize_site_input(site)
+            .ok_or_else(|| ApiError::BadRequest("site must be a valid host or http(s) url".to_string()))?;
+        let subdomain_pattern = format!("%.{}", normalized);
         let document_rows = sqlx::query_as::<_, DeletedDocumentRow>(
-            "select id, text_blob_key from documents where lower(host) like $1 or lower(canonical_url) like $1",
+            "select id, text_blob_key
+             from documents
+             where lower(host) = $1 or lower(host) like $2",
         )
-        .bind(&pattern)
+        .bind(&normalized)
+        .bind(&subdomain_pattern)
         .fetch_all(&self.pg_pool)
         .await
         .map_err(|error| ApiError::Internal(error.into()))?;
 
         let deleted = sqlx::query(
-            "delete from documents where lower(host) like $1 or lower(canonical_url) like $1",
+            "delete from documents
+             where lower(host) = $1 or lower(host) like $2",
         )
-        .bind(&pattern)
+        .bind(&normalized)
+        .bind(&subdomain_pattern)
         .execute(&self.pg_pool)
         .await
         .map_err(|error| ApiError::Internal(error.into()))?
@@ -1058,6 +1060,19 @@ impl SearchIndex {
             }
         }
     }
+}
+
+fn normalize_site_input(site: &str) -> Option<String> {
+    let trimmed = site.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(host) = super::extract_host(trimmed) {
+        return Some(host.to_ascii_lowercase());
+    }
+
+    super::extract_host(&format!("https://{trimmed}")).map(|host| host.to_ascii_lowercase())
 }
 
 #[derive(sqlx::FromRow)]

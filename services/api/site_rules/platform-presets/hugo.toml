@@ -1,0 +1,17 @@
+id = "hugo"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/index.xml"]
+
+[[rules]]
+name = "taxonomy"
+action = "deny"
+path_prefixes = ["/tags/", "/categories/"]
+
+[[rules]]
+name = "pagination"
+action = "deny"
+path_regex = "^/.+/page/[0-9]+/?$"

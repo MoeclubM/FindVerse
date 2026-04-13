@@ -1,0 +1,6 @@
+id = "wordpress"
+preset = "wordpress"
+priority = 50
+
+[match]
+html_markers = ["wp-content", "wp-includes", "content=\"wordpress"]

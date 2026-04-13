@@ -1,0 +1,12 @@
+id = "hexo"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/atom.xml"]
+
+[[rules]]
+name = "taxonomy"
+action = "deny"
+path_prefixes = ["/tags/", "/categories/", "/archives/"]

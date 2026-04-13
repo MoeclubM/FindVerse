@@ -1,0 +1,6 @@
+id = "gitbook"
+preset = "gitbook"
+priority = 60
+
+[match]
+html_markers = ["__gitbook", "gitbook-root", "gitbook-content", "/~gitbook/"]

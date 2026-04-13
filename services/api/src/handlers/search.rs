@@ -45,6 +45,10 @@ pub async fn search(
     headers: HeaderMap,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<SearchResponse>, ApiError> {
+    if params.q.trim().is_empty() {
+        return Err(ApiError::BadRequest("query must not be empty".to_string()));
+    }
+
     state
         .developer_store
         .validate_and_track_developer_key(
@@ -54,9 +58,6 @@ pub async fn search(
         )
         .await?;
 
-    if params.q.trim().is_empty() {
-        return Err(ApiError::BadRequest("query must not be empty".to_string()));
-    }
     Ok(Json(state.search_index.search(params).await))
 }
 

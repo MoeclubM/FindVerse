@@ -7,6 +7,8 @@ use argon2::{
 use crate::error::ApiError;
 
 pub(crate) const PASSWORD_SCHEME_ARGON2ID: &str = "argon2id";
+pub(crate) const USER_ROLE_ADMIN: &str = "admin";
+pub(crate) const USER_ROLE_DEVELOPER: &str = "developer";
 
 pub(crate) fn bearer_token(auth_header: Option<&str>) -> Result<&str, ApiError> {
     let header =
@@ -21,6 +23,41 @@ pub(crate) fn bearer_token(auth_header: Option<&str>) -> Result<&str, ApiError> 
     }
 
     Ok(token)
+}
+
+pub(crate) fn normalize_username(username: &str) -> Result<String, ApiError> {
+    let username = username.trim().to_lowercase();
+    if username.len() < 3
+        || username
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+    {
+        return Err(ApiError::BadRequest(
+            "username must be 3+ alphanumeric characters (_, - allowed)".to_string(),
+        ));
+    }
+
+    Ok(username)
+}
+
+pub(crate) fn validate_password(password: &str) -> Result<(), ApiError> {
+    if password.len() < 8 {
+        return Err(ApiError::BadRequest(
+            "password must be at least 8 characters".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub(crate) fn normalize_user_role(role: &str) -> Result<&'static str, ApiError> {
+    match role.trim() {
+        USER_ROLE_ADMIN => Ok(USER_ROLE_ADMIN),
+        USER_ROLE_DEVELOPER => Ok(USER_ROLE_DEVELOPER),
+        _ => Err(ApiError::BadRequest(
+            "role must be admin or developer".to_string(),
+        )),
+    }
 }
 
 pub(crate) fn hash_password(password: &str) -> Result<String, ApiError> {

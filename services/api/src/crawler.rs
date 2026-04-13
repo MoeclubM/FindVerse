@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 
 use chrono::{DateTime, Utc};
 use findverse_common::{DiscoveryScope, host_matches_scope, origin_key};
@@ -22,6 +22,9 @@ use crate::{
         IndexedDocument, SeedFrontierRequest, SeedFrontierResponse, SubmitCrawlReportRequest,
         SubmitCrawlReportResponse, UpdateCrawlRuleRequest, UpdateCrawlerRequest,
     },
+    site_rules::{
+        SITE_RULE_BUNDLE_CONFIG_KEY, normalize_site_rule_bundle_json, resolve_site_rule_bundle,
+    },
     store::{
         CURRENT_INDEX_VERSION, CURRENT_PARSER_VERSION, CURRENT_SCHEMA_VERSION, SearchIndex,
         content_hash, derive_terms, display_url, extract_host, hash_token, normalize_url,
@@ -30,6 +33,8 @@ use crate::{
 };
 
 const DEFAULT_CRAWLER_CLAIM_TIMEOUT_SECS: u64 = 300;
+
+const DOMAIN_BLACKLIST_CONFIG_KEY: &str = "crawler.domain_blacklist";
 
 #[derive(Debug, Clone)]
 pub(crate) struct CrawlerStore {
@@ -57,6 +62,13 @@ pub struct ProjectorCrawlerStore {
 #[derive(Debug, Clone)]
 pub struct SchedulerCrawlerStore {
     inner: CrawlerStore,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BlacklistCleanupOutcome {
+    pub deleted_documents: usize,
+    pub deleted_jobs: usize,
+    pub deleted_origins: usize,
 }
 
 impl ControlCrawlerStore {
@@ -97,6 +109,13 @@ impl ControlCrawlerStore {
         value: Option<String>,
     ) -> Result<(), ApiError> {
         self.inner.set_system_config(key, value).await
+    }
+
+    pub async fn cleanup_blacklisted_domains(
+        &self,
+        search_index: &SearchIndex,
+    ) -> Result<BlacklistCleanupOutcome, ApiError> {
+        self.inner.cleanup_blacklisted_domains(Some(search_index)).await
     }
 
     pub async fn create_rule(
@@ -316,6 +335,13 @@ impl ProjectorCrawlerStore {
         self.inner
             .process_pending_ingests(search_index, limit)
             .await
+    }
+
+    pub async fn cleanup_blacklisted_domains(
+        &self,
+        search_index: &SearchIndex,
+    ) -> Result<BlacklistCleanupOutcome, ApiError> {
+        self.inner.cleanup_blacklisted_domains(Some(search_index)).await
     }
 }
 
@@ -653,9 +679,21 @@ impl CrawlerStore {
         key: &str,
         value: Option<String>,
     ) -> Result<(), crate::error::ApiError> {
-        match value {
-            Some(v) => self.set_config(key, &v).await,
-            None => self.delete_config(key).await,
+        match (key, value) {
+            (DOMAIN_BLACKLIST_CONFIG_KEY, Some(value)) => {
+                let normalized = validate_domain_list(&value)?;
+                if normalized.is_empty() {
+                    self.delete_config(key).await
+                } else {
+                    self.set_config(key, &normalized.join("\n")).await
+                }
+            }
+            (SITE_RULE_BUNDLE_CONFIG_KEY, Some(value)) => {
+                let normalized = normalize_site_rule_bundle_json(&value)?;
+                self.set_config(key, &normalized).await
+            }
+            (_, Some(v)) => self.set_config(key, &v).await,
+            (_, None) => self.delete_config(key).await,
         }
     }
 
@@ -1719,12 +1757,19 @@ impl CrawlerStore {
             .clone()
             .unwrap_or_else(|| result.url.clone());
         let discovery_scope = DiscoveryScope::from_db_value(&in_flight.discovery_scope);
-        let scoped_discovered_urls = filter_discovered_urls(
+        let blacklisted_domains = self.blacklisted_domains().await?;
+        let page_is_blacklisted = url_matches_domain_list(&result.url, &blacklisted_domains)
+            || url_matches_domain_list(&finalized_url, &blacklisted_domains);
+        let mut scoped_discovered_urls = filter_discovered_urls(
             result.discovered_urls.clone(),
             discovery_scope,
             in_flight.discovery_host.as_deref(),
             in_flight.max_discovered_urls_per_page.max(1) as usize,
         );
+        scoped_discovered_urls.retain(|url| !url_matches_domain_list(url, &blacklisted_domains));
+        if page_is_blacklisted {
+            scoped_discovered_urls.clear();
+        }
         let discovered_count = scoped_discovered_urls.len() as i32;
         let http_status = result.status_code as i32;
         let content_type = result.content_type.clone();
@@ -1732,7 +1777,13 @@ impl CrawlerStore {
         let redirect_chain_json = serde_json::to_value(&result.redirect_chain)
             .map_err(|e| ApiError::Internal(e.into()))?;
 
-        match classify_job_outcome(&result, &in_flight) {
+        match if page_is_blacklisted {
+            JobOutcome::Filtered {
+                reason: "domain is blacklisted".to_string(),
+            }
+        } else {
+            classify_job_outcome(&result, &in_flight)
+        } {
             JobOutcome::Succeeded(document) => {
                 sqlx::query(
                     "update crawl_jobs
@@ -2567,6 +2618,11 @@ impl CrawlerStore {
         );
         let default_max_jobs =
             parse_positive_usize_config(self.get_system_config("crawler.max_jobs").await, 16);
+        let site_rules = resolve_site_rule_bundle(
+            self.get_system_config(SITE_RULE_BUNDLE_CONFIG_KEY)
+                .await
+                .as_deref(),
+        )?;
 
         Ok(crate::models::CrawlerHeartbeatResponse {
             worker_concurrency: metadata_view
@@ -2583,6 +2639,7 @@ impl CrawlerStore {
                 .unwrap_or(default_max_jobs),
             desired_version: metadata_view.desired_version,
             update_status: metadata_view.update_status,
+            site_rules,
         })
     }
 
@@ -2633,6 +2690,7 @@ impl CrawlerStore {
         self.requeue_stale_jobs(now, claim_timeout).await?;
         self.recover_stale_ingesting_jobs(now, claim_timeout)
             .await?;
+        self.cleanup_blacklisted_domains(None).await?;
         self.trim_events().await?;
         self.schedule_adaptive_recrawl(now).await?;
         crate::ranking::update_site_authority(&self.pg_pool).await?;
@@ -3129,6 +3187,7 @@ impl CrawlerStore {
         allow_revisit: bool,
     ) -> Result<usize, ApiError> {
         let mut accepted = 0usize;
+        let blacklisted_domains = self.blacklisted_domains().await?;
         let mut budget_used: i64 = sqlx::query_scalar(
             "select count(*) from crawl_jobs where owner_developer_id = $1 and budget_id = $2",
         )
@@ -3148,6 +3207,9 @@ impl CrawlerStore {
             let Some(origin_key) = origin_key(&normalized) else {
                 continue;
             };
+            if url_matches_domain_list(&normalized, &blacklisted_domains) {
+                continue;
+            }
             let resolved_discovery_host = discovery_host
                 .map(ToString::to_string)
                 .or_else(|| extract_host(&normalized));
@@ -3650,6 +3712,68 @@ impl CrawlerStore {
         ))
     }
 
+    async fn cleanup_blacklisted_domains(
+        &self,
+        search_index: Option<&SearchIndex>,
+    ) -> Result<BlacklistCleanupOutcome, ApiError> {
+        let blacklisted_domains = self.blacklisted_domains().await?;
+        if blacklisted_domains.is_empty() {
+            return Ok(BlacklistCleanupOutcome::default());
+        }
+
+        let mut deleted_documents = 0usize;
+        let mut deleted_jobs = 0usize;
+        let mut deleted_origins = 0usize;
+        let job_host_expr = "lower(regexp_replace(split_part(split_part(coalesce(final_url, url), '://', 2), '/', 1), ':[0-9]+$', ''))";
+        let origin_host_expr =
+            "lower(regexp_replace(split_part(split_part(origin_key, '://', 2), '/', 1), ':[0-9]+$', ''))";
+
+        for domain in &blacklisted_domains {
+            let subdomain_pattern = domain_like_pattern(domain);
+
+            if let Some(search_index) = search_index {
+                deleted_documents += search_index.purge_site(domain).await?.deleted_documents;
+            }
+
+            let delete_jobs_query = format!(
+                "delete from crawl_jobs
+                 where ({job_host_expr} = $1 or {job_host_expr} like $2)
+                   and status in ('queued', 'succeeded', 'failed', 'blocked', 'dead_letter')",
+            );
+            deleted_jobs += sqlx::query(&delete_jobs_query)
+                .bind(domain)
+                .bind(&subdomain_pattern)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?
+                .rows_affected() as usize;
+
+            let delete_origins_query = format!(
+                "delete from crawl_origins origin
+                 where ({origin_host_expr} = $1 or {origin_host_expr} like $2)
+                   and not exists (
+                       select 1
+                       from crawl_jobs job
+                       where job.owner_developer_id = origin.owner_developer_id
+                         and job.origin_key = origin.origin_key
+                   )",
+            );
+            deleted_origins += sqlx::query(&delete_origins_query)
+                .bind(domain)
+                .bind(&subdomain_pattern)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.into()))?
+                .rows_affected() as usize;
+        }
+
+        Ok(BlacklistCleanupOutcome {
+            deleted_documents,
+            deleted_jobs,
+            deleted_origins,
+        })
+    }
+
     async fn get_config(&self, key: &str) -> Result<Option<String>, ApiError> {
         sqlx::query_scalar::<_, String>("select value from system_config where key = $1")
             .bind(key)
@@ -3663,6 +3787,12 @@ impl CrawlerStore {
             .get_config("crawler.auth_key")
             .await?
             .map(|value| hash_token(&value)))
+    }
+
+    async fn blacklisted_domains(&self) -> Result<Vec<String>, ApiError> {
+        Ok(normalize_domain_list(
+            self.get_config(DOMAIN_BLACKLIST_CONFIG_KEY).await?.as_deref(),
+        ))
     }
 
     async fn ensure_crawler_identity(
@@ -4104,6 +4234,18 @@ fn filtered_reason(result: &CrawlResultInput) -> Option<String> {
     }
 
     match result.error_kind.as_deref() {
+        Some("blacklisted_domain") => Some(
+            result
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "domain is blacklisted".to_string()),
+        ),
+        Some("site_profile_filtered") => Some(
+            result
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "page skipped by site profile rules".to_string()),
+        ),
         Some("page_noindex") => Some(
             result
                 .error_message
@@ -4280,6 +4422,45 @@ fn domain_like_pattern(domain: &str) -> String {
     format!("%.{}", domain.to_ascii_lowercase())
 }
 
+fn normalize_domain_list(input: Option<&str>) -> Vec<String> {
+    let mut domains = BTreeSet::new();
+    for token in input.unwrap_or_default().split(|ch| {
+        matches!(ch, ',' | '\n' | '\r' | '\t' | ';' | ' ')
+    }) {
+        if let Some(domain) = normalize_domain_input(token) {
+            domains.insert(domain);
+        }
+    }
+    domains.into_iter().collect()
+}
+
+fn validate_domain_list(input: &str) -> Result<Vec<String>, ApiError> {
+    let mut domains = BTreeSet::new();
+    for token in input.split(|ch| matches!(ch, ',' | '\n' | '\r' | '\t' | ';' | ' ')) {
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let domain = normalize_domain_input(trimmed).ok_or_else(|| {
+            ApiError::BadRequest(format!("invalid blacklist domain: {trimmed}"))
+        })?;
+        domains.insert(domain);
+    }
+    Ok(domains.into_iter().collect())
+}
+
+fn host_matches_domain_list(host: &str, domains: &[String]) -> bool {
+    domains
+        .iter()
+        .any(|domain| host_matches_scope(host, domain, DiscoveryScope::SameDomain))
+}
+
+fn url_matches_domain_list(url: &str, domains: &[String]) -> bool {
+    extract_host(url)
+        .map(|host| host_matches_domain_list(&host, domains))
+        .unwrap_or(false)
+}
+
 fn infer_failure_kind(status_code: u16) -> String {
     match status_code {
         599 => "network_error".to_string(),
@@ -4393,7 +4574,8 @@ mod tests {
 
     use super::{
         InFlightJobRow, JobOutcome, classify_job_outcome, crawler_seen_within_timeout,
-        normalize_domain_input, normalize_url, origin_ready_at, trusted_canonical_url,
+        normalize_domain_input, normalize_domain_list, normalize_url, origin_ready_at,
+        trusted_canonical_url, url_matches_domain_list, validate_domain_list,
     };
     use crate::models::CrawlResultInput;
 
@@ -4417,6 +4599,32 @@ mod tests {
             Some("sub.example.com".to_string())
         );
         assert_eq!(normalize_domain_input(""), None);
+    }
+
+    #[test]
+    fn normalize_domain_list_deduplicates_and_normalizes_entries() {
+        assert_eq!(
+            normalize_domain_list(Some("Example.com\nhttps://docs.example.com/path\nexample.com")),
+            vec!["docs.example.com".to_string(), "example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn url_matches_domain_list_respects_subdomains() {
+        let blacklist = vec!["example.com".to_string()];
+        assert!(url_matches_domain_list(
+            "https://docs.example.com/page",
+            &blacklist
+        ));
+        assert!(!url_matches_domain_list(
+            "https://example.net/page",
+            &blacklist
+        ));
+    }
+
+    #[test]
+    fn validate_domain_list_rejects_invalid_entries() {
+        assert!(validate_domain_list("example.com ^bad^").is_err());
     }
 
     #[test]

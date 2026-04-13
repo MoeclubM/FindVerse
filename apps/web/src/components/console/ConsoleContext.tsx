@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 
 import type {
-  AdminDeveloperRecord,
+  AdminUserRecord,
   CrawlOverview,
   DocumentList,
 } from "../../api";
@@ -15,7 +15,7 @@ export type ConsoleContextValue = {
   refreshDocumentList: () => Promise<void>;
 
   overview: CrawlOverview | null;
-  developers: AdminDeveloperRecord[];
+  users: AdminUserRecord[];
   documents: DocumentList | null;
 };
 

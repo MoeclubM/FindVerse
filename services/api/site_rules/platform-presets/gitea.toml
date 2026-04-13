@@ -1,0 +1,23 @@
+id = "gitea"
+default_action = "deny"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = []
+
+[[rules]]
+name = "repo-root"
+action = "allow_index_discover"
+path_regex = "^/[^/]+/[^/]+/?$"
+
+[[rules]]
+name = "repo-readme"
+action = "allow_index_only"
+path_regex = "^/[^/]+/[^/]+/src/(branch|tag|commit)/.+?/README(\\.[A-Za-z0-9._-]+)?$"
+
+[[rules]]
+name = "repo-noise"
+action = "deny"
+path_regex = "^/[^/]+/[^/]+/(src|commits|commit|compare|issues|pulls|actions|releases|packages|wiki|projects|activity|branches|tags|milestones|raw)/"

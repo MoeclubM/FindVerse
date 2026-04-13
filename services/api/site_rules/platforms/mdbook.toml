@@ -1,0 +1,6 @@
+id = "mdbook"
+preset = "mdbook"
+priority = 45
+
+[match]
+html_markers = ["content=\"mdbook", "book.js", "sidebar-toggle", "menu-bar"]

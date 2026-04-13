@@ -15,15 +15,15 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import {
-  AdminDeveloperRecord,
-  AdminSession,
+  AdminUserRecord,
   CrawlOverview,
   getCrawlOverview,
-  getAdminSession,
-  listAdminDevelopers,
+  getUserSession,
+  listAdminUsers,
   listDocuments,
-  login,
-  logout,
+  loginUser,
+  logoutUser,
+  UserSession,
 } from "../api";
 import { AppTopbar, TopbarActionButton } from "./common/AppTopbar";
 import {
@@ -66,7 +66,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 
-const CONSOLE_TOKEN_KEY = "findverse_console_token";
+const USER_SESSION_KEY = "findverse_user_session";
 const SITE_NAME =
   (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() ||
   "FindVerse";
@@ -101,19 +101,19 @@ async function refreshConsoleData(
   token: string,
   actions: {
     setOverview: (value: CrawlOverview | null) => void;
-    setDevelopers: (value: AdminDeveloperRecord[]) => void;
+    setUsers: (value: AdminUserRecord[]) => void;
     setFlash: (value: string | null) => void;
   },
   refreshFailedMessage: string,
   silent = false,
 ) {
   try {
-    const [overview, developers] = await Promise.all([
+    const [overview, users] = await Promise.all([
       getCrawlOverview(token),
-      listAdminDevelopers(token),
+      listAdminUsers(token),
     ]);
     actions.setOverview(overview);
-    actions.setDevelopers(developers);
+    actions.setUsers(users);
   } catch (error) {
     if (!silent) {
       actions.setFlash(getErrorMessage(error, refreshFailedMessage));
@@ -147,15 +147,16 @@ export function ConsolePage(props: {
   themeMode: ThemeMode;
   onThemeModeChange: (theme: ThemeMode) => void;
   onNavigateHome: () => void;
+  onNavigateDevPortal: () => void;
 }) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<ConsoleTab>("overview");
   const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem(CONSOLE_TOKEN_KEY),
+    localStorage.getItem(USER_SESSION_KEY),
   );
-  const [session, setSession] = useState<AdminSession | null>(null);
+  const [session, setSession] = useState<UserSession | null>(null);
   const [overview, setOverview] = useState<CrawlOverview | null>(null);
-  const [developers, setDevelopers] = useState<AdminDeveloperRecord[]>([]);
+  const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [documents, setDocuments] = useState<Awaited<
     ReturnType<typeof listDocuments>
   > | null>(null);
@@ -168,6 +169,7 @@ export function ConsolePage(props: {
   const consoleLabel = t("console.title").startsWith(SITE_NAME)
     ? t("console.title").slice(SITE_NAME.length).trim()
     : t("console.title");
+  const hasConsoleAccess = session?.role === "admin";
 
   const setFlash = useCallback((value: string | null) => {
     if (!value) {
@@ -179,23 +181,23 @@ export function ConsolePage(props: {
 
   const refreshAll = useCallback(
     () =>
-      token
+      token && hasConsoleAccess
         ? refreshConsoleData(
             token,
             {
               setOverview,
-              setDevelopers,
+              setUsers,
               setFlash,
             },
             t("console.refresh_failed"),
           )
         : Promise.resolve(),
-    [token, setFlash, t],
+    [token, hasConsoleAccess, setFlash, t],
   );
 
   const refreshDocumentList = useCallback(
     () =>
-      token
+      token && hasConsoleAccess
         ? refreshDocuments(
             token,
             {
@@ -205,7 +207,7 @@ export function ConsolePage(props: {
             t("console.refresh_failed"),
           )
         : Promise.resolve(),
-    [token, setFlash, t],
+    [token, hasConsoleAccess, setFlash, t],
   );
 
   useEffect(() => {
@@ -217,7 +219,7 @@ export function ConsolePage(props: {
 
     let cancelled = false;
     setAuthLoading(true);
-    getAdminSession(token)
+    getUserSession(token)
       .then((nextSession) => {
         if (!cancelled) {
           setSession(nextSession);
@@ -225,7 +227,7 @@ export function ConsolePage(props: {
       })
       .catch(() => {
         if (!cancelled) {
-          localStorage.removeItem(CONSOLE_TOKEN_KEY);
+          localStorage.removeItem(USER_SESSION_KEY);
           setToken(null);
           setSession(null);
         }
@@ -242,7 +244,7 @@ export function ConsolePage(props: {
   }, [token]);
 
   useEffect(() => {
-    if (!token || !session) {
+    if (!token || !session || !hasConsoleAccess) {
       return;
     }
 
@@ -259,7 +261,7 @@ export function ConsolePage(props: {
           token,
           {
             setOverview,
-            setDevelopers,
+            setUsers,
             setFlash,
           },
           t("console.refresh_failed"),
@@ -279,10 +281,10 @@ export function ConsolePage(props: {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [token, session, setFlash, t]);
+  }, [token, session, hasConsoleAccess, setFlash, t]);
 
   useEffect(() => {
-    if (!token || !session) {
+    if (!token || !session || !hasConsoleAccess) {
       return;
     }
     const timer = window.setTimeout(() => {
@@ -297,15 +299,15 @@ export function ConsolePage(props: {
       );
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [token, session, setFlash, t]);
+  }, [token, session, hasConsoleAccess, setFlash, t]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setLoginError(null);
     try {
-      const nextSession = await login(loginUsername, loginPassword);
-      localStorage.setItem(CONSOLE_TOKEN_KEY, nextSession.token);
+      const nextSession = await loginUser(loginUsername, loginPassword);
+      localStorage.setItem(USER_SESSION_KEY, nextSession.token);
       setToken(nextSession.token);
       setSession(nextSession);
     } catch (error) {
@@ -322,15 +324,15 @@ export function ConsolePage(props: {
     setBusy(true);
     setFlash(null);
     try {
-      await logout(token);
+      await logoutUser(token);
     } catch {
       // Ignore logout failures and clear local state anyway.
     } finally {
-      localStorage.removeItem(CONSOLE_TOKEN_KEY);
+      localStorage.removeItem(USER_SESSION_KEY);
       setToken(null);
       setSession(null);
       setOverview(null);
-      setDevelopers([]);
+      setUsers([]);
       setDocuments(null);
       setLoginError(null);
       setBusy(false);
@@ -346,7 +348,7 @@ export function ConsolePage(props: {
       refreshAll,
       refreshDocumentList,
       overview,
-      developers,
+      users,
       documents,
     }),
     [
@@ -356,7 +358,7 @@ export function ConsolePage(props: {
       refreshAll,
       refreshDocumentList,
       overview,
-      developers,
+      users,
       documents,
     ],
   );
@@ -384,7 +386,7 @@ export function ConsolePage(props: {
           key: "users" as const,
           label: t("console.tabs.users"),
           icon: Users,
-          badge: String(developers.length),
+          badge: String(users.length),
         },
         {
           key: "settings" as const,
@@ -490,7 +492,7 @@ export function ConsolePage(props: {
                 {session?.username}
               </div>
             </div>
-            <SidebarMenuBadge>{developers.length}</SidebarMenuBadge>
+            <SidebarMenuBadge>{users.length}</SidebarMenuBadge>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <div>
@@ -573,6 +575,84 @@ export function ConsolePage(props: {
                   <AlertDescription>{loginError}</AlertDescription>
                 </Alert>
               ) : null}
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    );
+  }
+
+  if (!hasConsoleAccess) {
+    const roleLabel =
+      session.role === "admin"
+        ? t("console.users.roles.admin")
+        : t("console.users.roles.developer");
+
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <AppTopbar
+          theme={props.theme}
+          themeMode={props.themeMode}
+          onThemeModeChange={props.onThemeModeChange}
+          title={`${SITE_NAME} · ${consoleLabel}`}
+          onTitleClick={props.onNavigateHome}
+          afterControls={
+            <>
+              <TopbarActionButton
+                leading={<MagnifyingGlassIcon className="size-4" />}
+                onClick={props.onNavigateHome}
+                ariaLabel={t("console.search")}
+                compactOnMobile
+              >
+                {t("console.search")}
+              </TopbarActionButton>
+              <TopbarActionButton
+                leading={<Users className="size-4" />}
+                onClick={props.onNavigateDevPortal}
+                ariaLabel={t("console.access_denied.open_portal")}
+                compactOnMobile
+              >
+                {t("console.access_denied.open_portal")}
+              </TopbarActionButton>
+              <TopbarActionButton
+                leading={<ExitIcon className="size-4" />}
+                onClick={() => void handleLogout()}
+                ariaLabel={t("console.logout")}
+                compactOnMobile
+              >
+                {t("console.logout")}
+              </TopbarActionButton>
+            </>
+          }
+        />
+        <main className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-md items-center px-4 py-10">
+          <Card className="w-full rounded-3xl">
+            <CardHeader className="pb-4">
+              <CardTitle>{t("console.access_denied.title")}</CardTitle>
+              <CardDescription>
+                {t("console.access_denied.description")}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert>
+                <AlertDescription>
+                  {t("console.access_denied.current_role", {
+                    role: roleLabel,
+                  })}
+                </AlertDescription>
+              </Alert>
+              <div className="flex flex-wrap gap-3">
+                <Button type="button" onClick={props.onNavigateDevPortal}>
+                  {t("console.access_denied.open_portal")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={props.onNavigateHome}
+                >
+                  {t("console.search")}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </main>

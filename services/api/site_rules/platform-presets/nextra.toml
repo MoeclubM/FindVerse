@@ -1,0 +1,17 @@
+id = "nextra"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml", "/atom.xml"]
+
+[[rules]]
+name = "assets"
+action = "deny"
+path_prefixes = ["/_next", "/api", "/search"]
+
+[[rules]]
+name = "not-found"
+action = "deny"
+path_exacts = ["/404.html"]

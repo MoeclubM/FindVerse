@@ -1,0 +1,22 @@
+id = "wordpress"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/wp-sitemap.xml", "/sitemap_index.xml", "/feed"]
+
+[[rules]]
+name = "admin"
+action = "deny"
+path_prefixes = ["/wp-admin", "/wp-content/", "/wp-includes/", "/wp-json"]
+
+[[rules]]
+name = "auth-and-feeds"
+action = "deny"
+path_exacts = ["/wp-login.php", "/xmlrpc.php", "/feed", "/comments/feed"]
+
+[[rules]]
+name = "tracking-query"
+action = "deny"
+query_keys = ["replytocom", "preview", "rest_route"]

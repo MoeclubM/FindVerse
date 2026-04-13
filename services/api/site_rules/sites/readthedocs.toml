@@ -1,0 +1,11 @@
+id = "readthedocs"
+priority = 90
+extends = "sphinx"
+
+[match]
+host_suffixes = ["readthedocs.io", "readthedocs-hosted.com"]
+
+[[rules]]
+name = "service-pages"
+action = "deny"
+path_prefixes = ["/_", "/projects/"]

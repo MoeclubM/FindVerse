@@ -139,7 +139,7 @@ test("developer self-service, admin management, shared crawler auth, and search 
   await page.getByRole("button", { name: "Login" }).click();
   await expect(page.getByRole("heading", { name: "System Overview" })).toBeVisible();
 
-  const sessionResponse = await request.post(`${controlApiBaseUrl}/v1/admin/session/login`, {
+  const sessionResponse = await request.post(`${controlApiBaseUrl}/v1/users/session/login`, {
     data: { username, password },
   });
   expect(sessionResponse.ok()).toBeTruthy();
@@ -152,7 +152,7 @@ test("developer self-service, admin management, shared crawler auth, and search 
 
   await page.getByRole("button", { name: "Users" }).click();
   const developerRow = page
-    .locator("article.developer-user-card")
+    .locator("article")
     .filter({ hasText: developerUsername })
     .first();
   await expect(developerRow).toBeVisible();
@@ -209,6 +209,67 @@ test("developer self-service, admin management, shared crawler auth, and search 
   await expect(page.locator("main article a").first()).toBeVisible();
 });
 
+test("developer quota ignores invalid queries and blocks after limit", async ({ request }) => {
+  const username = process.env.FINDVERSE_LOCAL_ADMIN_USERNAME ?? "admin";
+  const password = process.env.FINDVERSE_LOCAL_ADMIN_PASSWORD ?? "change-me";
+  const developerUsername = `quota-${Date.now()}`;
+  const developerPassword = "quota-password-123";
+
+  const devSessionRes = await request.post(`${controlApiBaseUrl}/v1/users/register`, {
+    data: { username: developerUsername, password: developerPassword },
+  });
+  expect(devSessionRes.status()).toBe(201);
+  const devSession = await devSessionRes.json();
+
+  const createKeyRes = await request.post(`${controlApiBaseUrl}/v1/users/keys`, {
+    headers: { Authorization: `Bearer ${devSession.token}` },
+    data: { name: "Quota key" },
+  });
+  expect(createKeyRes.status()).toBe(201);
+  const createdKey = await createKeyRes.json();
+
+  const adminSessionRes = await request.post(`${controlApiBaseUrl}/v1/users/session/login`, {
+    data: { username, password },
+  });
+  expect(adminSessionRes.ok()).toBeTruthy();
+  const adminSession = await adminSessionRes.json();
+
+  const updateQuotaRes = await request.patch(`${controlApiBaseUrl}/v1/admin/users/${devSession.user_id}`, {
+    headers: { Authorization: `Bearer ${adminSession.token}` },
+    data: { daily_limit: 1 },
+  });
+  expect(updateQuotaRes.status()).toBe(204);
+
+  const emptySearchRes = await request.get(`${queryApiBaseUrl}/v1/developer/search?q=`, {
+    headers: { Authorization: `Bearer ${createdKey.token}` },
+  });
+  expect(emptySearchRes.status()).toBe(400);
+
+  const usageAfterEmptyRes = await request.get(`${controlApiBaseUrl}/v1/users/keys`, {
+    headers: { Authorization: `Bearer ${devSession.token}` },
+  });
+  expect(usageAfterEmptyRes.ok()).toBeTruthy();
+  const usageAfterEmpty = await usageAfterEmptyRes.json();
+  expect(usageAfterEmpty.used_today).toBe(0);
+
+  const firstSearchRes = await request.get(`${queryApiBaseUrl}/v1/developer/search?q=ranking`, {
+    headers: { Authorization: `Bearer ${createdKey.token}` },
+  });
+  expect(firstSearchRes.status()).toBe(200);
+
+  const usageAfterFirstRes = await request.get(`${controlApiBaseUrl}/v1/users/keys`, {
+    headers: { Authorization: `Bearer ${devSession.token}` },
+  });
+  expect(usageAfterFirstRes.ok()).toBeTruthy();
+  const usageAfterFirst = await usageAfterFirstRes.json();
+  expect(usageAfterFirst.used_today).toBe(1);
+
+  const secondSearchRes = await request.get(`${queryApiBaseUrl}/v1/developer/search?q=ranking`, {
+    headers: { Authorization: `Bearer ${createdKey.token}` },
+  });
+  expect(secondSearchRes.status()).toBe(429);
+});
+
 test("crawler shared auth key flow", async ({ request }) => {
   const username = process.env.FINDVERSE_LOCAL_ADMIN_USERNAME ?? "admin";
   const password = process.env.FINDVERSE_LOCAL_ADMIN_PASSWORD ?? "change-me";
@@ -216,7 +277,7 @@ test("crawler shared auth key flow", async ({ request }) => {
   const crawlerKey = `e2e-shared-key-${Date.now()}`;
 
   // Login as admin
-  const loginRes = await request.post(`${controlApiBaseUrl}/v1/admin/session/login`, {
+  const loginRes = await request.post(`${controlApiBaseUrl}/v1/users/session/login`, {
     data: { username, password },
   });
   expect(loginRes.ok()).toBeTruthy();

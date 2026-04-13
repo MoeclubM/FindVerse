@@ -1,0 +1,12 @@
+id = "sphinx"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml"]
+
+[[rules]]
+name = "search-and-index"
+action = "deny"
+path_exacts = ["/search.html", "/genindex.html", "/py-modindex.html"]

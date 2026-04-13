@@ -1,0 +1,6 @@
+id = "vitepress"
+preset = "vitepress"
+priority = 45
+
+[match]
+html_markers = ["vitepress", "__vp_hash_map__", "vpnav", "vplocalnav"]

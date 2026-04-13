@@ -1,4 +1,3 @@
-pub mod admin;
 pub mod auth_support;
 pub mod blob_store;
 pub mod config;
@@ -15,12 +14,12 @@ pub mod quality;
 pub mod query;
 pub mod ranking;
 pub mod rate_limit;
+pub mod site_rules;
 pub mod store;
 pub mod task_bus;
 
 use std::time::Duration;
 
-use admin::AdminAuth;
 use axum::{
     Router,
     extract::FromRef,
@@ -56,7 +55,6 @@ pub struct QueryState {
 pub struct ControlState {
     pub query: QueryState,
     pub crawl_store: ControlCrawlerStore,
-    pub admin_auth: AdminAuth,
     pub dev_auth: DevAuthStore,
     pub default_crawler_owner_id: String,
 }
@@ -241,6 +239,15 @@ pub async fn run_projector() -> anyhow::Result<()> {
 
         if let Err(error) = state
             .crawl_store
+            .cleanup_blacklisted_domains(&state.search_index)
+            .await
+        {
+            error!(?error, "projector blacklist cleanup failed");
+            continue;
+        }
+
+        if let Err(error) = state
+            .crawl_store
             .process_pending_ingests(&state.search_index, state.batch_size)
             .await
         {
@@ -351,7 +358,6 @@ async fn bootstrap_control_state(config: &Config) -> anyhow::Result<ControlState
             db: db.clone(),
         },
         crawl_store: ControlCrawlerStore::new(db.pg_pool.clone(), blob_store),
-        admin_auth: AdminAuth::new(db.pg_pool.clone()),
         dev_auth: DevAuthStore::new(db.pg_pool.clone()),
         default_crawler_owner_id: format!("local:{}", config.local_admin_username),
     })
@@ -446,26 +452,41 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::search::healthz))
         .route("/readyz", get(handlers::search::readyz))
+        .route("/v1/users/register", post(handlers::developer::user_register))
         .route(
-            "/v1/admin/session/login",
-            post(handlers::admin::admin_login),
+            "/v1/users/session/login",
+            post(handlers::developer::user_login),
+        )
+        .route("/v1/users/session/me", get(handlers::developer::user_me))
+        .route(
+            "/v1/users/session/logout",
+            post(handlers::developer::user_logout),
         )
         .route(
-            "/v1/admin/session/me",
-            get(handlers::admin::admin_session_me),
+            "/v1/users/keys",
+            get(handlers::developer::user_list_keys)
+                .post(handlers::developer::user_create_key),
         )
         .route(
-            "/v1/admin/session/logout",
-            post(handlers::admin::admin_logout),
+            "/v1/users/keys/{id}",
+            delete(handlers::developer::user_revoke_key),
         )
         .route(
-            "/v1/admin/developers/{user_id}/keys",
-            get(handlers::admin::admin_list_developer_keys)
-                .post(handlers::admin::admin_create_developer_key),
+            "/v1/users/domains/inspect",
+            get(handlers::developer::user_domain_insight),
         )
         .route(
-            "/v1/admin/developers/{user_id}/keys/{key_id}",
-            delete(handlers::admin::admin_revoke_developer_key),
+            "/v1/users/domains/submit",
+            post(handlers::developer::user_submit_domain),
+        )
+        .route(
+            "/v1/admin/users/{user_id}/keys",
+            get(handlers::admin::admin_list_user_keys)
+                .post(handlers::admin::admin_create_user_key),
+        )
+        .route(
+            "/v1/admin/users/{user_id}/keys/{key_id}",
+            delete(handlers::admin::admin_revoke_user_key),
         )
         .route(
             "/v1/admin/crawlers/{id}",
@@ -540,34 +561,13 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
             "/v1/admin/crawl/jobs/failed",
             delete(handlers::admin::admin_cleanup_failed_jobs),
         )
-        .route("/v1/dev/register", post(handlers::developer::dev_register))
-        .route("/v1/dev/login", post(handlers::developer::dev_login))
-        .route("/v1/dev/me", get(handlers::developer::dev_me))
-        .route("/v1/dev/logout", post(handlers::developer::dev_logout))
         .route(
-            "/v1/dev/keys",
-            get(handlers::developer::dev_list_keys).post(handlers::developer::dev_create_key),
+            "/v1/admin/users",
+            get(handlers::admin::admin_list_users).post(handlers::admin::admin_create_user),
         )
         .route(
-            "/v1/dev/keys/{id}",
-            delete(handlers::developer::dev_revoke_key),
-        )
-        .route(
-            "/v1/dev/domains/inspect",
-            get(handlers::developer::dev_domain_insight),
-        )
-        .route(
-            "/v1/dev/domains/submit",
-            post(handlers::developer::dev_submit_domain),
-        )
-        .route(
-            "/v1/admin/developers",
-            get(handlers::admin::admin_list_developers),
-        )
-        .route(
-            "/v1/admin/developers/{user_id}",
-            patch(handlers::admin::admin_update_developer)
-                .delete(handlers::admin::admin_delete_developer),
+            "/v1/admin/users/{user_id}",
+            patch(handlers::admin::admin_update_user).delete(handlers::admin::admin_delete_user),
         )
         .layer(shared_cors(config))
         .layer(TraceLayer::new_for_http())

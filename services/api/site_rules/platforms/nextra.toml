@@ -1,0 +1,6 @@
+id = "nextra"
+preset = "nextra"
+priority = 45
+
+[match]
+html_markers = ["content=\"nextra", "__nextra_pageMap", "nextra-nav-container", "nextra-theme-docs"]

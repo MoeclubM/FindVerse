@@ -1,0 +1,6 @@
+id = "gitlab"
+preset = "gitlab"
+priority = 80
+
+[match]
+html_markers = ["content=\"gitlab", "gon.gitlab_url", "gl-application", "gitlab"]

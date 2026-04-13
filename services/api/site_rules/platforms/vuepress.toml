@@ -1,0 +1,6 @@
+id = "vuepress"
+preset = "vuepress"
+priority = 45
+
+[match]
+html_markers = ["content=\"vuepress", "window.__vuepress__", "theme-default-content"]

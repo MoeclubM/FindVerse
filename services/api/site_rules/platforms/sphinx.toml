@@ -1,0 +1,6 @@
+id = "sphinx"
+preset = "sphinx"
+priority = 45
+
+[match]
+html_markers = ["content=\"sphinx", "documentation_options", "wy-nav-content", "sphinxsidebar"]

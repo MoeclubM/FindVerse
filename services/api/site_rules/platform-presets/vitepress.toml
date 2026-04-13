@@ -1,0 +1,17 @@
+id = "vitepress"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml", "/atom.xml"]
+
+[[rules]]
+name = "assets-and-search"
+action = "deny"
+path_prefixes = ["/@fs", "/@id", "/__vp__", "/search"]
+
+[[rules]]
+name = "not-found"
+action = "deny"
+path_exacts = ["/404.html"]

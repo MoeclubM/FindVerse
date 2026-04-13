@@ -1,0 +1,6 @@
+id = "mkdocs"
+preset = "mkdocs"
+priority = 45
+
+[match]
+html_markers = ["mkdocs", "mkdocs_page_name", "readthedocs", "content=\"mkdocs"]

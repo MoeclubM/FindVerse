@@ -1,0 +1,22 @@
+id = "docusaurus"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/blog/rss.xml", "/blog/atom.xml"]
+
+[[rules]]
+name = "search"
+action = "deny"
+path_prefixes = ["/search"]
+
+[[rules]]
+name = "tag-pages"
+action = "deny"
+path_prefixes = ["/tags", "/blog/tags"]
+
+[[rules]]
+name = "not-found"
+action = "deny"
+path_exacts = ["/404.html"]

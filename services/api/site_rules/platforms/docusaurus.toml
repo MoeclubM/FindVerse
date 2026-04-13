@@ -1,0 +1,6 @@
+id = "docusaurus"
+preset = "docusaurus"
+priority = 45
+
+[match]
+html_markers = ["docusaurus", "__docusaurus", "docusaurus.config", "theme-doc-markdown"]

@@ -1,0 +1,17 @@
+id = "docsify"
+
+[render]
+prefer_js = true
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml", "/atom.xml"]
+
+[[rules]]
+name = "assets"
+action = "deny"
+path_prefixes = ["/_media", "/_sidebar", "/_navbar"]
+
+[[rules]]
+name = "markdown-source"
+action = "deny"
+path_regex = "\\.md$"

@@ -1,0 +1,6 @@
+id = "gitea"
+preset = "gitea"
+priority = 80
+
+[match]
+html_markers = ["content=\"gitea", "gitea: git with a cup of tea", "appsuburl"]

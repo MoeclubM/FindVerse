@@ -1,0 +1,17 @@
+id = "jekyll"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/feed.xml"]
+
+[[rules]]
+name = "taxonomy"
+action = "deny"
+path_prefixes = ["/tag/", "/tags/", "/category/", "/categories/"]
+
+[[rules]]
+name = "pagination"
+action = "deny"
+path_regex = "^/.+/page[0-9]+/?$"

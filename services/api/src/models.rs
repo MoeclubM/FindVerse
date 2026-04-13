@@ -77,6 +77,22 @@ pub struct CrawlerCapabilities {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteRuleFile {
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteRuleBundle {
+    #[serde(default)]
+    pub platforms: Vec<SiteRuleFile>,
+    #[serde(default)]
+    pub platform_presets: Vec<SiteRuleFile>,
+    #[serde(default)]
+    pub sites: Vec<SiteRuleFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlerRuntimeSnapshot {
     pub version: String,
     pub platform: String,
@@ -172,15 +188,16 @@ pub struct SuggestResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct AdminLoginRequest {
+pub struct UserRegisterRequest {
     pub username: String,
     pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AdminSessionResponse {
+pub struct UserSessionResponse {
     pub user_id: String,
     pub username: String,
+    pub role: String,
     pub token: String,
 }
 
@@ -499,6 +516,7 @@ pub struct CrawlerHeartbeatResponse {
     pub max_jobs: usize,
     pub desired_version: Option<String>,
     pub update_status: String,
+    pub site_rules: SiteRuleBundle,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -631,31 +649,19 @@ pub struct ReadyResponse {
     pub frontier_depth: i32,
 }
 
-// Developer self-service auth
+// User self-service auth
 #[derive(Debug, Clone, Deserialize)]
-pub struct DevRegisterRequest {
+pub struct UserLoginRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct DevLoginRequest {
-    pub username: String,
-    pub password: String,
-}
-
+// Admin user management
 #[derive(Debug, Clone, Serialize)]
-pub struct DevSessionResponse {
+pub struct AdminUserRecord {
     pub user_id: String,
     pub username: String,
-    pub token: String,
-}
-
-// Admin developer management
-#[derive(Debug, Clone, Serialize)]
-pub struct AdminDeveloperRecord {
-    pub user_id: String,
-    pub username: String,
+    pub role: String,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub daily_limit: u32,
@@ -664,7 +670,16 @@ pub struct AdminDeveloperRecord {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct UpdateDeveloperRequest {
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateUserRequest {
+    pub username: Option<String>,
+    pub role: Option<String>,
     pub daily_limit: Option<u32>,
     pub enabled: Option<bool>,
     pub password: Option<String>,

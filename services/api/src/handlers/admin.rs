@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -7,59 +8,22 @@ use axum::{
 
 use crate::{
     ControlState,
-    admin::AdminIdentity,
+    dev_auth::UserIdentity,
     error::ApiError,
     models::{
-        AdminDeveloperRecord, AdminLoginRequest, AdminSessionResponse, CrawlJobListParams,
-        CrawlJobListResponse, CrawlJobStats, CrawlOriginState, CrawlOverviewResponse, CrawlRule,
-        CreateCrawlRuleRequest, CreateKeyRequest, CreatedKeyResponse, DeveloperDomainInsightQuery,
+        AdminUserRecord, CreateCrawlRuleRequest, CreateKeyRequest, CreateUserRequest,
+        CreatedKeyResponse, CrawlJobListParams, CrawlJobListResponse, CrawlJobStats,
+        CrawlOriginState, CrawlOverviewResponse, CrawlRule, DeveloperDomainInsightQuery,
         DeveloperDomainInsightResponse, DeveloperUsageResponse, DocumentListParams,
         DocumentListResponse, PurgeSiteRequest, PurgeSiteResponse, SeedFrontierRequest,
-        SeedFrontierResponse, SetSystemConfigRequest, SystemConfigResponse, UpdateCrawlRuleRequest,
-        UpdateCrawlerRequest, UpdateDeveloperRequest,
+        SeedFrontierResponse, SetSystemConfigRequest, SystemConfigResponse,
+        UpdateCrawlRuleRequest, UpdateCrawlerRequest, UpdateUserRequest,
     },
+    site_rules::SITE_RULE_BUNDLE_CONFIG_KEY,
     store::DeveloperStore,
 };
 
-pub async fn admin_login(
-    State(state): State<ControlState>,
-    Json(request): Json<AdminLoginRequest>,
-) -> Result<Json<AdminSessionResponse>, ApiError> {
-    Ok(Json(state.admin_auth.login(request).await?))
-}
-
-pub async fn admin_session_me(
-    State(state): State<ControlState>,
-    headers: HeaderMap,
-) -> Result<Json<AdminSessionResponse>, ApiError> {
-    Ok(Json(
-        state
-            .admin_auth
-            .current_session(
-                headers
-                    .get("authorization")
-                    .and_then(|value| value.to_str().ok()),
-            )
-            .await?,
-    ))
-}
-
-pub async fn admin_logout(
-    State(state): State<ControlState>,
-    headers: HeaderMap,
-) -> Result<StatusCode, ApiError> {
-    state
-        .admin_auth
-        .logout(
-            headers
-                .get("authorization")
-                .and_then(|value| value.to_str().ok()),
-        )
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-pub async fn admin_list_developer_keys(
+pub async fn admin_list_user_keys(
     State(state): State<ControlState>,
     headers: HeaderMap,
     Path(user_id): Path<String>,
@@ -74,7 +38,7 @@ pub async fn admin_list_developer_keys(
     ))
 }
 
-pub async fn admin_create_developer_key(
+pub async fn admin_create_user_key(
     State(state): State<ControlState>,
     headers: HeaderMap,
     Path(user_id): Path<String>,
@@ -90,9 +54,9 @@ pub async fn admin_create_developer_key(
         .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
-            "developer-api-key-created",
+            "user-api-key-created",
             "ok",
-            format!("created api key {} for developer {user_id}", created.name),
+            format!("created api key {} for user {user_id}", created.name),
             None,
             None,
         )
@@ -100,7 +64,7 @@ pub async fn admin_create_developer_key(
     Ok((StatusCode::CREATED, Json(created)))
 }
 
-pub async fn admin_revoke_developer_key(
+pub async fn admin_revoke_user_key(
     State(state): State<ControlState>,
     headers: HeaderMap,
     Path((user_id, key_id)): Path<(String, String)>,
@@ -115,9 +79,9 @@ pub async fn admin_revoke_developer_key(
         .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
-            "developer-api-key-revoked",
+            "user-api-key-revoked",
             "ok",
-            format!("revoked api key {key_id} for developer {user_id}"),
+            format!("revoked api key {key_id} for user {user_id}"),
             None,
             None,
         )
@@ -297,17 +261,19 @@ pub async fn admin_set_system_config(
     Json(body): Json<SetSystemConfigRequest>,
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
-    let allowed = matches!(
-        key.as_str(),
-        "crawler.auth_key"
-            | "crawler.claim_timeout_secs"
-            | "crawler.total_concurrency"
-            | "crawler.js_render_concurrency"
-            | "crawler.max_jobs"
-            | "crawler.max_attempts"
-            | "crawler.tor_proxy_url"
-            | "crawler.tor_enabled"
-    );
+    let allowed = key == SITE_RULE_BUNDLE_CONFIG_KEY
+        || matches!(
+            key.as_str(),
+            "crawler.auth_key"
+                | "crawler.claim_timeout_secs"
+                | "crawler.total_concurrency"
+                | "crawler.js_render_concurrency"
+                | "crawler.max_jobs"
+                | "crawler.max_attempts"
+                | "crawler.domain_blacklist"
+                | "crawler.tor_proxy_url"
+                | "crawler.tor_enabled"
+        );
     if !allowed {
         return Err(ApiError::BadRequest(format!("unknown config key: {key}")));
     }
@@ -331,62 +297,101 @@ pub async fn admin_set_system_config(
         .crawl_store
         .set_system_config(&key, body.value)
         .await?;
+    if key == "crawler.domain_blacklist" {
+        state
+            .crawl_store
+            .cleanup_blacklisted_domains(&state.query.search_index)
+            .await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn admin_list_developers(
+pub async fn admin_list_users(
     State(state): State<ControlState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<AdminDeveloperRecord>>, ApiError> {
+) -> Result<Json<Vec<AdminUserRecord>>, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
-    let accounts = state.dev_auth.list_accounts().await;
-    let usages = state.query.developer_store.list_all_developer_usage().await;
+    let accounts = state.dev_auth.list_users().await?;
+    let usages = state.query.developer_store.list_all_user_usage().await?;
     let usage_map: std::collections::HashMap<String, &DeveloperUsageResponse> =
         usages.iter().map(|u| (u.developer_id.clone(), u)).collect();
 
     let records = accounts
         .iter()
         .map(|account| {
-            let default_usage = DeveloperUsageResponse {
-                developer_id: account.user_id.clone(),
-                daily_limit: 10_000,
-                used_today: 0,
-                keys: vec![],
-            };
             let usage = usage_map
                 .get(&account.user_id)
                 .copied()
-                .unwrap_or(&default_usage);
-            DeveloperStore::build_admin_developer_record(
+                .ok_or_else(|| {
+                    ApiError::Internal(anyhow!("missing usage record for user {}", account.user_id))
+                })?;
+            Ok(DeveloperStore::build_admin_user_record(
                 usage,
                 &account.username,
+                &account.role,
                 account.enabled,
                 account.created_at,
-            )
+            ))
         })
-        .collect();
+        .collect::<Result<Vec<_>, ApiError>>()?;
 
     Ok(Json(records))
 }
 
-pub async fn admin_update_developer(
+pub async fn admin_create_user(
+    State(state): State<ControlState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateUserRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let _admin = authorize_admin(&state, &headers).await?;
+    let account = state.dev_auth.create_user(request).await?;
+    let usage = state
+        .query
+        .developer_store
+        .developer_usage(&account.user_id)
+        .await?;
+    let created = DeveloperStore::build_admin_user_record(
+        &usage,
+        &account.username,
+        &account.role,
+        account.enabled,
+        account.created_at,
+    );
+    state
+        .crawl_store
+        .record_admin_event(
+            &state.default_crawler_owner_id,
+            "user-created",
+            "ok",
+            format!("created {} user {}", account.role, account.user_id),
+            None,
+            None,
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+pub async fn admin_update_user(
     State(state): State<ControlState>,
     headers: HeaderMap,
     Path(user_id): Path<String>,
-    Json(request): Json<UpdateDeveloperRequest>,
+    Json(request): Json<UpdateUserRequest>,
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
-    // Toggle enabled/disabled in dev auth store
+    if request.username.is_some() || request.role.is_some() {
+        state.dev_auth.update_user_profile(&user_id, &request).await?;
+    }
     if let Some(enabled) = request.enabled {
         state.dev_auth.set_enabled(&user_id, enabled).await?;
     }
     if request.daily_limit.is_some() {
-        let quota_request = UpdateDeveloperRequest {
+        let quota_request = UpdateUserRequest {
+            username: None,
+            role: None,
             daily_limit: request.daily_limit,
             enabled: None,
             password: None,
         };
-        // ensure the developer account exists before applying quota changes
         let _ = state
             .query
             .developer_store
@@ -395,7 +400,7 @@ pub async fn admin_update_developer(
         state
             .query
             .developer_store
-            .update_developer_quota(&user_id, quota_request)
+            .update_user_quota(&user_id, quota_request)
             .await?;
     }
     if let Some(password) = request.password.as_deref() {
@@ -404,20 +409,20 @@ pub async fn admin_update_developer(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn admin_delete_developer(
+pub async fn admin_delete_user(
     State(state): State<ControlState>,
     headers: HeaderMap,
     Path(user_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
-    state.dev_auth.delete_account(&user_id).await?;
+    state.dev_auth.delete_user(&user_id).await?;
     state
         .crawl_store
         .record_admin_event(
             &state.default_crawler_owner_id,
-            "developer-deleted",
+            "user-deleted",
             "ok",
-            format!("deleted developer {user_id}"),
+            format!("deleted user {user_id}"),
             None,
             None,
         )
@@ -535,15 +540,13 @@ pub async fn admin_stop_all_jobs(
 async fn authorize_admin(
     state: &ControlState,
     headers: &HeaderMap,
-) -> Result<AdminIdentity, ApiError> {
-    let identity = state
-        .admin_auth
-        .authorize(
+) -> Result<UserIdentity, ApiError> {
+    state
+        .dev_auth
+        .authorize_admin(
             headers
                 .get("authorization")
                 .and_then(|value| value.to_str().ok()),
         )
-        .await?;
-    let _ = &identity.user_id;
-    Ok(identity)
+        .await
 }

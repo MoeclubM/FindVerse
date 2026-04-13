@@ -1,0 +1,17 @@
+id = "drupal"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml"]
+
+[[rules]]
+name = "admin"
+action = "deny"
+path_prefixes = ["/admin", "/user", "/search", "/comment/reply", "/node/add"]
+
+[[rules]]
+name = "redirect-destination"
+action = "deny"
+query_keys = ["destination"]

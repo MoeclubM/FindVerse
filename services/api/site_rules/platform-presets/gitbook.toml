@@ -1,0 +1,12 @@
+id = "gitbook"
+
+[render]
+prefer_js = true
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml", "/atom.xml"]
+
+[[rules]]
+name = "assets"
+action = "deny"
+path_prefixes = ["/~gitbook", "/_next", "/search", "/site-assets", "/api"]

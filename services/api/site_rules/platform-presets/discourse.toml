@@ -1,0 +1,22 @@
+id = "discourse"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/latest.rss", "/top.rss", "/posts.rss"]
+
+[[rules]]
+name = "admin"
+action = "deny"
+path_prefixes = ["/admin", "/session", "/u/", "/my", "/g", "/badges", "/tags/intersection"]
+
+[[rules]]
+name = "search"
+action = "deny"
+path_prefixes = ["/search"]
+
+[[rules]]
+name = "rss-pages"
+action = "deny"
+path_exacts = ["/latest.rss", "/top.rss", "/posts.rss"]

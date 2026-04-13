@@ -1,0 +1,6 @@
+id = "ghost"
+preset = "ghost"
+priority = 40
+
+[match]
+html_markers = ["content=\"ghost", "ghost/head", "ghost-sdk", "casper"]

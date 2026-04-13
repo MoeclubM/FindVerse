@@ -1,0 +1,6 @@
+id = "jekyll"
+preset = "jekyll"
+priority = 35
+
+[match]
+html_markers = ["content=\"jekyll", "generator\" content=\"jekyll", "/assets/main.css"]

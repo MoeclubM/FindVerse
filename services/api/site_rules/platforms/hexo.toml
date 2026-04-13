@@ -1,0 +1,6 @@
+id = "hexo"
+preset = "hexo"
+priority = 35
+
+[match]
+html_markers = ["content=\"hexo", "generator\" content=\"hexo", "hexo-theme"]

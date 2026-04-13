@@ -10,8 +10,8 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     models::{
-        AdminDeveloperRecord, ApiKeyMetadata, CreateKeyRequest, CreatedKeyResponse,
-        DeveloperUsageResponse, UpdateDeveloperRequest,
+        AdminUserRecord, ApiKeyMetadata, CreateKeyRequest, CreatedKeyResponse,
+        DeveloperUsageResponse, UpdateUserRequest,
     },
 };
 
@@ -69,7 +69,7 @@ impl DeveloperStore {
             ));
         }
 
-        let user = find_developer_by_external_id(&self.pg_pool, developer_id).await?;
+        let user = find_user_by_external_id(&self.pg_pool, developer_id).await?;
         let token = generate_token("fvk");
         let preview = format!("{}...{}", &token[..8], &token[token.len() - 4..]);
         let created_at = Utc::now();
@@ -109,7 +109,7 @@ impl DeveloperStore {
         developer_id: &str,
         key_id: &str,
     ) -> Result<(), ApiError> {
-        let user = find_developer_by_external_id(&self.pg_pool, developer_id).await?;
+        let user = find_user_by_external_id(&self.pg_pool, developer_id).await?;
         let key_uuid = Uuid::parse_str(key_id)
             .map_err(|_| ApiError::NotFound("api key not found".to_string()))?;
         let updated = sqlx::query(
@@ -144,9 +144,9 @@ impl DeveloperStore {
         &self,
         developer_id: &str,
     ) -> Result<DeveloperUsageResponse, ApiError> {
-        let user = find_developer_by_external_id(&self.pg_pool, developer_id).await?;
+        let user = find_user_by_external_id(&self.pg_pool, developer_id).await?;
         ensure_daily_usage_row(&self.pg_pool, user.id).await?;
-        let user = find_developer_by_external_id(&self.pg_pool, developer_id).await?;
+        let user = find_user_by_external_id(&self.pg_pool, developer_id).await?;
         build_usage_response(&self.pg_pool, &user).await
     }
 
@@ -159,69 +159,85 @@ impl DeveloperStore {
         };
 
         let token_hash = bearer_hash(header)?;
-        let user = lookup_developer_by_api_key(&self.pg_pool, &token_hash).await?;
+        let tracking = sqlx::query_as::<_, KeyTrackingRow>(
+            "with key_owner as (
+                 select u.id as user_id, u.daily_limit
+                 from api_keys k
+                 join users u on u.id = k.user_id
+                 where k.token_hash = $1 and k.revoked_at is null and u.enabled = true and u.role in ('developer', 'admin')
+             ),
+             usage_seed as (
+                 insert into daily_usage (user_id, usage_day, used_count)
+                 select user_id, current_date, 0
+                 from key_owner
+                 on conflict (user_id, usage_day) do nothing
+             ),
+             incremented as (
+                 update daily_usage du
+                 set used_count = du.used_count + 1
+                 from key_owner ko
+                 where du.user_id = ko.user_id
+                   and du.usage_day = current_date
+                   and du.used_count < ko.daily_limit
+                 returning du.user_id
+             ),
+             touch_key as (
+                 update api_keys
+                 set last_used_at = now()
+                 where token_hash = $1 and exists (select 1 from incremented)
+                 returning id
+             )
+             select
+                 exists(select 1 from key_owner) as key_found,
+                 exists(select 1 from incremented) as counted",
+        )
+        .bind(token_hash)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|error| ApiError::Internal(error.into()))?;
 
-        if user.used_today >= user.daily_limit {
+        if !tracking.key_found {
+            return Err(ApiError::Unauthorized("invalid api key".to_string()));
+        }
+        if !tracking.counted {
             return Err(ApiError::TooManyRequests(
                 "daily request quota exceeded".to_string(),
             ));
         }
 
-        sqlx::query(
-            "insert into daily_usage (user_id, usage_day, used_count)
-             values ($1, $2, 1)
-             on conflict (user_id, usage_day)
-             do update set used_count = daily_usage.used_count + 1",
-        )
-        .bind(user.id)
-        .bind(Utc::now().date_naive())
-        .execute(&self.pg_pool)
-        .await
-        .map_err(|error| ApiError::Internal(error.into()))?;
-
-        sqlx::query("update api_keys set last_used_at = now() where token_hash = $1")
-            .bind(token_hash)
-            .execute(&self.pg_pool)
-            .await
-            .map_err(|error| ApiError::Internal(error.into()))?;
-
         Ok(())
     }
 
-    pub async fn list_all_developer_usage(&self) -> Vec<DeveloperUsageResponse> {
-        match sqlx::query_as::<_, UsageUserRow>(
+    pub async fn list_all_user_usage(&self) -> Result<Vec<DeveloperUsageResponse>, ApiError> {
+        let users = sqlx::query_as::<_, UsageUserRow>(
             "select u.id, u.external_id, u.daily_limit, coalesce(du.used_count, 0) as used_today
              from users u
              left join daily_usage du on du.user_id = u.id and du.usage_day = current_date
-             where u.role = 'developer'
+             where u.role in ('developer', 'admin')
              order by u.created_at asc",
         )
         .fetch_all(&self.pg_pool)
         .await
-        {
-            Ok(users) => {
-                let mut result = Vec::with_capacity(users.len());
-                for user in users {
-                    if let Ok(response) = build_usage_response(&self.pg_pool, &user).await {
-                        result.push(response);
-                    }
-                }
-                result
-            }
-            Err(_) => Vec::new(),
+        .map_err(|error| ApiError::Internal(error.into()))?;
+
+        let mut result = Vec::with_capacity(users.len());
+        for user in users {
+            result.push(build_usage_response(&self.pg_pool, &user).await?);
         }
+
+        Ok(result)
     }
 
-    pub async fn update_developer_quota(
+    pub async fn update_user_quota(
         &self,
         developer_id: &str,
-        request: UpdateDeveloperRequest,
+        request: UpdateUserRequest,
     ) -> Result<(), ApiError> {
         let daily_limit = request.daily_limit.map(|value| value.max(1) as i32);
         let updated = sqlx::query(
             "update users
              set daily_limit = coalesce($2, daily_limit)
-             where external_id = $1 and role = 'developer'",
+             where external_id = $1 and role in ('developer', 'admin')",
         )
         .bind(developer_id)
         .bind(daily_limit)
@@ -230,20 +246,22 @@ impl DeveloperStore {
         .map_err(|error| ApiError::Internal(error.into()))?
         .rows_affected();
         if updated == 0 {
-            return Err(ApiError::NotFound("developer not found".to_string()));
+            return Err(ApiError::NotFound("user not found".to_string()));
         }
         Ok(())
     }
 
-    pub fn build_admin_developer_record(
+    pub fn build_admin_user_record(
         usage: &DeveloperUsageResponse,
         username: &str,
+        role: &str,
         enabled: bool,
         created_at: chrono::DateTime<Utc>,
-    ) -> AdminDeveloperRecord {
-        AdminDeveloperRecord {
+    ) -> AdminUserRecord {
+        AdminUserRecord {
             user_id: usage.developer_id.clone(),
             username: username.to_string(),
+            role: role.to_string(),
             enabled,
             created_at,
             daily_limit: usage.daily_limit,
@@ -333,6 +351,12 @@ struct UsageUserRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct KeyTrackingRow {
+    key_found: bool,
+    counted: bool,
+}
+
+#[derive(sqlx::FromRow)]
 struct StoredApiKeyRow {
     id: Uuid,
     name: String,
@@ -370,7 +394,7 @@ async fn build_usage_response(
     })
 }
 
-async fn find_developer_by_external_id(
+async fn find_user_by_external_id(
     pg_pool: &PgPool,
     developer_id: &str,
 ) -> Result<UsageUserRow, ApiError> {
@@ -378,13 +402,13 @@ async fn find_developer_by_external_id(
         "select u.id, u.external_id, u.daily_limit, coalesce(du.used_count, 0) as used_today
          from users u
          left join daily_usage du on du.user_id = u.id and du.usage_day = current_date
-         where u.external_id = $1 and u.role = 'developer'",
+         where u.external_id = $1 and u.role in ('developer', 'admin')",
     )
     .bind(developer_id)
     .fetch_optional(pg_pool)
     .await
     .map_err(|error| ApiError::Internal(error.into()))?
-    .ok_or_else(|| ApiError::NotFound("developer record not found".to_string()))
+    .ok_or_else(|| ApiError::NotFound("user record not found".to_string()))
 }
 
 async fn ensure_daily_usage_row(pg_pool: &PgPool, user_id: Uuid) -> Result<(), ApiError> {
@@ -409,37 +433,19 @@ async fn ensure_developer_usage_record(
         "select u.id, u.external_id, u.daily_limit, coalesce(du.used_count, 0) as used_today
          from users u
          left join daily_usage du on du.user_id = u.id and du.usage_day = current_date
-         where u.external_id = $1 and u.role = 'developer'",
+         where u.external_id = $1 and u.role in ('developer', 'admin')",
     )
     .bind(developer_id)
     .fetch_optional(pg_pool)
     .await
     .map_err(|error| ApiError::Internal(error.into()))?
     else {
-        return Err(ApiError::NotFound("developer record not found".to_string()));
+        return Err(ApiError::NotFound("user record not found".to_string()));
     };
 
     ensure_daily_usage_row(pg_pool, user.id).await?;
 
-    find_developer_by_external_id(pg_pool, developer_id).await
-}
-
-async fn lookup_developer_by_api_key(
-    pg_pool: &PgPool,
-    token_hash: &str,
-) -> Result<UsageUserRow, ApiError> {
-    sqlx::query_as::<_, UsageUserRow>(
-        "select u.id, u.external_id, u.daily_limit, coalesce(du.used_count, 0) as used_today
-         from api_keys k
-         join users u on u.id = k.user_id
-         left join daily_usage du on du.user_id = u.id and du.usage_day = current_date
-         where k.token_hash = $1 and k.revoked_at is null and u.enabled = true and u.role = 'developer'",
-    )
-    .bind(token_hash)
-    .fetch_optional(pg_pool)
-    .await
-    .map_err(|error| ApiError::Internal(error.into()))?
-    .ok_or_else(|| ApiError::Unauthorized("invalid api key".to_string()))
+    find_user_by_external_id(pg_pool, developer_id).await
 }
 
 fn default_daily_limit() -> u32 {

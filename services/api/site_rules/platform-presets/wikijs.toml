@@ -1,0 +1,12 @@
+id = "wikijs"
+
+[render]
+prefer_js = true
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml", "/atom.xml"]
+
+[[rules]]
+name = "admin-and-api"
+action = "deny"
+path_prefixes = ["/a", "/e", "/f", "/graphql", "/login", "/admin"]

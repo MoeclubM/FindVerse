@@ -1,0 +1,6 @@
+id = "bookstack"
+preset = "bookstack"
+priority = 45
+
+[match]
+html_markers = ["content=\"bookstack", "bookstack-app", "/dist/bookstack.js"]

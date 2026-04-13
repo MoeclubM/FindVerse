@@ -1,0 +1,6 @@
+id = "mediawiki"
+preset = "mediawiki"
+priority = 50
+
+[match]
+html_markers = ["content=\"mediawiki", "mw-content-text", "mw-parser-output", "mw-page-container"]

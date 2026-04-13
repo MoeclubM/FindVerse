@@ -1,0 +1,12 @@
+id = "mkdocs"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml", "/atom.xml"]
+
+[[rules]]
+name = "search"
+action = "deny"
+path_exacts = ["/search.html", "/404.html"]

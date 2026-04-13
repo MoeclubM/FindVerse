@@ -1,0 +1,6 @@
+id = "discourse"
+preset = "discourse"
+priority = 50
+
+[match]
+html_markers = ["content=\"discourse", "data-discourse", "discourse-post", "topic-list"]

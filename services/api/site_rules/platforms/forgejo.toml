@@ -1,0 +1,6 @@
+id = "forgejo"
+preset = "forgejo"
+priority = 80
+
+[match]
+html_markers = ["content=\"forgejo", "beyond coding. we forge.", "appsuburl"]

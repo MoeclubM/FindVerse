@@ -1,0 +1,12 @@
+id = "flarum"
+
+[render]
+prefer_js = true
+
+[discover]
+sources = ["/sitemap.xml"]
+
+[[rules]]
+name = "admin-and-api"
+action = "deny"
+path_prefixes = ["/admin", "/api", "/settings", "/login", "/register"]

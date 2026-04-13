@@ -1,0 +1,6 @@
+id = "hugo"
+preset = "hugo"
+priority = 35
+
+[match]
+html_markers = ["content=\"hugo", "generator\" content=\"hugo", "hugo generator"]

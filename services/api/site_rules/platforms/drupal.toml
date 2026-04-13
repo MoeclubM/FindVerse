@@ -1,0 +1,6 @@
+id = "drupal"
+preset = "drupal"
+priority = 40
+
+[match]
+html_markers = ["content=\"drupal", "drupalsettings", "drupal-settings-json", "/sites/default/files/"]

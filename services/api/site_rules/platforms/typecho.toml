@@ -1,0 +1,6 @@
+id = "typecho"
+preset = "typecho"
+priority = 40
+
+[match]
+html_markers = ["content=\"typecho", "/usr/themes/", "/usr/plugins/"]

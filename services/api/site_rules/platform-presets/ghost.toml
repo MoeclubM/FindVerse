@@ -1,0 +1,17 @@
+id = "ghost"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/rss/"]
+
+[[rules]]
+name = "admin"
+action = "deny"
+path_prefixes = ["/ghost", "/members", "/p/"]
+
+[[rules]]
+name = "taxonomy"
+action = "deny"
+path_prefixes = ["/author/", "/tag/"]

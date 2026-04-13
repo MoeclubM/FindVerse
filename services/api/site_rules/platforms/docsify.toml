@@ -1,0 +1,6 @@
+id = "docsify"
+preset = "docsify"
+priority = 45
+
+[match]
+html_markers = ["docsify", "window.$docsify", "docsify-sidebar", "docsify-pagination"]

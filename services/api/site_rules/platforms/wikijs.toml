@@ -1,0 +1,6 @@
+id = "wikijs"
+preset = "wikijs"
+priority = 45
+
+[match]
+html_markers = ["content=\"wiki.js", "wiki.js", "graphql_endpoint", "wiki-page"]

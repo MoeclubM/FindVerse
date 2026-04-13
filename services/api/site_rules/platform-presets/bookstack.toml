@@ -1,0 +1,12 @@
+id = "bookstack"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml"]
+
+[[rules]]
+name = "admin"
+action = "deny"
+path_prefixes = ["/settings", "/login", "/logout", "/api", "/attachments"]

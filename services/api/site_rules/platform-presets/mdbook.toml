@@ -1,0 +1,12 @@
+id = "mdbook"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml"]
+
+[[rules]]
+name = "generated-pages"
+action = "deny"
+path_exacts = ["/print.html", "/search.html", "/404.html"]

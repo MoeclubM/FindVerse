@@ -1,0 +1,27 @@
+id = "mediawiki"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/index.php?title=Special:RecentChanges&feed=rss"]
+
+[[rules]]
+name = "special-pages"
+action = "deny"
+path_regex = "special:"
+
+[[rules]]
+name = "special-title-query"
+action = "deny"
+query_value_prefixes = ["title=special:"]
+
+[[rules]]
+name = "editor-actions"
+action = "deny"
+query_values = ["action=edit", "action=history", "action=raw", "action=purge", "action=submit", "action=info", "action=render"]
+
+[[rules]]
+name = "diff-and-oldid"
+action = "deny"
+query_keys = ["oldid", "diff"]

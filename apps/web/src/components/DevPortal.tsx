@@ -4,18 +4,18 @@ import { useTranslation } from "react-i18next";
 
 import {
   CreatedApiKey,
-  DevSession,
   DeveloperDomainInsight,
   DeveloperUsage,
-  createDeveloperKey,
-  getDeveloperDomainInsight,
-  getDeveloperKeys,
-  getDeveloperSession,
-  loginDeveloper,
-  logoutDeveloper,
-  registerDeveloper,
-  revokeDeveloperKey,
-  submitDeveloperDomain,
+  UserSession,
+  createUserKey,
+  getUserDomainInsight,
+  getUserKeys,
+  getUserSession,
+  loginUser,
+  logoutUser,
+  registerUser,
+  revokeUserKey,
+  submitUserDomain,
 } from "../api";
 import { AppTopbar, TopbarActionButton, TopbarBadge } from "./common/AppTopbar";
 import { FieldShell, SectionHeader, StatStrip } from "./common/PanelPrimitives";
@@ -28,14 +28,14 @@ import { Checkbox } from "./ui/checkbox";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 
-const DEV_SESSION_KEY = "findverse_dev_session";
+const USER_SESSION_KEY = "findverse_user_session";
 const SITE_NAME = (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() || "FindVerse";
 
-function persistDevSession(token: string | null, setToken: (value: string | null) => void) {
+function persistUserSession(token: string | null, setToken: (value: string | null) => void) {
   if (token) {
-    localStorage.setItem(DEV_SESSION_KEY, token);
+    localStorage.setItem(USER_SESSION_KEY, token);
   } else {
-    localStorage.removeItem(DEV_SESSION_KEY);
+    localStorage.removeItem(USER_SESSION_KEY);
   }
   setToken(token);
 }
@@ -70,8 +70,8 @@ export function DevPortalPage(props: {
   onNavigateSearch: () => void;
 }) {
   const { t } = useTranslation();
-  const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(DEV_SESSION_KEY));
-  const [session, setSession] = useState<DevSession | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem(USER_SESSION_KEY));
+  const [session, setSession] = useState<UserSession | null>(null);
   const [usage, setUsage] = useState<DeveloperUsage | null>(null);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
@@ -104,7 +104,7 @@ export function DevPortalPage(props: {
 
     let cancelled = false;
     setLoadingSession(true);
-    Promise.all([getDeveloperSession(sessionToken), getDeveloperKeys(sessionToken)])
+    Promise.all([getUserSession(sessionToken), getUserKeys(sessionToken)])
       .then(([nextSession, nextUsage]) => {
         if (!cancelled) {
           setSession(nextSession);
@@ -113,7 +113,7 @@ export function DevPortalPage(props: {
       })
       .catch(() => {
         if (!cancelled) {
-          persistDevSession(null, setSessionToken);
+          persistUserSession(null, setSessionToken);
           setSession(null);
           setUsage(null);
         }
@@ -148,12 +148,12 @@ export function DevPortalPage(props: {
   const activePreview = props.devToken ? tokenPreview(props.devToken) : null;
 
   async function refreshUsage(token: string) {
-    const nextUsage = await getDeveloperKeys(token);
+    const nextUsage = await getUserKeys(token);
     setUsage(nextUsage);
   }
 
   async function loadPropertyInsight(token: string, domain: string) {
-    const insight = await getDeveloperDomainInsight(token, domain);
+    const insight = await getUserDomainInsight(token, domain);
     setPropertyInsight(insight);
     return insight;
   }
@@ -165,9 +165,9 @@ export function DevPortalPage(props: {
     try {
       const nextSession =
         mode === "register"
-          ? await registerDeveloper(username, password)
-          : await loginDeveloper(username, password);
-      persistDevSession(nextSession.token, setSessionToken);
+          ? await registerUser(username, password)
+          : await loginUser(username, password);
+      persistUserSession(nextSession.token, setSessionToken);
       setSession(nextSession);
       setUsername("");
       setPassword("");
@@ -192,12 +192,12 @@ export function DevPortalPage(props: {
     setFlash(null);
     try {
       if (sessionToken) {
-        await logoutDeveloper(sessionToken);
+        await logoutUser(sessionToken);
       }
     } catch {
       // Ignore logout failures and clear local state anyway.
     } finally {
-      persistDevSession(null, setSessionToken);
+      persistUserSession(null, setSessionToken);
       setSession(null);
       setUsage(null);
       setLatestKey(null);
@@ -219,7 +219,7 @@ export function DevPortalPage(props: {
     setBusy(true);
     setFlash(null);
     try {
-      const created = await createDeveloperKey(sessionToken, keyName);
+      const created = await createUserKey(sessionToken, keyName);
       setLatestKey(created);
       setKeyName(defaultKeyName);
       await refreshUsage(sessionToken);
@@ -238,7 +238,7 @@ export function DevPortalPage(props: {
     setBusy(true);
     setFlash(null);
     try {
-      await revokeDeveloperKey(sessionToken, id);
+      await revokeUserKey(sessionToken, id);
       if (activePreview === preview) {
         props.onTokenChange(null);
       }
@@ -290,7 +290,7 @@ export function DevPortalPage(props: {
     setPropertySubmitting(true);
     setFlash(null);
     try {
-      const response = await submitDeveloperDomain(sessionToken, {
+      const response = await submitUserDomain(sessionToken, {
         domain,
         urls,
         max_depth: Math.max(0, Number(submitDepth) || 0),

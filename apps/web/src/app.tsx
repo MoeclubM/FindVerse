@@ -80,6 +80,7 @@ export function App() {
         themeMode={themeMode}
         onThemeModeChange={setThemeMode}
         onNavigateHome={() => navigate("/", setPath)}
+        onNavigateDevPortal={() => navigate("/dev", setPath)}
       />
     );
   }

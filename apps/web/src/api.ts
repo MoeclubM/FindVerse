@@ -29,15 +29,12 @@ export type SystemConfigEntry = {
 
 export type DiscoveryScope = "same_host" | "same_domain" | "any";
 
-export type AdminSession = {
-  user_id: string;
-  username: string;
-  token: string;
-};
+export type UserRole = "admin" | "developer";
 
-export type DevSession = {
+export type UserSession = {
   user_id: string;
   username: string;
+  role: UserRole;
   token: string;
 };
 
@@ -108,9 +105,10 @@ export type DeveloperDomainSubmitResult = {
   known_domain_urls: number;
 };
 
-export type AdminDeveloperRecord = {
+export type AdminUserRecord = {
   user_id: string;
   username: string;
+  role: UserRole;
   enabled: boolean;
   created_at: string;
   daily_limit: number;
@@ -265,22 +263,29 @@ export function developerSearch(query: string, apiKey: string) {
   );
 }
 
-export function login(username: string, password: string) {
-  return request<AdminSession>("/v1/admin/session/login", {
+export function registerUser(username: string, password: string) {
+  return request<UserSession>("/v1/users/register", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
 }
 
-export function getAdminSession(token: string) {
-  return request<AdminSession>("/v1/admin/session/me", {
+export function loginUser(username: string, password: string) {
+  return request<UserSession>("/v1/users/session/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function getUserSession(token: string) {
+  return request<UserSession>("/v1/users/session/me", {
     method: "GET",
     token,
   });
 }
 
-export function logout(token: string) {
-  return request<void>("/v1/admin/session/logout", {
+export function logoutUser(token: string) {
+  return request<void>("/v1/users/session/logout", {
     method: "POST",
     token,
   });
@@ -477,44 +482,16 @@ export function purgeSite(token: string, site: string) {
   );
 }
 
-export function registerDeveloper(username: string, password: string) {
-  return request<DevSession>("/v1/dev/register", {
-    method: "POST",
-    body: JSON.stringify({ username, password }),
-  });
-}
-
-export function loginDeveloper(username: string, password: string) {
-  return request<DevSession>("/v1/dev/login", {
-    method: "POST",
-    body: JSON.stringify({ username, password }),
-  });
-}
-
-export function getDeveloperSession(token: string) {
-  return request<DevSession>("/v1/dev/me", {
+export function getUserKeys(token: string) {
+  return request<DeveloperUsage>("/v1/users/keys", {
     method: "GET",
     token,
   });
 }
 
-export function logoutDeveloper(token: string) {
-  return request<void>("/v1/dev/logout", {
-    method: "POST",
-    token,
-  });
-}
-
-export function getDeveloperKeys(token: string) {
-  return request<DeveloperUsage>("/v1/dev/keys", {
-    method: "GET",
-    token,
-  });
-}
-
-export function getDeveloperDomainInsight(token: string, domain: string) {
+export function getUserDomainInsight(token: string, domain: string) {
   return request<DeveloperDomainInsight>(
-    `/v1/dev/domains/inspect?domain=${encodeURIComponent(domain)}`,
+    `/v1/users/domains/inspect?domain=${encodeURIComponent(domain)}`,
     {
       method: "GET",
       token,
@@ -532,7 +509,7 @@ export function getAdminDomainInsight(token: string, domain: string) {
   );
 }
 
-export function submitDeveloperDomain(
+export function submitUserDomain(
   token: string,
   payload: {
     domain: string;
@@ -543,83 +520,100 @@ export function submitDeveloperDomain(
     allow_revisit: boolean;
   },
 ) {
-  return request<DeveloperDomainSubmitResult>("/v1/dev/domains/submit", {
+  return request<DeveloperDomainSubmitResult>("/v1/users/domains/submit", {
     method: "POST",
     token,
     body: JSON.stringify(payload),
   });
 }
 
-export function getAdminDeveloperKeys(token: string, userId: string) {
-  return request<DeveloperUsage>(`/v1/admin/developers/${userId}/keys`, {
+export function getAdminUserKeys(token: string, userId: string) {
+  return request<DeveloperUsage>(`/v1/admin/users/${userId}/keys`, {
     method: "GET",
     token,
   });
 }
 
-export function createDeveloperKey(token: string, name: string) {
-  return request<CreatedApiKey>("/v1/dev/keys", {
+export function createUserKey(token: string, name: string) {
+  return request<CreatedApiKey>("/v1/users/keys", {
     method: "POST",
     token,
     body: JSON.stringify({ name }),
   });
 }
 
-export function createAdminDeveloperKey(
+export function createAdminUserKey(
   token: string,
   userId: string,
   name: string,
 ) {
-  return request<CreatedApiKey>(`/v1/admin/developers/${userId}/keys`, {
+  return request<CreatedApiKey>(`/v1/admin/users/${userId}/keys`, {
     method: "POST",
     token,
     body: JSON.stringify({ name }),
   });
 }
 
-export function revokeDeveloperKey(token: string, id: string) {
-  return request<void>(`/v1/dev/keys/${id}`, {
+export function revokeUserKey(token: string, id: string) {
+  return request<void>(`/v1/users/keys/${id}`, {
     method: "DELETE",
     token,
   });
 }
 
-export function revokeAdminDeveloperKey(
+export function revokeAdminUserKey(
   token: string,
   userId: string,
   id: string,
 ) {
-  return request<void>(`/v1/admin/developers/${userId}/keys/${id}`, {
+  return request<void>(`/v1/admin/users/${userId}/keys/${id}`, {
     method: "DELETE",
     token,
   });
 }
 
-export function listAdminDevelopers(token: string) {
-  return request<AdminDeveloperRecord[]>("/v1/admin/developers", {
+export function listAdminUsers(token: string) {
+  return request<AdminUserRecord[]>("/v1/admin/users", {
     method: "GET",
     token,
   });
 }
 
-export function updateDeveloper(
+export function createUser(
+  token: string,
+  payload: {
+    username: string;
+    password: string;
+    role: UserRole;
+  },
+) {
+  return request<AdminUserRecord>("/v1/admin/users", {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateUser(
   token: string,
   userId: string,
   payload: {
+    username?: string;
+    role?: UserRole;
     daily_limit?: number;
     enabled?: boolean;
     password?: string;
   },
 ) {
-  return request<void>(`/v1/admin/developers/${userId}`, {
+  return request<void>(`/v1/admin/users/${userId}`, {
     method: "PATCH",
     token,
     body: JSON.stringify(payload),
   });
 }
 
-export function deleteDeveloper(token: string, userId: string) {
-  return request<void>(`/v1/admin/developers/${userId}`, {
+export function deleteUser(token: string, userId: string) {
+  return request<void>(`/v1/admin/users/${userId}`, {
     method: "DELETE",
     token,
   });
@@ -667,9 +661,6 @@ export type CrawlJobDetail = {
   http_status: number | null;
   discovered_urls_count: number;
   accepted_document_id: string | null;
-  llm_decision: string | null;
-  llm_reason: string | null;
-  llm_relevance_score: number | null;
   failure_kind: string | null;
   failure_message: string | null;
   finished_at: string | null;

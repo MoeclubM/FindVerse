@@ -1,0 +1,17 @@
+id = "typecho"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/feed", "/index.php/feed", "/index.php/atom"]
+
+[[rules]]
+name = "admin"
+action = "deny"
+path_prefixes = ["/admin", "/action"]
+
+[[rules]]
+name = "install-and-feeds"
+action = "deny"
+path_exacts = ["/install.php", "/feed", "/index.php/feed", "/index.php/atom"]

@@ -1,0 +1,6 @@
+id = "flarum"
+preset = "flarum"
+priority = 50
+
+[match]
+html_markers = ["content=\"flarum", "id=\"flarum-loading\"", "flarum/app", "flarum.forum"]

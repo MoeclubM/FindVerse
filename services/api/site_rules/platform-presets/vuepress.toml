@@ -1,0 +1,17 @@
+id = "vuepress"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = ["/sitemap.xml", "/rss.xml", "/atom.xml"]
+
+[[rules]]
+name = "search"
+action = "deny"
+path_prefixes = ["/search"]
+
+[[rules]]
+name = "not-found"
+action = "deny"
+path_exacts = ["/404.html"]
