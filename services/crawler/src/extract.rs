@@ -188,7 +188,7 @@ fn extract_meta_robots_directives(document: &Html) -> RobotsDirectives {
             continue;
         };
         let name = name.trim().to_ascii_lowercase();
-        if name != "robots" && name != "findverse" && name != "findversebot" {
+        if name != "robots" && name != "findversecrawler" {
             continue;
         }
         let Some(content) = meta.value().attr("content") else {
@@ -219,10 +219,7 @@ fn parse_robots_directives(value: &str) -> RobotsDirectives {
 }
 
 fn applies_to_findverse(agent: Option<&str>) -> bool {
-    matches!(
-        agent,
-        None | Some("*") | Some("findverse") | Some("findversebot")
-    )
+    matches!(agent, None | Some("*") | Some("findversecrawler"))
 }
 
 fn select_content_root<'a>(document: &'a Html) -> Option<ElementRef<'a>> {
@@ -550,15 +547,53 @@ mod tests {
     }
 
     #[test]
+    fn html_parser_extracts_findversecrawler_meta_robots_directives() {
+        let parsed = parse_html_document(
+            "https://example.com",
+            "<html><head><meta name='FindVerseCrawler' content='noindex'></head><body>Hello crawler</body></html>",
+        );
+
+        assert!(parsed.robots_directives.noindex);
+        assert!(!parsed.robots_directives.nofollow);
+    }
+
+    #[test]
+    fn html_parser_ignores_findversebot_meta_robots_directives() {
+        let parsed = parse_html_document(
+            "https://example.com",
+            "<html><head><meta name='FindVerseBot' content='noindex'></head><body>Hello crawler</body></html>",
+        );
+
+        assert!(!parsed.robots_directives.noindex);
+        assert!(!parsed.robots_directives.nofollow);
+    }
+
+    #[test]
     fn x_robots_tag_parser_respects_generic_and_findverse_scopes() {
         let directives = parse_x_robots_tag_values([
             "noindex",
-            "findversebot: nofollow",
+            "findversecrawler: nofollow",
             "googlebot: noindex, nofollow",
         ]);
 
         assert!(directives.noindex);
         assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn x_robots_tag_parser_accepts_findversecrawler_scope() {
+        let directives = parse_x_robots_tag_values(["FindVerseCrawler: noindex, nofollow"]);
+
+        assert!(directives.noindex);
+        assert!(directives.nofollow);
+    }
+
+    #[test]
+    fn x_robots_tag_parser_ignores_findversebot_scope() {
+        let directives = parse_x_robots_tag_values(["FindVerseBot: noindex, nofollow"]);
+
+        assert!(!directives.noindex);
+        assert!(!directives.nofollow);
     }
 
     #[test]

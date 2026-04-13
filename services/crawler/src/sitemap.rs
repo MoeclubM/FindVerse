@@ -59,6 +59,8 @@ fn fetch_sitemap_recursive<'a>(
                 }
             }
             Ok(all_entries)
+        } else if body.contains("<rss") || body.contains("<feed") {
+            Ok(parse_feed_xml(&body))
         } else {
             Ok(parse_urlset_xml(&body))
         }
@@ -83,6 +85,15 @@ enum UrlTag {
     Lastmod,
     Changefreq,
     Priority,
+    Other,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FeedTag {
+    Link,
+    Updated,
+    Published,
+    PubDate,
     Other,
 }
 
@@ -200,6 +211,102 @@ fn parse_sitemap_index_xml(xml: &str) -> Vec<String> {
     }
 
     urls
+}
+
+fn parse_feed_xml(xml: &str) -> Vec<SitemapEntry> {
+    let mut reader = Reader::from_str(xml);
+    let mut entries = Vec::new();
+
+    let mut inside_entry = false;
+    let mut current_tag = FeedTag::Other;
+    let mut loc = String::new();
+    let mut lastmod = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) => {
+                let name = e.local_name();
+                match name.as_ref() {
+                    b"item" | b"entry" => {
+                        inside_entry = true;
+                        loc.clear();
+                        lastmod.clear();
+                        current_tag = FeedTag::Other;
+                    }
+                    b"link" if inside_entry => {
+                        current_tag = FeedTag::Link;
+                        if loc.is_empty() {
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"href" {
+                                    loc = String::from_utf8_lossy(attr.value.as_ref())
+                                        .trim()
+                                        .to_string();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    b"updated" if inside_entry => current_tag = FeedTag::Updated,
+                    b"published" if inside_entry => current_tag = FeedTag::Published,
+                    b"pubDate" if inside_entry => current_tag = FeedTag::PubDate,
+                    _ => current_tag = FeedTag::Other,
+                }
+            }
+            Ok(Event::Empty(ref e)) if inside_entry => {
+                let name = e.local_name();
+                if name.as_ref() == b"link" && loc.is_empty() {
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref() == b"href" {
+                            loc = String::from_utf8_lossy(attr.value.as_ref())
+                                .trim()
+                                .to_string();
+                            break;
+                        }
+                    }
+                }
+                current_tag = FeedTag::Other;
+            }
+            Ok(Event::Text(ref e)) if inside_entry => {
+                if let Ok(text) = e.unescape() {
+                    let text = text.trim();
+                    match current_tag {
+                        FeedTag::Link => {
+                            if loc.is_empty() {
+                                loc.push_str(text);
+                            }
+                        }
+                        FeedTag::Updated | FeedTag::Published | FeedTag::PubDate => {
+                            if lastmod.is_empty() {
+                                lastmod.push_str(text);
+                            }
+                        }
+                        FeedTag::Other => {}
+                    }
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let name = e.local_name();
+                if matches!(name.as_ref(), b"item" | b"entry") && inside_entry {
+                    let trimmed_loc = loc.trim().to_string();
+                    if Url::parse(&trimmed_loc).is_ok() {
+                        entries.push(SitemapEntry {
+                            url: trimmed_loc,
+                            lastmod: non_empty(lastmod.trim()),
+                            changefreq: None,
+                            priority: None,
+                        });
+                    }
+                    inside_entry = false;
+                }
+                current_tag = FeedTag::Other;
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+    }
+
+    entries
 }
 
 fn non_empty(s: &str) -> Option<String> {
@@ -332,6 +439,45 @@ mod tests {
 
         let urls = parse_sitemap_index_xml("");
         assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_rss_feed() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>Example</title>
+      <link>https://example.com/post-1</link>
+      <pubDate>Mon, 01 Apr 2026 00:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>"#;
+
+        let entries = parse_feed_xml(xml);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "https://example.com/post-1");
+        assert_eq!(
+            entries[0].lastmod.as_deref(),
+            Some("Mon, 01 Apr 2026 00:00:00 GMT")
+        );
+    }
+
+    #[test]
+    fn test_parse_atom_feed() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Example</title>
+    <link href="https://example.com/post-2" />
+    <updated>2026-04-01T00:00:00Z</updated>
+  </entry>
+</feed>"#;
+
+        let entries = parse_feed_xml(xml);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "https://example.com/post-2");
+        assert_eq!(entries[0].lastmod.as_deref(), Some("2026-04-01T00:00:00Z"));
     }
 
     #[test]

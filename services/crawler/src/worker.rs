@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use chrono::Utc;
 use flate2::read::GzDecoder;
 use futures::stream::{self, StreamExt};
@@ -29,12 +30,12 @@ use crate::fetch::{
     FINDVERSE_UA, FetchWorkflowError, WorkerState, fetch_with_retry, inspect_robots,
 };
 use crate::js_render::{needs_js_rendering, render_with_js};
-use crate::llm_filter::evaluate_page;
 use crate::models::{
     ClaimJobsRequest, ClaimJobsResponse, CrawlJob, CrawlResultReport, CrawlerCapabilities,
-    CrawlerHeartbeatResponse, CrawlerRuntimeSnapshot, LlmFilterConfig, SubmitCrawlReportRequest,
+    CrawlerHeartbeatResponse, CrawlerRuntimeSnapshot, SubmitCrawlReportRequest,
     SubmitCrawlReportResponse, WorkerConfig,
 };
+use crate::site_profile::{PageAction, SiteProfile};
 use crate::sitemap::fetch_and_parse_sitemap;
 use crate::url_normalize::normalize_url_advanced;
 
@@ -226,20 +227,6 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         .user_agent("FindVerseCrawlerWorker/0.1")
         .timeout(Duration::from_secs(30))
         .build()?;
-    let llm_client = if config
-        .llm_filter
-        .as_ref()
-        .map(LlmFilterConfig::is_enabled)
-        .unwrap_or(false)
-    {
-        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(45));
-        if let Some(ref proxy_url) = proxy {
-            builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
-        }
-        Some(builder.build()?)
-    } else {
-        None
-    };
 
     let state = Arc::new(Mutex::new(WorkerState::new()));
     let runtime_config = Arc::new(RwLock::new(RuntimeConcurrencyConfig::from_worker_config(
@@ -347,15 +334,13 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         let lease_id = claim.lease_id.clone();
         let js_render_limiter = Arc::new(Semaphore::new(current_runtime.js_render_concurrency));
         let capabilities = config.capabilities.clone();
-        let mut pending_results = stream::iter(claim.jobs)
+        let pending_results = stream::iter(claim.jobs)
             .map(|job| {
                 let clearnet_clients = clearnet_clients.clone();
                 let tor_clients = tor_clients.clone();
-                let llm_client = llm_client.clone();
                 let state = Arc::clone(&state);
                 let js_render_limiter = Arc::clone(&js_render_limiter);
                 let allowed_domains = config.allowed_domains.clone();
-                let llm_filter = config.llm_filter.clone();
                 let capabilities = capabilities.clone();
                 async move {
                     info!(
@@ -383,8 +368,6 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                     process_job(
                         &effective_clients.page,
                         &effective_clients.meta,
-                        llm_client.as_ref(),
-                        llm_filter.as_ref(),
                         &job,
                         &state,
                         &js_render_limiter,
@@ -552,6 +535,8 @@ async fn sync_runtime_config(
     }
 
     let next: CrawlerHeartbeatResponse = response.json().await?;
+    crate::site_profile::install_rule_bundle(&next.site_rules)
+        .context("install site rule bundle from heartbeat")?;
     {
         let mut state = runtime_state.lock().await;
         let changed =
@@ -761,8 +746,6 @@ fn current_platform_tag() -> anyhow::Result<String> {
 async fn process_job(
     page_client: &reqwest::Client,
     meta_client: &reqwest::Client,
-    llm_client: Option<&reqwest::Client>,
-    llm_filter: Option<&LlmFilterConfig>,
     job: &CrawlJob,
     state: &Arc<Mutex<WorkerState>>,
     js_render_limiter: &Arc<Semaphore>,
@@ -920,8 +903,33 @@ async fn process_job(
 
     let body = fetch.response.text().await.unwrap_or_default();
     let mut parsed = parse_html_document(&final_url, &body);
+    let mut site_profile = match SiteProfile::detect(&final_url, &body) {
+        Ok(profile) => profile,
+        Err(error) => {
+            return CrawlResultReport {
+                status_code,
+                final_url: Some(final_url),
+                redirect_chain,
+                content_type: Some(content_type),
+                title: parsed.title,
+                snippet: parsed.snippet,
+                body: None,
+                discovered_urls: Vec::new(),
+                retryable: Some(false),
+                error_kind: Some("site_profile_config_invalid".to_string()),
+                error_message: Some(error.to_string()),
+                http_etag: etag.clone(),
+                http_last_modified: last_modified_header.clone(),
+                applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+                retry_after_secs,
+                robots_status: Some(final_robots.status),
+                robots_sitemaps: final_robots.sitemap_urls,
+                ..base_report(job, fetched_at, &network)
+            };
+        }
+    };
     let mut render_mode = "static".to_string();
-    if needs_js_rendering(&body, parsed.body.as_deref().unwrap_or("")) {
+    if site_profile.prefers_js_render() || needs_js_rendering(&body, parsed.body.as_deref().unwrap_or("")) {
         if !capabilities.js_render {
             info!(
                 url = %final_url,
@@ -958,6 +966,32 @@ async fn process_job(
             Ok(rendered_html) => {
                 info!("re-parsing {} with JS rendering", final_url);
                 parsed = parse_html_document(&final_url, &rendered_html);
+                site_profile = match SiteProfile::detect(&final_url, &rendered_html) {
+                    Ok(profile) => profile,
+                    Err(error) => {
+                        return CrawlResultReport {
+                            status_code,
+                            final_url: Some(final_url),
+                            redirect_chain,
+                            content_type: Some(content_type),
+                            title: parsed.title,
+                            snippet: parsed.snippet,
+                            body: None,
+                            discovered_urls: Vec::new(),
+                            retryable: Some(false),
+                            error_kind: Some("site_profile_config_invalid".to_string()),
+                            error_message: Some(error.to_string()),
+                            http_etag: etag.clone(),
+                            http_last_modified: last_modified_header.clone(),
+                            applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+                            retry_after_secs,
+                            robots_status: Some(final_robots.status),
+                            robots_sitemaps: final_robots.sitemap_urls,
+                            render_mode: "browser".to_string(),
+                            ..base_report(job, fetched_at, &network)
+                        };
+                    }
+                };
                 render_mode = "browser".to_string();
             }
             Err(error) => {
@@ -973,37 +1007,75 @@ async fn process_job(
     let mut robots_directives = header_robots_directives;
     robots_directives.merge(parsed.robots_directives);
 
-    let mut all_discovered = if robots_directives.nofollow {
+    if let Some(reason) = site_profile.filtered_reason(&final_url) {
+        return CrawlResultReport {
+            status_code,
+            final_url: Some(final_url),
+            redirect_chain,
+            content_type: Some(content_type),
+            title: parsed.title,
+            snippet: parsed.snippet,
+            body: None,
+            canonical_hint: parsed.canonical_url,
+            canonical_source: None,
+            language: None,
+            discovered_urls: Vec::new(),
+            site_authority: Some(0.5),
+            retryable: Some(false),
+            error_kind: Some("site_profile_filtered".to_string()),
+            error_message: Some(reason),
+            http_etag: etag.clone(),
+            http_last_modified: last_modified_header.clone(),
+            applied_crawl_delay_secs: final_robots.crawl_delay_secs,
+            retry_after_secs,
+            robots_status: Some(final_robots.status),
+            robots_sitemaps: final_robots.sitemap_urls,
+            render_mode: render_mode.clone(),
+            ..base_report(job, fetched_at, &network)
+        };
+    }
+
+    let current_page_action = site_profile.page_action(&final_url);
+    let mut all_discovered = if robots_directives.nofollow
+        || current_page_action != PageAction::AllowIndexDiscover
+    {
         Vec::new()
     } else {
         parsed.discovered_urls.clone()
     };
-    if !robots_directives.nofollow {
+    if !robots_directives.nofollow && current_page_action == PageAction::AllowIndexDiscover {
         if let Ok(url) = url::Url::parse(&final_url) {
-            if url.path() == "/" || url.path().is_empty() {
-                let sitemap_sources = if final_robots.sitemap_urls.is_empty() {
-                    findverse_common::origin_key(&final_url)
-                        .map(|origin| vec![format!("{origin}/sitemap.xml")])
-                        .unwrap_or_default()
+            if job.depth == 0 || url.path() == "/" || url.path().is_empty() {
+                let mut discovery_sources = BTreeSet::new();
+                if final_robots.sitemap_urls.is_empty() {
+                    if let Some(origin) = findverse_common::origin_key(&final_url) {
+                        discovery_sources.insert(format!("{origin}/sitemap.xml"));
+                        for source in site_profile.discovery_sources(&origin) {
+                            discovery_sources.insert(source);
+                        }
+                    }
                 } else {
-                    final_robots.sitemap_urls.clone()
-                };
+                    for source in &final_robots.sitemap_urls {
+                        discovery_sources.insert(source.clone());
+                    }
+                    if let Some(origin) = findverse_common::origin_key(&final_url) {
+                        for source in site_profile.discovery_sources(&origin) {
+                            discovery_sources.insert(source);
+                        }
+                    }
+                }
 
-                for sitemap_url in sitemap_sources {
-                    if let Ok(sitemap_entries) =
-                        fetch_and_parse_sitemap(meta_client, &sitemap_url).await
-                    {
-                        let sitemap_urls: Vec<String> = sitemap_entries
-                            .iter()
-                            .map(|entry| entry.url.clone())
-                            .collect();
-                        if !sitemap_urls.is_empty() {
+                for source_url in discovery_sources {
+                    if let Ok(source_entries) = fetch_and_parse_sitemap(meta_client, &source_url).await {
+                        let source_urls: Vec<String> =
+                            source_entries.iter().map(|entry| entry.url.clone()).collect();
+                        if !source_urls.is_empty() {
                             info!(
-                                "discovered {} URLs from sitemap at {}",
-                                sitemap_urls.len(),
-                                sitemap_url
+                                "discovered {} URLs from structured feed at {}",
+                                source_urls.len(),
+                                source_url
                             );
-                            all_discovered.extend(sitemap_urls);
+                            all_discovered.extend(source_urls);
                         }
                     }
                 }
@@ -1012,10 +1084,14 @@ async fn process_job(
     }
 
     let normalized_discovered = normalize_discovered_urls(all_discovered);
+    let profile_filtered_discovered = normalized_discovered
+        .into_iter()
+        .filter(|url| site_profile.page_action(url) != PageAction::Deny)
+        .collect();
     let mut discovered_urls = if allowed_domains.is_empty() {
-        normalized_discovered
+        profile_filtered_discovered
     } else {
-        filter_urls_by_domain(normalized_discovered, allowed_domains)
+        filter_urls_by_domain(profile_filtered_discovered, allowed_domains)
     };
     if discovered_urls.len() > MAX_DISCOVERED_URLS_PER_REPORT {
         info!(
@@ -1095,35 +1171,6 @@ async fn process_job(
         };
     }
 
-    let llm_decision = match (llm_client, llm_filter, parsed.body.as_deref()) {
-        (Some(llm_client), Some(llm_filter), Some(body)) => match evaluate_page(
-            llm_client,
-            llm_filter,
-            &final_url,
-            parsed.title.as_deref(),
-            parsed.snippet.as_deref(),
-            body,
-        )
-        .await
-        {
-            Ok(decision) => Some(decision),
-            Err(error) => {
-                warn!(?error, url = %final_url, "llm page filter failed; falling back to default indexing");
-                None
-            }
-        },
-        _ => None,
-    };
-
-    let discovered_urls = match llm_decision.as_ref() {
-        Some(decision) if !decision.should_discover => Vec::new(),
-        _ => discovered_urls,
-    };
-    let body = match llm_decision.as_ref() {
-        Some(decision) if !decision.should_index => None,
-        _ => parsed.body,
-    };
-
     CrawlResultReport {
         status_code,
         final_url: Some(final_url),
@@ -1131,22 +1178,12 @@ async fn process_job(
         content_type: Some(content_type),
         title: parsed.title,
         snippet: parsed.snippet,
-        body,
         canonical_hint,
         canonical_source,
         language,
         discovered_urls,
+        body: parsed.body,
         site_authority: Some(0.5),
-        llm_should_index: llm_decision.as_ref().map(|decision| decision.should_index),
-        llm_should_discover: llm_decision
-            .as_ref()
-            .map(|decision| decision.should_discover),
-        llm_relevance_score: llm_decision
-            .as_ref()
-            .map(|decision| decision.relevance_score),
-        llm_reason: llm_decision
-            .as_ref()
-            .map(|decision| decision.reason.clone()),
         retryable: Some(false),
         http_etag: etag,
         http_last_modified: last_modified_header,
@@ -1180,10 +1217,6 @@ fn base_report(
         language: None,
         discovered_urls: Vec::new(),
         site_authority: None,
-        llm_should_index: None,
-        llm_should_discover: None,
-        llm_relevance_score: None,
-        llm_reason: None,
         retryable: None,
         error_kind: None,
         error_message: None,

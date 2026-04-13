@@ -11,6 +11,7 @@ use reqwest::header::CONTENT_TYPE;
 use tracing::{info, warn};
 
 use crate::extract::{detect_language, extract_links, extract_sitemap_urls, parse_html_document};
+use crate::fetch::FINDVERSE_UA;
 use crate::models::{FetchManifestEntry, FrontierEntry, IndexedDocument, SeedConfig};
 
 // ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ pub async fn discover(
     let raw = tokio::fs::read_to_string(config_path).await?;
     let config: SeedConfig = serde_yaml::from_str(&raw)?;
     let client = reqwest::Client::builder()
-        .user_agent("FindVerseBot/0.1 (+https://example.com/findverse)")
+        .user_agent(FINDVERSE_UA)
         .build()?;
     let mut discovered = Vec::new();
     let mut seen = BTreeSet::new();
@@ -99,7 +100,7 @@ pub async fn fetch(frontier: PathBuf, output_dir: PathBuf, limit: usize) -> anyh
     let raw = tokio::fs::read_to_string(frontier).await?;
     tokio::fs::create_dir_all(&output_dir).await?;
     let client = reqwest::Client::builder()
-        .user_agent("FindVerseBot/0.1 (+https://example.com/findverse)")
+        .user_agent(FINDVERSE_UA)
         .build()?;
     let mut manifest = Vec::new();
 

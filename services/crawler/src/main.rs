@@ -2,15 +2,15 @@ mod discover;
 mod extract;
 mod fetch;
 mod js_render;
-mod llm_filter;
 mod models;
+mod site_profile;
 mod sitemap;
 mod url_normalize;
 mod worker;
 
 use clap::Parser;
 
-use models::{Cli, Command, CrawlerCapabilities, LlmFilterConfig, WorkerConfig};
+use models::{Cli, Command, CrawlerCapabilities, WorkerConfig};
 
 // ---------------------------------------------------------------------------
 // Main
@@ -49,11 +49,6 @@ async fn main() -> anyhow::Result<()> {
             allowed_domains,
             proxy,
             tor_socks_url,
-            llm_base_url,
-            llm_api_key,
-            llm_model,
-            llm_min_score,
-            llm_max_body_chars,
         } => {
             let parsed_domains: Vec<String> = allowed_domains
                 .map(|d| {
@@ -87,16 +82,6 @@ async fn main() -> anyhow::Result<()> {
                 js_render_concurrency: js_render_concurrency.max(1),
                 allowed_domains: parsed_domains,
                 tor_socks_url: Some(tor_socks_url),
-                llm_filter: match (llm_base_url, llm_model) {
-                    (Some(base_url), Some(model)) => Some(LlmFilterConfig {
-                        base_url,
-                        api_key: llm_api_key,
-                        model,
-                        min_score: llm_min_score.clamp(0.0, 1.0),
-                        max_body_chars: llm_max_body_chars.clamp(500, 20_000),
-                    }),
-                    _ => None,
-                },
                 capabilities: CrawlerCapabilities {
                     js_render: js_capable,
                 },

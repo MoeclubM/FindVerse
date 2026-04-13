@@ -17,12 +17,14 @@ hostname = "0.4.2"
 quick-xml = "0.37"
 rand.workspace = true
 reqwest = { workspace = true, features = ["cookies", "socks"] }
+regex = "1.11.1"
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 tar = "0.4"
 texting_robots = "0.2.2"
+toml = "0.8.19"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

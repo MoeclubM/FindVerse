@@ -75,7 +75,7 @@ function getStatusVariant(status: string): BadgeProps["variant"] {
 const PAGE_SIZE = 20;
 
 export function ConsoleJobs() {
-  const { token, busy, setBusy, setFlash, refreshAll } = useConsole();
+  const { token, busy, setBusy, setFlash, refreshAll, overview } = useConsole();
   const { t } = useTranslation();
 
   const [statusFilter, setStatusFilter] = useState("");
@@ -91,6 +91,11 @@ export function ConsoleJobs() {
     () => jobs?.jobs.find((job) => job.id === selectedJobId) ?? null,
     [jobs?.jobs, selectedJobId],
   );
+  const crawlerNameById = useMemo(
+    () => new Map((overview?.crawlers ?? []).map((crawler) => [crawler.id, crawler.name])),
+    [overview?.crawlers],
+  );
+  const selectedWorkerName = selectedJob?.claimed_by ? crawlerNameById.get(selectedJob.claimed_by) : null;
 
   const cleanupFailedCount = (stats?.failed ?? 0) + (stats?.blocked ?? 0) + (stats?.dead_letter ?? 0);
   const cleanupSucceededCount = stats?.succeeded ?? 0;
@@ -335,7 +340,9 @@ export function ConsoleJobs() {
                     </TableRow>
                   ))
                 : jobs?.jobs.length
-                  ? jobs.jobs.map((job) => (
+                  ? jobs.jobs.map((job) => {
+                      const workerName = job.claimed_by ? crawlerNameById.get(job.claimed_by) : null;
+                      return (
                       <TableRow key={job.id} data-state={selectedJobId === job.id ? "selected" : undefined}>
                         <TableCell className="max-w-0 whitespace-normal">
                           <div className="flex min-w-0 flex-col gap-1">
@@ -379,8 +386,17 @@ export function ConsoleJobs() {
                               {job.source}
                             </span>
                             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                              {job.claimed_by ? <span>{t("console.jobs.worker_id", { id: job.claimed_by })}</span> : null}
-                              <span>{getConsoleValueLabel(job.failure_kind ?? job.llm_decision)}</span>
+                              {job.claimed_by ? (
+                                workerName ? (
+                                  <>
+                                    <span className="font-medium text-foreground/80">{workerName}</span>
+                                    <span>{t("console.jobs.worker_id", { id: job.claimed_by })}</span>
+                                  </>
+                                ) : (
+                                  <span>{t("console.jobs.worker_id", { id: job.claimed_by })}</span>
+                                )
+                              ) : null}
+                              {job.failure_kind ? <span>{getConsoleValueLabel(job.failure_kind)}</span> : null}
                             </div>
                           </div>
                         </TableCell>
@@ -399,7 +415,7 @@ export function ConsoleJobs() {
                           </Button>
                         </TableCell>
                       </TableRow>
-                    ))
+                    )})
                   : null}
             </TableBody>
           </Table>
@@ -505,7 +521,14 @@ export function ConsoleJobs() {
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.worker")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.claimed_by ?? "-"}</strong>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {selectedWorkerName ?? selectedJob.claimed_by ?? "-"}
+                </strong>
+                {selectedWorkerName && selectedJob.claimed_by ? (
+                  <span className="mt-2 block text-xs text-muted-foreground">
+                    {t("console.jobs.worker_id", { id: selectedJob.claimed_by })}
+                  </span>
+                ) : null}
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.discovered")}</span>
@@ -547,7 +570,7 @@ export function ConsoleJobs() {
                 <code className="max-w-full break-all text-xs">{selectedJob.final_url}</code>
               </div>
             ) : null}
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.content_type")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.content_type ?? "-"}</strong>
@@ -555,18 +578,6 @@ export function ConsoleJobs() {
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.document_id")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.accepted_document_id ?? "-"}</strong>
-              </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.llm_decision")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">
-                  {getConsoleValueLabel(selectedJob.llm_decision)}
-                </strong>
-              </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.score")}</span>
-                <strong className="mt-2 block text-sm font-semibold text-foreground">
-                  {selectedJob.llm_relevance_score != null ? selectedJob.llm_relevance_score.toFixed(2) : "-"}
-                </strong>
               </div>
               <div className="rounded-xl border border-border bg-muted/40 p-4">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.render_mode")}</span>
@@ -577,12 +588,6 @@ export function ConsoleJobs() {
                 </strong>
               </div>
             </div>
-            {selectedJob.llm_reason ? (
-              <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
-                <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.llm_decision")}</span>
-                <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{selectedJob.llm_reason}</p>
-              </div>
-            ) : null}
             {selectedJob.failure_kind || selectedJob.failure_message ? (
               <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
                 <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.failure")}</span>

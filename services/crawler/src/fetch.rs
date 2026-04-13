@@ -14,6 +14,7 @@ use tracing::warn;
 use url::Url;
 
 pub const FINDVERSE_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 FindVerseCrawler/0.1 (+https://findverse.org/bot)";
+pub const FINDVERSE_PRIMARY_ROBOTS_AGENT: &str = "FindVerseCrawler";
 
 pub struct WorkerState {
     pub robots_cache: HashMap<String, CachedRobot>,
@@ -144,7 +145,7 @@ pub async fn inspect_robots(
                 let body = resp.bytes().await.unwrap_or_default();
                 let crawl_delay_secs = extract_crawl_delay(&body);
                 let sitemap_urls = extract_sitemap_urls_from_robots(&body);
-                match Robot::new("FindVerseCrawler", &body) {
+                match Robot::new(FINDVERSE_PRIMARY_ROBOTS_AGENT, &body) {
                     Ok(robot) => Some(RobotStatus::Fetched {
                         robot,
                         crawl_delay_secs,
@@ -344,7 +345,13 @@ pub fn extract_sitemap_urls_from_robots(robots_txt: &[u8]) -> Vec<String> {
 
 fn section_priority(agents: &[String]) -> u8 {
     for agent in agents {
-        if agent.contains("findversecrawler") || agent.contains("findversebot") {
+        if agent
+            .split('#')
+            .next()
+            .unwrap_or(agent)
+            .trim()
+            .eq_ignore_ascii_case("findversecrawler")
+        {
             return 2;
         }
     }
@@ -556,7 +563,25 @@ Crawl-delay: 2
 User-agent: findverseBot
 Crawl-delay: 7
 ";
-        assert_eq!(extract_crawl_delay(robots), Some(7));
+        assert_eq!(extract_crawl_delay(robots), None);
+    }
+
+    #[test]
+    fn test_extract_crawl_delay_findverse_alias() {
+        let robots = b"\
+User-agent: FindVerse
+Crawl-delay: 6
+";
+        assert_eq!(extract_crawl_delay(robots), None);
+    }
+
+    #[test]
+    fn test_extract_crawl_delay_findversecrawler_with_inline_comment() {
+        let robots = b"\
+User-agent: FindVerseCrawler # crawler-specific rules
+Crawl-delay: 6
+";
+        assert_eq!(extract_crawl_delay(robots), Some(6));
     }
 
     #[test]
@@ -657,5 +682,26 @@ Sitemap: https://example.com/news.xml
     #[test]
     fn robots_fallback_preserves_cached_rules_when_refresh_fails() {
         assert!(fallback_robot_status(true).is_none());
+    }
+
+    #[test]
+    fn robot_parser_respects_wikipedia_like_wildcard_rules() {
+        let robots = b"\
+User-agent: *
+Allow: /w/api.php?action=mobileview&
+Allow: /w/load.php?
+Disallow: /w/
+Disallow: /api/
+Disallow: /wiki/Special:
+";
+        let robot = Robot::new(FINDVERSE_PRIMARY_ROBOTS_AGENT, robots).unwrap();
+
+        assert!(
+            robot.allowed("https://zh.wikipedia.org/w/api.php?action=mobileview&prop=sections")
+        );
+        assert!(robot.allowed("https://zh.wikipedia.org/w/load.php?modules=startup"));
+        assert!(!robot.allowed("https://zh.wikipedia.org/w/index.php?title=Main_Page"));
+        assert!(!robot.allowed("https://zh.wikipedia.org/api/rest_v1/page/random/summary"));
+        assert!(!robot.allowed("https://zh.wikipedia.org/wiki/Special:Search"));
     }
 }
