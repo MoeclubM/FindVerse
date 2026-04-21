@@ -23,7 +23,7 @@ anyhow = "1.0.102"
 argon2 = "0.5.3"
 axum = { version = "0.8.8", features = ["json", "macros"] }
 chrono = { version = "0.4.44", features = ["serde"] }
-clap = { version = "4.6.0", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive"] }
 ego-tree = "0.11.0"
 rand = "0.10.0"
 redis = { version = "1.2.0", features = ["tokio-comp"] }
