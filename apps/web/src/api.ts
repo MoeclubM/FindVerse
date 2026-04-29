@@ -653,6 +653,7 @@ export type CrawlJobDetail = {
   max_attempts: number;
   source: string;
   rule_id: string | null;
+  site_profile_id: string | null;
   claimed_by: string | null;
   discovered_at: string;
   claimed_at: string | null;

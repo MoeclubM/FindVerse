@@ -1,0 +1,6 @@
+id = "confluence"
+preset = "confluence"
+priority = 55
+
+[match]
+html_markers = ["content=\"confluence", "ajs-page-id", "ajs-space-key", "confluence-base-url"]

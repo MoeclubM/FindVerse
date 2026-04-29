@@ -1,0 +1,6 @@
+id = "jira"
+preset = "jira"
+priority = 55
+
+[match]
+html_markers = ["content=\"jira", "jira-frontend", "ajs-remote-user", "jira-issue-header"]

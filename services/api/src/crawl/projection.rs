@@ -52,7 +52,9 @@ impl ProjectionRunner {
                 in_flight += 1;
             }
 
-            let Some(join_result) = set.join_next().await else { break };
+            let Some(join_result) = set.join_next().await else {
+                break;
+            };
             in_flight -= 1;
 
             match join_result {

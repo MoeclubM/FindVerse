@@ -1,0 +1,17 @@
+id = "notion"
+
+[render]
+prefer_js = true
+
+[discover]
+sources = ["/sitemap.xml"]
+
+[[rules]]
+name = "internal-and-api"
+action = "deny"
+path_prefixes = ["/api", "/login", "/logout", "/auth", "/image", "/cdn-cgi", "/_next", "/_static"]
+
+[[rules]]
+name = "search-and-settings"
+action = "deny"
+path_prefixes = ["/search", "/settings"]

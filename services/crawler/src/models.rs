@@ -251,6 +251,7 @@ pub struct CrawlResultReport {
     pub retryable: Option<bool>,
     pub error_kind: Option<String>,
     pub error_message: Option<String>,
+    pub site_profile_id: Option<String>,
     pub network: String,
     pub http_etag: Option<String>,
     pub http_last_modified: Option<String>,

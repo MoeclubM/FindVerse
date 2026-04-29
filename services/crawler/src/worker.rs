@@ -240,7 +240,7 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
     {
         warn!(
             ?error,
-            "initial crawler heartbeat/config sync failed; using local concurrency defaults"
+            "initial crawler heartbeat/config sync failed; using embedded site rules and local concurrency defaults"
         );
     }
     tokio::spawn({
@@ -627,7 +627,10 @@ async fn download_release_archive(
     let user_agent = format!("FindVerseCrawler/{}", current_release_tag());
     let mut last_error = None;
 
-    for (url, source) in [(github_url.as_str(), "github"), (proxy_url.as_str(), "gh-proxy.net")] {
+    for (url, source) in [
+        (github_url.as_str(), "github"),
+        (proxy_url.as_str(), "gh-proxy.net"),
+    ] {
         match client
             .get(url)
             .header("user-agent", &user_agent)
@@ -638,8 +641,10 @@ async fn download_release_archive(
                 return Ok(response.bytes().await?.to_vec());
             }
             Ok(response) => {
-                let error =
-                    anyhow::anyhow!("download from {source} failed with status {}", response.status());
+                let error = anyhow::anyhow!(
+                    "download from {source} failed with status {}",
+                    response.status()
+                );
                 if source == "github" {
                     warn!(
                         target_version = %version,
@@ -957,7 +962,10 @@ async fn process_job(
         }
     };
     let mut render_mode = "static".to_string();
-    if site_profile.prefers_js_render() || needs_js_rendering(&body, parsed.body.as_deref().unwrap_or("")) {
+    let mut site_profile_id = site_profile.preset_id().to_string();
+    if site_profile.prefers_js_render()
+        || needs_js_rendering(&body, parsed.body.as_deref().unwrap_or(""))
+    {
         if !capabilities.js_render {
             info!(
                 url = %final_url,
@@ -983,6 +991,7 @@ async fn process_job(
                 retry_after_secs,
                 robots_status: Some(final_robots.status),
                 robots_sitemaps: final_robots.sitemap_urls,
+                site_profile_id: Some(site_profile_id.clone()),
                 ..base_report(job, fetched_at, &network)
             };
         }
@@ -1015,11 +1024,13 @@ async fn process_job(
                             retry_after_secs,
                             robots_status: Some(final_robots.status),
                             robots_sitemaps: final_robots.sitemap_urls,
+                            site_profile_id: Some(site_profile_id.clone()),
                             render_mode: "browser".to_string(),
                             ..base_report(job, fetched_at, &network)
                         };
                     }
                 };
+                site_profile_id = site_profile.preset_id().to_string();
                 render_mode = "browser".to_string();
             }
             Err(error) => {
@@ -1058,19 +1069,19 @@ async fn process_job(
             retry_after_secs,
             robots_status: Some(final_robots.status),
             robots_sitemaps: final_robots.sitemap_urls,
+            site_profile_id: Some(site_profile_id.clone()),
             render_mode: render_mode.clone(),
             ..base_report(job, fetched_at, &network)
         };
     }
 
     let current_page_action = site_profile.page_action(&final_url);
-    let mut all_discovered = if robots_directives.nofollow
-        || current_page_action != PageAction::AllowIndexDiscover
-    {
-        Vec::new()
-    } else {
-        parsed.discovered_urls.clone()
-    };
+    let mut all_discovered =
+        if robots_directives.nofollow || current_page_action != PageAction::AllowIndexDiscover {
+            Vec::new()
+        } else {
+            parsed.discovered_urls.clone()
+        };
     if !robots_directives.nofollow && current_page_action == PageAction::AllowIndexDiscover {
         if let Ok(url) = url::Url::parse(&final_url) {
             if job.depth == 0 || url.path() == "/" || url.path().is_empty() {
@@ -1094,9 +1105,13 @@ async fn process_job(
                 }
 
                 for source_url in discovery_sources {
-                    if let Ok(source_entries) = fetch_and_parse_sitemap(meta_client, &source_url).await {
-                        let source_urls: Vec<String> =
-                            source_entries.iter().map(|entry| entry.url.clone()).collect();
+                    if let Ok(source_entries) =
+                        fetch_and_parse_sitemap(meta_client, &source_url).await
+                    {
+                        let source_urls: Vec<String> = source_entries
+                            .iter()
+                            .map(|entry| entry.url.clone())
+                            .collect();
                         if !source_urls.is_empty() {
                             info!(
                                 "discovered {} URLs from structured feed at {}",
@@ -1166,6 +1181,7 @@ async fn process_job(
             retry_after_secs,
             robots_status: Some(final_robots.status),
             robots_sitemaps: final_robots.sitemap_urls,
+            site_profile_id: Some(site_profile_id.clone()),
             render_mode: render_mode.clone(),
             ..base_report(job, fetched_at, &network)
         };
@@ -1194,6 +1210,7 @@ async fn process_job(
             retry_after_secs,
             robots_status: Some(final_robots.status),
             robots_sitemaps: final_robots.sitemap_urls,
+            site_profile_id: Some(site_profile_id.clone()),
             render_mode: render_mode.clone(),
             ..base_report(job, fetched_at, &network)
         };
@@ -1219,6 +1236,7 @@ async fn process_job(
         retry_after_secs,
         robots_status: Some(final_robots.status),
         robots_sitemaps: final_robots.sitemap_urls,
+        site_profile_id: Some(site_profile_id),
         render_mode,
         ..base_report(job, fetched_at, &network)
     }
@@ -1248,6 +1266,7 @@ fn base_report(
         retryable: None,
         error_kind: None,
         error_message: None,
+        site_profile_id: None,
         network: network.to_string(),
         http_etag: None,
         http_last_modified: None,

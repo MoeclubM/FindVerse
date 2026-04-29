@@ -1,0 +1,6 @@
+id = "gitee"
+preset = "gitee"
+priority = 80
+
+[match]
+html_markers = ["content=\"gitee", "gitee.com"]

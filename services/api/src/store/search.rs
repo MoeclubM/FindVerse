@@ -583,8 +583,9 @@ impl SearchIndex {
     }
 
     pub async fn purge_site(&self, site: &str) -> Result<PurgeSiteResponse, ApiError> {
-        let normalized = normalize_site_input(site)
-            .ok_or_else(|| ApiError::BadRequest("site must be a valid host or http(s) url".to_string()))?;
+        let normalized = normalize_site_input(site).ok_or_else(|| {
+            ApiError::BadRequest("site must be a valid host or http(s) url".to_string())
+        })?;
         let subdomain_pattern = format!("%.{}", normalized);
         let document_rows = sqlx::query_as::<_, DeletedDocumentRow>(
             "select id, text_blob_key

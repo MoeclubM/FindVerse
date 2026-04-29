@@ -1,0 +1,23 @@
+id = "gitee"
+default_action = "deny"
+
+[render]
+prefer_js = false
+
+[discover]
+sources = []
+
+[[rules]]
+name = "repo-root"
+action = "allow_index_discover"
+path_regex = "^/[^/]+/[^/]+/?$"
+
+[[rules]]
+name = "repo-readme"
+action = "allow_index_only"
+path_regex = "^/[^/]+/[^/]+/blob/.+?/README(\\.[A-Za-z0-9._-]+)?$"
+
+[[rules]]
+name = "repo-noise"
+action = "deny"
+path_regex = "^/[^/]+/[^/]+/(blob|tree|pulls|issues|releases|wikis|stargazers|members|graphs|commits|branches|tags|contributors|raw)/"

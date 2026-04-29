@@ -115,7 +115,9 @@ impl ControlCrawlerStore {
         &self,
         search_index: &SearchIndex,
     ) -> Result<BlacklistCleanupOutcome, ApiError> {
-        self.inner.cleanup_blacklisted_domains(Some(search_index)).await
+        self.inner
+            .cleanup_blacklisted_domains(Some(search_index))
+            .await
     }
 
     pub async fn create_rule(
@@ -341,7 +343,9 @@ impl ProjectorCrawlerStore {
         &self,
         search_index: &SearchIndex,
     ) -> Result<BlacklistCleanupOutcome, ApiError> {
-        self.inner.cleanup_blacklisted_domains(Some(search_index)).await
+        self.inner
+            .cleanup_blacklisted_domains(Some(search_index))
+            .await
     }
 }
 
@@ -448,8 +452,7 @@ impl CrawlerStore {
             worker_concurrency.is_some() || js_render_concurrency.is_some() || max_jobs.is_some();
         let has_version_update = desired_version.is_some();
         let has_sort_order_update = sort_order.is_some();
-        let has_metadata_update =
-            has_runtime_update || has_version_update || has_sort_order_update;
+        let has_metadata_update = has_runtime_update || has_version_update || has_sort_order_update;
 
         if name.is_none() && !has_metadata_update {
             return Err(ApiError::BadRequest(
@@ -655,19 +658,38 @@ impl CrawlerStore {
             value: String,
             updated_at: chrono::DateTime<chrono::Utc>,
         }
-        sqlx::query_as::<_, Row>("SELECT key, value, updated_at FROM system_config ORDER BY key")
-            .fetch_all(&self.pg_pool)
-            .await
-            .map_err(|e| crate::error::ApiError::Internal(e.into()))
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|r| crate::models::SystemConfigEntry {
-                        key: r.key,
-                        value: r.value,
-                        updated_at: r.updated_at,
-                    })
-                    .collect()
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT key, value, updated_at FROM system_config ORDER BY key",
+        )
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| crate::error::ApiError::Internal(e.into()))?;
+
+        let mut entries: Vec<crate::models::SystemConfigEntry> = rows
+            .into_iter()
+            .map(|r| crate::models::SystemConfigEntry {
+                key: r.key,
+                value: r.value,
+                updated_at: r.updated_at,
             })
+            .collect();
+
+        if !entries
+            .iter()
+            .any(|entry| entry.key == SITE_RULE_BUNDLE_CONFIG_KEY)
+        {
+            let bundle = resolve_site_rule_bundle(None)?;
+            let value = serde_json::to_string(&bundle)
+                .map_err(|error| crate::error::ApiError::Internal(error.into()))?;
+            entries.push(crate::models::SystemConfigEntry {
+                key: SITE_RULE_BUNDLE_CONFIG_KEY.to_string(),
+                value,
+                updated_at: Utc::now(),
+            });
+        }
+
+        entries.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(entries)
     }
 
     pub async fn get_system_config(&self, key: &str) -> Option<String> {
@@ -717,8 +739,8 @@ impl CrawlerStore {
             request.max_discovered_urls_per_page.clamp(1, 200) as i32;
 
         sqlx::query(
-            "insert into crawl_rules (id, owner_developer_id, owner_user_id, name, seed_url, pattern, status, interval_minutes, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at)
-             values ($1, $2, null, $3, $4, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $12)",
+            "insert into crawl_rules (id, owner_developer_id, name, seed_url, pattern, status, interval_minutes, max_depth, max_pages, same_origin_concurrency, discovery_scope, max_discovered_urls_per_page, enabled, created_at, updated_at)
+             values ($1, $2, $3, $4, $4, 'active', $5, $6, $7, $8, $9, $10, $11, $12, $12)",
         )
         .bind(&id)
         .bind(developer_id)
@@ -1802,8 +1824,9 @@ impl CrawlerStore {
                          llm_relevance_score = $10,
                          canonical_hint = $11,
                          canonical_source = $12,
-                         render_mode = $13,
-                         redirect_chain_json = $14
+                         site_profile_id = $13,
+                         render_mode = $14,
+                         redirect_chain_json = $15
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -1818,6 +1841,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -1961,8 +1985,9 @@ impl CrawlerStore {
                          llm_relevance_score = $9,
                          canonical_hint = $10,
                          canonical_source = $11,
-                         render_mode = $12,
-                         redirect_chain_json = $13
+                         site_profile_id = $12,
+                         render_mode = $13,
+                         redirect_chain_json = $14
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -1976,6 +2001,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -2047,8 +2073,9 @@ impl CrawlerStore {
                          llm_relevance_score = $11,
                          canonical_hint = $12,
                          canonical_source = $13,
-                         render_mode = $14,
-                         redirect_chain_json = $15
+                         site_profile_id = $14,
+                         render_mode = $15,
+                         redirect_chain_json = $16
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -2064,6 +2091,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -2106,8 +2134,9 @@ impl CrawlerStore {
                          canonical_hint = $9,
                          canonical_source = $10,
                          requires_js = true,
-                         render_mode = $11,
-                         redirect_chain_json = $12
+                         site_profile_id = $11,
+                         render_mode = $12,
+                         redirect_chain_json = $13
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -2120,6 +2149,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -2157,8 +2187,9 @@ impl CrawlerStore {
                          llm_relevance_score = $11,
                          canonical_hint = $12,
                          canonical_source = $13,
-                         render_mode = $14,
-                         redirect_chain_json = $15
+                         site_profile_id = $14,
+                         render_mode = $15,
+                         redirect_chain_json = $16
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -2174,6 +2205,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -2211,8 +2243,9 @@ impl CrawlerStore {
                          llm_relevance_score = $11,
                          canonical_hint = $12,
                          canonical_source = $13,
-                         render_mode = $14,
-                         redirect_chain_json = $15
+                         site_profile_id = $14,
+                         render_mode = $15,
+                         redirect_chain_json = $16
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -2228,6 +2261,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -2285,8 +2319,9 @@ impl CrawlerStore {
                          llm_relevance_score = $11,
                          canonical_hint = $12,
                          canonical_source = $13,
-                         render_mode = $14,
-                         redirect_chain_json = $15
+                         site_profile_id = $14,
+                         render_mode = $15,
+                         redirect_chain_json = $16
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -2302,6 +2337,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -2359,8 +2395,9 @@ impl CrawlerStore {
                          llm_relevance_score = $11,
                          canonical_hint = $12,
                          canonical_source = $13,
-                         render_mode = $14,
-                         redirect_chain_json = $15
+                         site_profile_id = $14,
+                         render_mode = $15,
+                         redirect_chain_json = $16
                      where id = $1",
                 )
                 .bind(&result.job_id)
@@ -2376,6 +2413,7 @@ impl CrawlerStore {
                 .bind(result.llm_relevance_score)
                 .bind(result.canonical_hint.as_deref())
                 .bind(result.canonical_source.as_deref())
+                .bind(result.site_profile_id.as_deref())
                 .bind(&result.render_mode)
                 .bind(&redirect_chain_json)
                 .execute(&self.pg_pool)
@@ -2730,7 +2768,7 @@ impl CrawlerStore {
 
         let rows = sqlx::query_as::<_, JobListRow>(
             "SELECT id, url, origin_key, final_url, status, depth, max_depth, attempt_count, max_attempts,
-                    source, rule_id, claimed_by, discovered_at, claimed_at, next_retry_at,
+                    source, rule_id, site_profile_id, claimed_by, discovered_at, claimed_at, next_retry_at,
                     content_type, http_status, discovered_urls_count, accepted_document_id,
                     llm_decision, llm_reason, llm_relevance_score, canonical_hint, canonical_source,
                     failure_kind, failure_message, finished_at, render_mode
@@ -2762,6 +2800,7 @@ impl CrawlerStore {
                 max_attempts: r.max_attempts as u32,
                 source: r.source,
                 rule_id: r.rule_id,
+                site_profile_id: r.site_profile_id,
                 claimed_by: r.claimed_by,
                 discovered_at: r.discovered_at,
                 claimed_at: r.claimed_at,
@@ -3725,8 +3764,7 @@ impl CrawlerStore {
         let mut deleted_jobs = 0usize;
         let mut deleted_origins = 0usize;
         let job_host_expr = "lower(regexp_replace(split_part(split_part(coalesce(final_url, url), '://', 2), '/', 1), ':[0-9]+$', ''))";
-        let origin_host_expr =
-            "lower(regexp_replace(split_part(split_part(origin_key, '://', 2), '/', 1), ':[0-9]+$', ''))";
+        let origin_host_expr = "lower(regexp_replace(split_part(split_part(origin_key, '://', 2), '/', 1), ':[0-9]+$', ''))";
 
         for domain in &blacklisted_domains {
             let subdomain_pattern = domain_like_pattern(domain);
@@ -3791,7 +3829,9 @@ impl CrawlerStore {
 
     async fn blacklisted_domains(&self) -> Result<Vec<String>, ApiError> {
         Ok(normalize_domain_list(
-            self.get_config(DOMAIN_BLACKLIST_CONFIG_KEY).await?.as_deref(),
+            self.get_config(DOMAIN_BLACKLIST_CONFIG_KEY)
+                .await?
+                .as_deref(),
         ))
     }
 
@@ -4028,6 +4068,7 @@ struct JobListRow {
     max_attempts: i32,
     source: String,
     rule_id: Option<String>,
+    site_profile_id: Option<String>,
     claimed_by: Option<String>,
     discovered_at: DateTime<Utc>,
     claimed_at: Option<DateTime<Utc>>,
@@ -4424,9 +4465,10 @@ fn domain_like_pattern(domain: &str) -> String {
 
 fn normalize_domain_list(input: Option<&str>) -> Vec<String> {
     let mut domains = BTreeSet::new();
-    for token in input.unwrap_or_default().split(|ch| {
-        matches!(ch, ',' | '\n' | '\r' | '\t' | ';' | ' ')
-    }) {
+    for token in input
+        .unwrap_or_default()
+        .split(|ch| matches!(ch, ',' | '\n' | '\r' | '\t' | ';' | ' '))
+    {
         if let Some(domain) = normalize_domain_input(token) {
             domains.insert(domain);
         }
@@ -4441,9 +4483,8 @@ fn validate_domain_list(input: &str) -> Result<Vec<String>, ApiError> {
         if trimmed.is_empty() {
             continue;
         }
-        let domain = normalize_domain_input(trimmed).ok_or_else(|| {
-            ApiError::BadRequest(format!("invalid blacklist domain: {trimmed}"))
-        })?;
+        let domain = normalize_domain_input(trimmed)
+            .ok_or_else(|| ApiError::BadRequest(format!("invalid blacklist domain: {trimmed}")))?;
         domains.insert(domain);
     }
     Ok(domains.into_iter().collect())
@@ -4604,7 +4645,9 @@ mod tests {
     #[test]
     fn normalize_domain_list_deduplicates_and_normalizes_entries() {
         assert_eq!(
-            normalize_domain_list(Some("Example.com\nhttps://docs.example.com/path\nexample.com")),
+            normalize_domain_list(Some(
+                "Example.com\nhttps://docs.example.com/path\nexample.com"
+            )),
             vec!["docs.example.com".to_string(), "example.com".to_string()]
         );
     }
@@ -4668,6 +4711,7 @@ mod tests {
             retryable: Some(false),
             error_kind: Some("page_noindex".to_string()),
             error_message: Some("page requested noindex via robots directives".to_string()),
+            site_profile_id: None,
             network: "clearnet".to_string(),
             http_etag: None,
             http_last_modified: None,
@@ -4729,6 +4773,7 @@ mod tests {
             retryable: Some(false),
             error_kind: None,
             error_message: None,
+            site_profile_id: None,
             network: "clearnet".to_string(),
             http_etag: None,
             http_last_modified: None,
@@ -4768,6 +4813,7 @@ mod tests {
             retryable: Some(true),
             error_kind: Some("http_429".to_string()),
             error_message: Some("throttled".to_string()),
+            site_profile_id: None,
             network: "clearnet".to_string(),
             http_etag: None,
             http_last_modified: None,

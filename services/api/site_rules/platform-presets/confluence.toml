@@ -1,0 +1,17 @@
+id = "confluence"
+
+[render]
+prefer_js = true
+
+[discover]
+sources = ["/sitemap.xml", "/wiki/sitemap.xml"]
+
+[[rules]]
+name = "admin-and-api"
+action = "deny"
+path_prefixes = ["/admin", "/login", "/logout", "/plugins", "/rest", "/wiki/rest", "/wiki/api", "/wiki/plugins", "/wiki/logout", "/wiki/login"]
+
+[[rules]]
+name = "drafts-and-exports"
+action = "deny"
+path_prefixes = ["/pages/resumedraft.action", "/download", "/wiki/download", "/spaces/flyingpdf", "/wiki/spaces/flyingpdf"]

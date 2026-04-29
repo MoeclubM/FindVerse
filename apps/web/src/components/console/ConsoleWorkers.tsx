@@ -1,15 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Activity,
-  Bot,
-  Clock3,
-  HardDriveDownload,
-  Package,
-  RefreshCw,
-  Trash2,
-  TriangleAlert,
-} from "lucide-react";
+import { HardDriveDownload, Trash2 } from "lucide-react";
 
 import {
   deleteCrawler,
@@ -37,6 +28,14 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table";
 import { useConsole } from "./ConsoleContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -257,13 +256,28 @@ export function ConsoleWorkers() {
     }
   }
 
+  function openCrawlerDetails(crawlerId: string) {
+    const crawler = crawlers.find((entry) => entry.id === crawlerId);
+    if (!crawler) {
+      return;
+    }
+
+    setEditingId(null);
+    setEditName(crawler.name);
+    setSelectedCrawlerId(crawler.id);
+    setRuntimeWorkerConcurrency(String(crawler.worker_concurrency));
+    setRuntimeJsRenderConcurrency(String(crawler.js_render_concurrency));
+    setRuntimeMaxJobs(String(crawler.max_jobs));
+    setSortOrder(crawler.sort_order === null ? "" : String(crawler.sort_order));
+  }
+
   return (
     <PanelSection
       title={t("console.workers.title")}
       meta={t("console.workers.registered", { count: crawlers.length })}
-      contentClassName="space-y-5"
+      contentClassName="space-y-4"
     >
-      <div className="rounded-2xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+      <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         {t("console.workers.platform_version_hint", {
           version: platformVersion,
         })}
@@ -279,153 +293,105 @@ export function ConsoleWorkers() {
         ]}
       />
 
-      <div className="grid gap-3">
-        {crawlers.length ? (
-          crawlers.map((crawler) => (
-            <button
-              key={crawler.id}
-              type="button"
-              onClick={() => {
-                setEditingId(null);
-                setEditName(crawler.name);
-                setSelectedCrawlerId(crawler.id);
-                setRuntimeWorkerConcurrency(String(crawler.worker_concurrency));
-                setRuntimeJsRenderConcurrency(
-                  String(crawler.js_render_concurrency),
-                );
-                setRuntimeMaxJobs(String(crawler.max_jobs));
-                setSortOrder(
-                  crawler.sort_order === null ? "" : String(crawler.sort_order),
-                );
-              }}
-              className="grid w-full gap-4 rounded-2xl border border-border bg-card p-4 text-left shadow-sm transition-colors hover:bg-muted/40"
-            >
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-semibold text-foreground">
-                      {crawler.name}
-                    </h3>
-                    <Badge variant={crawler.online ? "success" : "outline"}>
-                      {crawler.online
-                        ? t("console.workers.online")
-                        : t("console.workers.offline")}
-                    </Badge>
-                    <Badge
-                      variant={
-                        crawler.supports_js_render ? "warning" : "outline"
-                      }
-                    >
-                      {crawler.supports_js_render
-                        ? t("console.workers.chromium_enabled")
-                        : t("console.workers.chromium_disabled")}
-                    </Badge>
-                    <Badge variant="outline">
-                      {t("console.workers.version_badge", {
-                        version: formatCrawlerVersion(crawler.version),
-                      })}
-                    </Badge>
-                    <Badge variant={getCrawlerUpdateVariant(crawler.update_status)}>
-                      {formatCrawlerUpdateStatus(crawler.update_status)}
-                    </Badge>
-                    {crawler.sort_order !== null ? (
-                      <Badge variant="outline">
-                        {t("console.workers.sort_order_badge", {
-                          value: crawler.sort_order,
-                        })}
-                      </Badge>
-                    ) : null}
-                    <Badge variant="outline">{crawler.id.slice(0, 8)}</Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {crawler.preview}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                    <span>
-                      {t("console.workers.platform_label")}:{" "}
-                      {crawler.platform ?? t("console.workers.platform_unknown")}
-                    </span>
-                    {crawler.desired_version ? (
-                      <span>
-                        {t("console.workers.target_version")}:{" "}
-                        {crawler.desired_version}
+      {crawlers.length ? (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <Table>
+            <TableHeader className="bg-muted/30">
+              <TableRow>
+                <TableHead>{t("console.workers.title")}</TableHead>
+                <TableHead>{t("console.workers.status")}</TableHead>
+                <TableHead>{t("console.workers.current_version")}</TableHead>
+                <TableHead>{t("console.workers.runtime_title")}</TableHead>
+                <TableHead>{t("console.workers.in_flight_jobs")}</TableHead>
+                <TableHead>{t("console.workers.jobs_claimed")}</TableHead>
+                <TableHead>{t("console.workers.jobs_reported")}</TableHead>
+                <TableHead>{t("console.workers.last_seen")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {crawlers.map((crawler) => (
+                <TableRow
+                  key={crawler.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openCrawlerDetails(crawler.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      openCrawlerDetails(crawler.id);
+                    }
+                  }}
+                  className={selectedCrawlerId === crawler.id ? "cursor-pointer bg-muted/30" : "cursor-pointer"}
+                >
+                  <TableCell className="min-w-65 whitespace-normal align-top">
+                    <div className="grid gap-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <strong className="text-sm font-semibold text-foreground">{crawler.name}</strong>
+                        <Badge variant="outline">{crawler.id.slice(0, 8)}</Badge>
+                        {crawler.sort_order !== null ? (
+                          <Badge variant="outline">
+                            {t("console.workers.sort_order_badge", {
+                              value: crawler.sort_order,
+                            })}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <span className="text-xs text-muted-foreground">{crawler.preview}</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {t("console.workers.platform_label")}: {crawler.platform ?? t("console.workers.platform_unknown")}
                       </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="whitespace-normal align-top">
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge variant={crawler.online ? "success" : "outline"}>
+                        {crawler.online ? t("console.workers.online") : t("console.workers.offline")}
+                      </Badge>
+                      <Badge variant={crawler.supports_js_render ? "warning" : "outline"}>
+                        {crawler.supports_js_render ? t("console.workers.chromium_enabled") : t("console.workers.chromium_disabled")}
+                      </Badge>
+                      <Badge variant={getCrawlerUpdateVariant(crawler.update_status)}>
+                        {formatCrawlerUpdateStatus(crawler.update_status)}
+                      </Badge>
+                    </div>
+                    {crawler.desired_version ? (
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {t("console.workers.target_version")}: {crawler.desired_version}
+                      </div>
                     ) : null}
-                  </div>
-                </div>
-                <div className="grid gap-1 text-sm text-muted-foreground md:text-right">
-                  <span>{t("console.workers.last_seen")}</span>
-                  <strong className="text-foreground">
-                    {formatTimestamp(crawler.last_seen_at)}
-                  </strong>
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    {t("console.workers.in_flight_jobs")}
-                  </span>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {crawler.in_flight_jobs}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    {t("console.workers.jobs_claimed")}
-                  </span>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {crawler.jobs_claimed}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    {t("console.workers.jobs_reported")}
-                  </span>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {crawler.jobs_reported}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    {t("console.workers.worker_concurrency_label")}
-                  </span>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {crawler.worker_concurrency}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    {t("console.workers.js_render_concurrency_label")}
-                  </span>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {crawler.js_render_concurrency}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    {t("console.workers.max_jobs_label")}
-                  </span>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {crawler.max_jobs}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/40 px-3 py-2">
-                  <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                    {t("console.workers.created")}
-                  </span>
-                  <div className="mt-2 text-lg font-semibold text-foreground">
-                    {formatTimestamp(crawler.created_at)}
-                  </div>
-                </div>
-              </div>
-            </button>
-          ))
-        ) : (
-          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-            {t("console.workers.no_workers")}
-          </div>
-        )}
-      </div>
+                  </TableCell>
+                  <TableCell className="whitespace-normal align-top">
+                    <div className="grid gap-1 text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">{formatCrawlerVersion(crawler.version)}</span>
+                      <span>{t("console.workers.available_version")}: {platformVersion}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="whitespace-normal align-top">
+                    <div className="grid gap-1 text-xs text-muted-foreground">
+                      <span>W {crawler.worker_concurrency}</span>
+                      <span>JS {crawler.js_render_concurrency}</span>
+                      <span>Max {crawler.max_jobs}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="align-top text-sm font-medium text-foreground">{crawler.in_flight_jobs}</TableCell>
+                  <TableCell className="align-top text-sm font-medium text-foreground">{crawler.jobs_claimed}</TableCell>
+                  <TableCell className="align-top text-sm font-medium text-foreground">{crawler.jobs_reported}</TableCell>
+                  <TableCell className="whitespace-normal align-top">
+                    <div className="grid gap-1 text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">{formatTimestamp(crawler.last_seen_at)}</span>
+                      <span>{t("console.workers.last_claimed")}: {formatTimestamp(crawler.last_claimed_at)}</span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+          {t("console.workers.no_workers")}
+        </div>
+      )}
 
       <DetailDialog
         open={Boolean(selectedCrawler)}
@@ -447,6 +413,7 @@ export function ConsoleWorkers() {
             <>
               <Button
                 variant="ghost"
+                size="sm"
                 onClick={() =>
                   startEditing(selectedCrawler.id, selectedCrawler.name)
                 }
@@ -455,6 +422,7 @@ export function ConsoleWorkers() {
               </Button>
               <Button
                 variant="destructive"
+                size="sm"
                 disabled={busy || !selectedCrawler.can_delete}
                 onClick={() => setDeleteCrawlerId(selectedCrawler.id)}
               >
@@ -466,9 +434,9 @@ export function ConsoleWorkers() {
         }
       >
         {selectedCrawler ? (
-          <div className="space-y-5">
+          <div className="space-y-4">
             {editingId === selectedCrawler.id ? (
-              <div className="grid gap-3 rounded-2xl border border-border bg-muted/40 p-4 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+              <div className="grid gap-3 rounded-lg border border-border bg-muted/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
                 <div className="grid gap-2">
                   <span className="text-sm font-medium text-foreground">
                     {t("console.workers.name_placeholder")}
@@ -485,162 +453,82 @@ export function ConsoleWorkers() {
                   />
                 </div>
                 <Button
+                  size="sm"
                   disabled={busy}
                   onClick={() => void handleSaveName(selectedCrawler.id)}
                 >
                   {t("console.workers.save")}
                 </Button>
-                <Button variant="outline" onClick={() => setEditingId(null)}>
+                <Button variant="outline" size="sm" onClick={() => setEditingId(null)}>
                   {t("console.workers.cancel")}
                 </Button>
               </div>
             ) : null}
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Bot className="size-4" />
-                  {t("console.workers.preview")}
-                </div>
-                <div className="mt-2 break-all font-medium text-foreground">
-                  {selectedCrawler.preview}
-                </div>
+            <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.preview")}</span>
+                <p className="break-all text-sm font-medium text-foreground">{selectedCrawler.preview}</p>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Activity className="size-4" />
-                  {t("console.workers.status")}
-                </div>
-                <div className="mt-2">
-                  <Badge
-                    variant={selectedCrawler.online ? "success" : "outline"}
-                  >
-                    {selectedCrawler.online
-                      ? t("console.workers.online")
-                      : t("console.workers.offline")}
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.status")}</span>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge variant={selectedCrawler.online ? "success" : "outline"}>
+                    {selectedCrawler.online ? t("console.workers.online") : t("console.workers.offline")}
+                  </Badge>
+                  <Badge variant={selectedCrawler.supports_js_render ? "warning" : "outline"}>
+                    {selectedCrawler.supports_js_render ? t("console.workers.chromium_enabled") : t("console.workers.chromium_disabled")}
                   </Badge>
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Activity className="size-4" />
-                  {t("console.workers.in_flight_jobs")}
-                </div>
-                <div className="mt-2 font-medium text-foreground">
-                  {selectedCrawler.in_flight_jobs}
-                </div>
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.last_seen")}</span>
+                <p className="text-sm font-medium text-foreground">{formatTimestamp(selectedCrawler.last_seen_at)}</p>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Clock3 className="size-4" />
-                  {t("console.workers.last_seen")}
-                </div>
-                <div className="mt-2 font-medium text-foreground">
-                  {formatTimestamp(selectedCrawler.last_seen_at)}
-                </div>
-              </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Clock3 className="size-4" />
-                  {t("console.workers.last_claimed")}
-                </div>
-                <div className="mt-2 font-medium text-foreground">
-                  {formatTimestamp(selectedCrawler.last_claimed_at)}
-                </div>
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.last_claimed")}</span>
+                <p className="text-sm font-medium text-foreground">{formatTimestamp(selectedCrawler.last_claimed_at)}</p>
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  {t("console.workers.jobs_claimed")}
-                </span>
-                <div className="mt-2 text-2xl font-semibold text-foreground">
-                  {selectedCrawler.jobs_claimed}
-                </div>
-              </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  {t("console.workers.jobs_reported")}
-                </span>
-                <div className="mt-2 text-2xl font-semibold text-foreground">
-                  {selectedCrawler.jobs_reported}
-                </div>
-              </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  {t("console.workers.worker_concurrency_label")}
-                </span>
-                <div className="mt-2 text-2xl font-semibold text-foreground">
-                  {selectedCrawler.worker_concurrency}
-                </div>
-              </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  {t("console.workers.js_render_concurrency_label")}
-                </span>
-                <div className="mt-2 text-2xl font-semibold text-foreground">
-                  {selectedCrawler.js_render_concurrency}
-                </div>
-              </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  {t("console.workers.max_jobs_label")}
-                </span>
-                <div className="mt-2 text-2xl font-semibold text-foreground">
-                  {selectedCrawler.max_jobs}
-                </div>
-              </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                  {t("console.workers.created")}
-                </span>
-                <div className="mt-2 text-lg font-semibold text-foreground">
-                  {formatTimestamp(selectedCrawler.created_at)}
-                </div>
-              </div>
-            </div>
+            <StatStrip
+              compact
+              className="xl:grid-cols-6 2xl:grid-cols-7"
+              items={[
+                { label: t("console.workers.in_flight_jobs"), value: selectedCrawler.in_flight_jobs },
+                { label: t("console.workers.jobs_claimed"), value: selectedCrawler.jobs_claimed },
+                { label: t("console.workers.jobs_reported"), value: selectedCrawler.jobs_reported },
+                { label: t("console.workers.worker_concurrency_label"), value: selectedCrawler.worker_concurrency },
+                { label: t("console.workers.js_render_concurrency_label"), value: selectedCrawler.js_render_concurrency },
+                { label: t("console.workers.max_jobs_label"), value: selectedCrawler.max_jobs },
+                { label: t("console.workers.created"), value: formatTimestamp(selectedCrawler.created_at) },
+              ]}
+            />
 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Package className="size-4" />
-                  {t("console.workers.current_version")}
-                </div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
+              <div className="rounded-lg border border-border bg-card p-3 shadow-none">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.current_version")}</span>
+                <div className="mt-1.5 text-sm font-semibold text-foreground">
                   {selectedCrawler.version ??
                     t("console.workers.version_unknown")}
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <HardDriveDownload className="size-4" />
-                  {t("console.workers.target_version")}
-                </div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
+              <div className="rounded-lg border border-border bg-card p-3 shadow-none">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.target_version")}</span>
+                <div className="mt-1.5 text-sm font-semibold text-foreground">
                   {selectedCrawler.desired_version ?? "-"}
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Package className="size-4" />
-                  {t("console.workers.platform_label")}
-                </div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
+              <div className="rounded-lg border border-border bg-card p-3 shadow-none">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.platform_label")}</span>
+                <div className="mt-1.5 text-sm font-semibold text-foreground">
                   {selectedCrawler.platform ??
                     t("console.workers.platform_unknown")}
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  {selectedCrawler.update_status === "failed" ? (
-                    <TriangleAlert className="size-4" />
-                  ) : (
-                    <RefreshCw className="size-4" />
-                  )}
-                  {t("console.workers.update_status_label")}
-                </div>
-                <div className="mt-2">
+              <div className="rounded-lg border border-border bg-card p-3 shadow-none">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.update_status_label")}</span>
+                <div className="mt-1.5">
                   <Badge
                     variant={getCrawlerUpdateVariant(
                       selectedCrawler.update_status,
@@ -650,18 +538,15 @@ export function ConsoleWorkers() {
                   </Badge>
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Package className="size-4" />
-                  {t("console.workers.available_version")}
-                </div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
+              <div className="rounded-lg border border-border bg-card p-3 shadow-none">
+                <span className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{t("console.workers.available_version")}</span>
+                <div className="mt-1.5 text-sm font-semibold text-foreground">
                   {platformVersion}
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div className="grid gap-3 rounded-lg border border-border bg-card p-3 shadow-none">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-foreground">
@@ -669,6 +554,7 @@ export function ConsoleWorkers() {
                   </div>
                 </div>
                 <Button
+                  size="sm"
                   disabled={
                     busy ||
                     platformVersion === "-" ||
@@ -688,13 +574,13 @@ export function ConsoleWorkers() {
                 </Button>
               </div>
               {selectedCrawler.update_message ? (
-                <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                   {selectedCrawler.update_message}
                 </div>
               ) : null}
             </div>
 
-            <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div className="grid gap-3 rounded-lg border border-border bg-card p-3 shadow-none">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-foreground">
@@ -723,6 +609,7 @@ export function ConsoleWorkers() {
                   />
                 </FieldShell>
                 <Button
+                  size="sm"
                   disabled={busy || !sortOrderDirty}
                   onClick={() => void handleSaveSortOrder(selectedCrawler.id)}
                 >
@@ -731,7 +618,7 @@ export function ConsoleWorkers() {
               </div>
             </div>
 
-            <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div className="grid gap-3 rounded-lg border border-border bg-card p-3 shadow-none">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-foreground">
@@ -782,6 +669,7 @@ export function ConsoleWorkers() {
                   />
                 </FieldShell>
                 <Button
+                  size="sm"
                   disabled={busy || !runtimeDirty}
                   onClick={() => void handleSaveRuntime(selectedCrawler.id)}
                 >

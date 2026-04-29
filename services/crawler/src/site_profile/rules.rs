@@ -124,19 +124,7 @@ pub struct RuleRegistry {
 }
 
 impl RuleRegistry {
-    pub fn empty() -> Self {
-        Self {
-            platform_identifiers: Vec::new(),
-            platform_presets: BTreeMap::new(),
-            site_presets: Vec::new(),
-        }
-    }
-
-    pub fn load(
-        platform_dir: &Path,
-        platform_preset_dir: &Path,
-        site_dir: &Path,
-    ) -> Result<Self> {
+    pub fn load(platform_dir: &Path, platform_preset_dir: &Path, site_dir: &Path) -> Result<Self> {
         let platform_presets = load_platform_presets(platform_preset_dir)?;
         let mut platform_identifiers = load_platform_identifiers(platform_dir)?;
         let mut site_presets = load_site_presets(site_dir)?;
@@ -218,11 +206,10 @@ impl RuleRegistry {
 
         if let Some(site) = matched_site {
             if let Some(base) = site.extends.as_deref() {
-                preset = self
-                    .platform_presets
-                    .get(base)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("site {} extends missing preset {}", site.id, base))?;
+                preset =
+                    self.platform_presets.get(base).cloned().ok_or_else(|| {
+                        anyhow!("site {} extends missing preset {}", site.id, base)
+                    })?;
             }
             preset = preset.apply_override(site.preset.clone());
         }
@@ -327,7 +314,10 @@ impl CompiledPageRule {
                     .iter()
                     .any(|prefix| path_starts_with_rule(&path, prefix)))
             && (self.path_regex.is_none()
-                || self.path_regex.as_ref().is_some_and(|regex| regex.is_match(&path)))
+                || self
+                    .path_regex
+                    .as_ref()
+                    .is_some_and(|regex| regex.is_match(&path)))
             && (self.query_keys.is_empty()
                 || url.query_pairs().any(|(key, _)| {
                     let key = key.to_ascii_lowercase();
@@ -454,11 +444,15 @@ fn load_platform_identifiers(directory: &Path) -> Result<Vec<PlatformIdentifier>
     load_platform_identifiers_from_sources(read_rule_sources(directory)?)
 }
 
-fn load_platform_identifiers_from_bundle(files: &[SiteRuleFile]) -> Result<Vec<PlatformIdentifier>> {
+fn load_platform_identifiers_from_bundle(
+    files: &[SiteRuleFile],
+) -> Result<Vec<PlatformIdentifier>> {
     load_platform_identifiers_from_sources(rule_sources_from_bundle("platforms", files))
 }
 
-fn load_platform_identifiers_from_sources(sources: Vec<RuleSource>) -> Result<Vec<PlatformIdentifier>> {
+fn load_platform_identifiers_from_sources(
+    sources: Vec<RuleSource>,
+) -> Result<Vec<PlatformIdentifier>> {
     let mut identifiers = Vec::new();
     for source in sources {
         let file: PlatformDefinitionFile =
@@ -618,11 +612,12 @@ fn compile_page_rule(source: &str, rule: PageRuleFile) -> Result<CompiledPageRul
         .into_iter()
         .map(|pair| {
             let (key, value) = pair.split_once('=').ok_or_else(|| {
-                anyhow!(
-                    "invalid query_values entry `{pair}` in {source} (expected key=value)"
-                )
+                anyhow!("invalid query_values entry `{pair}` in {source} (expected key=value)")
             })?;
-            Ok((key.trim().to_ascii_lowercase(), value.trim().to_ascii_lowercase()))
+            Ok((
+                key.trim().to_ascii_lowercase(),
+                value.trim().to_ascii_lowercase(),
+            ))
         })
         .collect::<Result<Vec<_>>>()?;
     let query_value_prefixes = rule
@@ -634,15 +629,17 @@ fn compile_page_rule(source: &str, rule: PageRuleFile) -> Result<CompiledPageRul
                     "invalid query_value_prefixes entry `{pair}` in {source} (expected key=value)"
                 )
             })?;
-            Ok((key.trim().to_ascii_lowercase(), value.trim().to_ascii_lowercase()))
+            Ok((
+                key.trim().to_ascii_lowercase(),
+                value.trim().to_ascii_lowercase(),
+            ))
         })
         .collect::<Result<Vec<_>>>()?;
 
     Ok(CompiledPageRule {
         action: rule.action,
         reason: rule.reason.or_else(|| {
-            (rule.action == PageAction::Deny)
-                .then(|| format!("page skipped by rule {}", rule.name))
+            (rule.action == PageAction::Deny).then(|| format!("page skipped by rule {}", rule.name))
         }),
         hosts: normalize_hosts(rule.hosts),
         host_suffixes: normalize_hosts(rule.host_suffixes),
@@ -711,6 +708,9 @@ fn path_starts_with_rule(path: &str, rule: &str) -> bool {
     if rule.ends_with('/') {
         path.starts_with(rule)
     } else {
-        path == rule || path.strip_prefix(rule).is_some_and(|rest| rest.starts_with('/'))
+        path == rule
+            || path
+                .strip_prefix(rule)
+                .is_some_and(|rest| rest.starts_with('/'))
     }
 }

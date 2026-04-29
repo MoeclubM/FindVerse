@@ -28,12 +28,19 @@ export function SectionHeader(props: {
   const Heading = props.heading ?? "h2";
 
   return (
-    <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", props.className)}>
-      <div className="space-y-1">
-        <Heading className="text-lg font-semibold tracking-tight text-foreground">{props.title}</Heading>
-        {props.meta ? <p className="text-sm text-muted-foreground">{props.meta}</p> : null}
+    <div className={cn("flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between", props.className)}>
+      <div className="space-y-0">
+        <Heading
+          className={cn(
+            "font-semibold tracking-tight text-foreground",
+            props.heading === "h3" ? "text-sm" : "text-base",
+          )}
+        >
+          {props.title}
+        </Heading>
+        {props.meta ? <p className="text-[11px] text-muted-foreground sm:text-xs">{props.meta}</p> : null}
       </div>
-      {props.actions ? <div className="flex flex-wrap items-center gap-2">{props.actions}</div> : null}
+      {props.actions ? <div className="flex flex-wrap items-center gap-1">{props.actions}</div> : null}
     </div>
   );
 }
@@ -44,16 +51,17 @@ export function StatStrip(props: {
     value: ReactNode;
   }>;
   className?: string;
+  compact?: boolean;
 }) {
   return (
-    <div className={cn("grid gap-3 sm:grid-cols-2 xl:grid-cols-4", props.className)}>
+    <div className={cn("grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4", props.className)}>
       {props.items.map((item, index) => (
-        <Card key={index} className="rounded-xl bg-muted/40 shadow-none">
-          <CardContent className="px-4 py-3">
-            <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Card key={index} className="rounded-md border-border/60 bg-muted/30 shadow-none">
+          <CardContent className={cn(props.compact ? "px-2.5 py-2" : "px-3 py-2.5")}>
+            <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               {item.label}
             </span>
-            <div className="mt-2 text-2xl font-semibold text-foreground">{item.value}</div>
+            <div className={cn("font-semibold leading-none text-foreground", props.compact ? "mt-1 text-base" : "mt-1.5 text-lg")}>{item.value}</div>
           </CardContent>
         </Card>
       ))}
@@ -68,8 +76,8 @@ export function FieldShell(props: {
   children: ReactNode;
 }) {
   return (
-    <label className={cn("grid gap-2", props.className)}>
-      <Label>{props.label}</Label>
+    <label className={cn("grid gap-1", props.className)}>
+      <Label className="text-xs font-medium text-muted-foreground">{props.label}</Label>
       {props.children}
       {props.hint ? <span className="text-xs text-muted-foreground">{props.hint}</span> : null}
     </label>
@@ -87,13 +95,13 @@ export function DetailDialog(props: {
 }) {
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
-      <DialogContent className="max-h-[min(88vh,960px)] overflow-y-auto rounded-2xl p-0">
-        <DialogHeader className="border-b border-border px-6 pb-4 pt-6">
+      <DialogContent className="max-h-[min(88vh,960px)] overflow-y-auto rounded-xl p-0">
+        <DialogHeader className="border-b border-border px-4 pb-2.5 pt-4">
           <DialogTitle>{props.title}</DialogTitle>
           {props.meta ? <DialogDescription>{props.meta}</DialogDescription> : null}
         </DialogHeader>
-        <div className="px-6 py-5">{props.children}</div>
-        <DialogFooter className="border-t border-border px-6 py-4">
+        <div className="px-4 py-3">{props.children}</div>
+        <DialogFooter className="border-t border-border px-4 py-2.5">
           {props.actions}
           <DialogClose asChild>
             <Button variant="outline" onClick={props.onClose}>
@@ -115,11 +123,11 @@ export function PanelSection(props: {
   children: ReactNode;
 }) {
   return (
-    <Card className={cn("rounded-2xl shadow-sm", props.className)}>
-      <CardHeader className="pb-4">
+    <Card className={cn("rounded-lg shadow-none", props.className)}>
+      <CardHeader className="p-4 pb-2.5">
         <SectionHeader title={props.title} meta={props.meta} actions={props.actions} />
       </CardHeader>
-      <CardContent className={cn("pt-0", props.contentClassName)}>{props.children}</CardContent>
+      <CardContent className={cn("px-4 pb-4 pt-0", props.contentClassName)}>{props.children}</CardContent>
     </Card>
   );
 }

@@ -1,0 +1,23 @@
+id = "jira"
+default_action = "deny"
+
+[render]
+prefer_js = true
+
+[discover]
+sources = []
+
+[[rules]]
+name = "issue-page"
+action = "allow_index_only"
+path_regex = "^/browse/[A-Za-z][A-Za-z0-9_]*-\\d+$"
+
+[[rules]]
+name = "project-home"
+action = "allow_index_discover"
+path_regex = "^/projects/[^/]+/?$"
+
+[[rules]]
+name = "admin-and-api"
+action = "deny"
+path_prefixes = ["/admin", "/secure/admin", "/plugins", "/rest", "/jira/rest", "/login", "/logout"]

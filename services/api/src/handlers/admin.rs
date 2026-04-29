@@ -11,13 +11,13 @@ use crate::{
     dev_auth::UserIdentity,
     error::ApiError,
     models::{
-        AdminUserRecord, CreateCrawlRuleRequest, CreateKeyRequest, CreateUserRequest,
-        CreatedKeyResponse, CrawlJobListParams, CrawlJobListResponse, CrawlJobStats,
-        CrawlOriginState, CrawlOverviewResponse, CrawlRule, DeveloperDomainInsightQuery,
+        AdminUserRecord, CrawlJobListParams, CrawlJobListResponse, CrawlJobStats, CrawlOriginState,
+        CrawlOverviewResponse, CrawlRule, CreateCrawlRuleRequest, CreateKeyRequest,
+        CreateUserRequest, CreatedKeyResponse, DeveloperDomainInsightQuery,
         DeveloperDomainInsightResponse, DeveloperUsageResponse, DocumentListParams,
         DocumentListResponse, PurgeSiteRequest, PurgeSiteResponse, SeedFrontierRequest,
-        SeedFrontierResponse, SetSystemConfigRequest, SystemConfigResponse,
-        UpdateCrawlRuleRequest, UpdateCrawlerRequest, UpdateUserRequest,
+        SeedFrontierResponse, SetSystemConfigRequest, SystemConfigResponse, UpdateCrawlRuleRequest,
+        UpdateCrawlerRequest, UpdateUserRequest,
     },
     site_rules::SITE_RULE_BUNDLE_CONFIG_KEY,
     store::DeveloperStore,
@@ -319,12 +319,9 @@ pub async fn admin_list_users(
     let records = accounts
         .iter()
         .map(|account| {
-            let usage = usage_map
-                .get(&account.user_id)
-                .copied()
-                .ok_or_else(|| {
-                    ApiError::Internal(anyhow!("missing usage record for user {}", account.user_id))
-                })?;
+            let usage = usage_map.get(&account.user_id).copied().ok_or_else(|| {
+                ApiError::Internal(anyhow!("missing usage record for user {}", account.user_id))
+            })?;
             Ok(DeveloperStore::build_admin_user_record(
                 usage,
                 &account.username,
@@ -379,7 +376,10 @@ pub async fn admin_update_user(
 ) -> Result<StatusCode, ApiError> {
     let _admin = authorize_admin(&state, &headers).await?;
     if request.username.is_some() || request.role.is_some() {
-        state.dev_auth.update_user_profile(&user_id, &request).await?;
+        state
+            .dev_auth
+            .update_user_profile(&user_id, &request)
+            .await?;
     }
     if let Some(enabled) = request.enabled {
         state.dev_auth.set_enabled(&user_id, enabled).await?;

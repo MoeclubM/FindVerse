@@ -452,7 +452,10 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::search::healthz))
         .route("/readyz", get(handlers::search::readyz))
-        .route("/v1/users/register", post(handlers::developer::user_register))
+        .route(
+            "/v1/users/register",
+            post(handlers::developer::user_register),
+        )
         .route(
             "/v1/users/session/login",
             post(handlers::developer::user_login),
@@ -464,8 +467,7 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
         )
         .route(
             "/v1/users/keys",
-            get(handlers::developer::user_list_keys)
-                .post(handlers::developer::user_create_key),
+            get(handlers::developer::user_list_keys).post(handlers::developer::user_create_key),
         )
         .route(
             "/v1/users/keys/{id}",
@@ -481,8 +483,7 @@ fn build_control_router(config: &Config, state: ControlState) -> Router {
         )
         .route(
             "/v1/admin/users/{user_id}/keys",
-            get(handlers::admin::admin_list_user_keys)
-                .post(handlers::admin::admin_create_user_key),
+            get(handlers::admin::admin_list_user_keys).post(handlers::admin::admin_create_user_key),
         )
         .route(
             "/v1/admin/users/{user_id}/keys/{key_id}",

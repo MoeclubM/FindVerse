@@ -4,8 +4,7 @@ use sqlx::PgPool;
 use crate::{
     auth_support::{
         PASSWORD_SCHEME_ARGON2ID, USER_ROLE_ADMIN, USER_ROLE_DEVELOPER, bearer_token,
-        hash_password, normalize_user_role, normalize_username, validate_password,
-        verify_password,
+        hash_password, normalize_user_role, normalize_username, validate_password, verify_password,
     },
     error::ApiError,
     models::{
@@ -48,13 +47,12 @@ impl DevAuthStore {
         let username = normalize_username(&request.username)?;
         validate_password(&request.password)?;
 
-        let existing = sqlx::query_scalar::<_, i64>(
-            "select count(*) from users where lower(username) = $1",
-        )
-        .bind(username.as_str())
-        .fetch_one(&self.pg_pool)
-        .await
-        .map_err(|error| ApiError::Internal(error.into()))?;
+        let existing =
+            sqlx::query_scalar::<_, i64>("select count(*) from users where lower(username) = $1")
+                .bind(username.as_str())
+                .fetch_one(&self.pg_pool)
+                .await
+                .map_err(|error| ApiError::Internal(error.into()))?;
         if existing > 0 {
             return Err(ApiError::Conflict("username already taken".to_string()));
         }
@@ -93,17 +91,16 @@ impl DevAuthStore {
         .await
         .map_err(|error| ApiError::Internal(error.into()))?;
 
-        let session =
-            create_session_tx(
-                &mut tx,
-                user_uuid,
-                &user_id,
-                &username,
-                USER_ROLE_DEVELOPER,
-                "fvs",
-                created_at,
-            )
-            .await?;
+        let session = create_session_tx(
+            &mut tx,
+            user_uuid,
+            &user_id,
+            &username,
+            USER_ROLE_DEVELOPER,
+            "fvs",
+            created_at,
+        )
+        .await?;
 
         tx.commit()
             .await
@@ -243,9 +240,8 @@ impl DevAuthStore {
         let role = normalize_user_role(&request.role)?;
         validate_password(&request.password)?;
 
-        let existing = sqlx::query_scalar::<_, i64>(
-            "select count(*) from users where lower(username) = $1",
-        )
+        let existing =
+            sqlx::query_scalar::<_, i64>("select count(*) from users where lower(username) = $1")
                 .bind(username.as_str())
                 .fetch_one(&self.pg_pool)
                 .await
@@ -356,12 +352,12 @@ impl DevAuthStore {
             .map_err(|error| ApiError::Internal(error.into()))?;
 
         let updated = sqlx::query("update users set enabled = $2 where external_id = $1")
-        .bind(user_id)
-        .bind(enabled)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| ApiError::Internal(error.into()))?
-        .rows_affected();
+            .bind(user_id)
+            .bind(enabled)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| ApiError::Internal(error.into()))?
+            .rows_affected();
         if updated == 0 {
             return Err(ApiError::NotFound("user not found".to_string()));
         }
@@ -385,14 +381,13 @@ impl DevAuthStore {
     pub async fn update_password(&self, user_id: &str, password: &str) -> Result<(), ApiError> {
         validate_password(password)?;
 
-        let user_uuid = sqlx::query_scalar::<_, uuid::Uuid>(
-            "select id from users where external_id = $1",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pg_pool)
-        .await
-        .map_err(|error| ApiError::Internal(error.into()))?
-        .ok_or_else(|| ApiError::NotFound("user not found".to_string()))?;
+        let user_uuid =
+            sqlx::query_scalar::<_, uuid::Uuid>("select id from users where external_id = $1")
+                .bind(user_id)
+                .fetch_optional(&self.pg_pool)
+                .await
+                .map_err(|error| ApiError::Internal(error.into()))?
+                .ok_or_else(|| ApiError::NotFound("user not found".to_string()))?;
 
         let updated = sqlx::query(
             "update password_credentials

@@ -22,6 +22,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table";
 import { Textarea } from "../ui/textarea";
 import { useConsole } from "./ConsoleContext";
 
@@ -38,6 +46,10 @@ function getScopeLabel(t: (key: string) => string, scope: DiscoveryScope) {
     default:
       return t("console.tasks.scope_any");
   }
+}
+
+function formatTimestamp(value: string | null, fallback: string) {
+  return value ? value.replace("T", " ").replace("Z", "").slice(0, 16) : fallback;
 }
 
 export function ConsoleCrawlTasks() {
@@ -69,6 +81,8 @@ export function ConsoleCrawlTasks() {
   const [editRuleScope, setEditRuleScope] = useState<DiscoveryScope>("same_domain");
   const [editRuleMaxDiscovered, setEditRuleMaxDiscovered] = useState("50");
   const [editRuleEnabled, setEditRuleEnabled] = useState(true);
+  const rules = overview?.rules ?? [];
+  const editingRule = rules.find((rule) => rule.id === editingRuleId) ?? null;
 
   async function handleSeedFrontier(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -203,16 +217,17 @@ export function ConsoleCrawlTasks() {
 
   return (
     <>
-      <PanelSection title={t("console.tasks.manual_seed_title")} contentClassName="space-y-5">
-        <form onSubmit={handleSeedFrontier}>
+      <PanelSection title={t("console.tasks.manual_seed_title")} contentClassName="space-y-3">
+        <form className="space-y-3" onSubmit={handleSeedFrontier}>
           <FieldShell label={t("console.tasks.urls_label")} className="mb-4">
             <Textarea
+              rows={4}
               value={seedUrls}
               onChange={(event) => setSeedUrls(event.target.value)}
               placeholder={t("console.tasks.urls_placeholder")}
             />
           </FieldShell>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <FieldShell label={t("console.tasks.max_depth_label")} hint={t("console.tasks.max_depth_hint")}>
               <Input value={seedDepth} onChange={(event) => setSeedDepth(event.target.value)} />
             </FieldShell>
@@ -246,22 +261,22 @@ export function ConsoleCrawlTasks() {
                 onChange={(event) => setSeedMaxDiscovered(event.target.value)}
               />
             </FieldShell>
-            <label className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
               <Checkbox checked={seedAllowRevisit} onCheckedChange={(checked) => setSeedAllowRevisit(checked === true)} />
               <span>{t("console.tasks.allow_revisit_label")}</span>
             </label>
           </div>
-          <div className="mt-4 flex justify-end">
-            <Button type="submit" disabled={busy}>
+          <div className="flex justify-end">
+            <Button type="submit" size="sm" disabled={busy}>
               {t("console.tasks.submit_seed")}
             </Button>
           </div>
         </form>
       </PanelSection>
 
-      <PanelSection title={t("console.tasks.create_rule_title")} contentClassName="space-y-5">
-        <form onSubmit={handleCreateRule}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <PanelSection title={t("console.tasks.create_rule_title")} contentClassName="space-y-3">
+        <form className="space-y-3" onSubmit={handleCreateRule}>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <FieldShell label={t("console.tasks.rule_name_label")}>
               <Input value={ruleName} onChange={(event) => setRuleName(event.target.value)} />
             </FieldShell>
@@ -305,8 +320,8 @@ export function ConsoleCrawlTasks() {
               />
             </FieldShell>
           </div>
-          <div className="mt-4 flex justify-end">
-            <Button type="submit" disabled={busy}>
+          <div className="flex justify-end">
+            <Button type="submit" size="sm" disabled={busy}>
               {t("console.users.save")}
             </Button>
           </div>
@@ -315,16 +330,93 @@ export function ConsoleCrawlTasks() {
 
       <PanelSection
           title={t("console.tasks.rules_title")}
-          meta={t("console.tasks.rules_configured", { count: overview?.rules.length ?? 0 })}
+          meta={t("console.tasks.rules_configured", { count: rules.length })}
+          contentClassName="space-y-3"
       >
-        <div className="grid gap-3">
-          {overview?.rules.length ? (
-            overview.rules.map((rule) => (
-              <Card key={rule.id} className="rounded-2xl">
-                <CardContent className="grid gap-4 p-4">
-                {editingRuleId === rule.id ? (
-                  <>
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="space-y-3">
+          {rules.length ? (
+            <>
+              <div className="overflow-hidden rounded-lg border border-border bg-card">
+                <Table>
+                  <TableHeader className="bg-muted/30">
+                    <TableRow>
+                      <TableHead>{t("console.tasks.rule_name_label")}</TableHead>
+                      <TableHead>{t("console.tasks.scope_label")}</TableHead>
+                      <TableHead>{t("console.tasks.interval_label")}</TableHead>
+                      <TableHead>{t("console.tasks.max_depth_label")}</TableHead>
+                      <TableHead>{t("console.tasks.max_pages_label")}</TableHead>
+                      <TableHead>{t("console.tasks.same_origin_concurrency_label")}</TableHead>
+                      <TableHead>{t("console.tasks.max_links_label")}</TableHead>
+                      <TableHead>{t("console.tasks.status")}</TableHead>
+                      <TableHead>{t("console.tasks.last_enqueue")}</TableHead>
+                      <TableHead>{t("console.tasks.updated")}</TableHead>
+                      <TableHead className="text-right" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rules.map((rule) => (
+                      <TableRow key={rule.id} className={editingRuleId === rule.id ? "bg-muted/30" : undefined}>
+                        <TableCell className="min-w-70 whitespace-normal align-top">
+                          <div className="grid gap-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <strong className="text-sm font-semibold text-foreground">{rule.name}</strong>
+                              {editingRuleId === rule.id ? <Badge variant="outline">{t("console.tasks.edit_rule")}</Badge> : null}
+                            </div>
+                            <code className="max-w-full break-all text-[11px] text-muted-foreground">{rule.seed_url}</code>
+                          </div>
+                        </TableCell>
+                        <TableCell className="align-top text-xs text-muted-foreground">{getScopeLabel(t, rule.discovery_scope)}</TableCell>
+                        <TableCell className="align-top text-sm font-medium text-foreground">{rule.interval_minutes}</TableCell>
+                        <TableCell className="align-top text-sm font-medium text-foreground">{rule.max_depth}</TableCell>
+                        <TableCell className="align-top text-sm font-medium text-foreground">{rule.max_pages}</TableCell>
+                        <TableCell className="align-top text-sm font-medium text-foreground">{rule.same_origin_concurrency}</TableCell>
+                        <TableCell className="align-top text-sm font-medium text-foreground">{rule.max_discovered_urls_per_page}</TableCell>
+                        <TableCell className="whitespace-normal align-top">
+                          <div className="grid gap-1 text-xs text-muted-foreground">
+                            <Badge className="w-fit" variant={rule.enabled ? "success" : "outline"}>
+                              {rule.enabled ? t("console.tasks.enabled") : t("console.tasks.disabled")}
+                            </Badge>
+                            <span>{t("console.tasks.created")}: {formatTimestamp(rule.created_at, "-")}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="align-top text-xs text-muted-foreground">
+                          {formatTimestamp(rule.last_enqueued_at, t("console.tasks.never"))}
+                        </TableCell>
+                        <TableCell className="align-top text-xs text-muted-foreground">
+                          {formatTimestamp(rule.updated_at, "-")}
+                        </TableCell>
+                        <TableCell className="whitespace-normal align-top">
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => handleStartEdit(rule)}>
+                              {t("console.tasks.edit_rule")}
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void handleToggleRule(rule.id, rule.enabled)}>
+                              {rule.enabled ? t("console.tasks.disable_rule") : t("console.tasks.enable_rule")}
+                            </Button>
+                            <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => void handleDeleteRule(rule.id)}>
+                              {t("console.tasks.delete_rule")}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {editingRule ? (
+                <Card className="rounded-lg bg-muted/20 shadow-none">
+                  <CardContent className="grid gap-3 p-3">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-1">
+                        <strong className="text-sm font-semibold text-foreground">{editingRule.name}</strong>
+                        <code className="break-all text-[11px] text-muted-foreground">{editingRule.seed_url}</code>
+                      </div>
+                      <Badge variant={editRuleEnabled ? "success" : "outline"}>
+                        {editRuleEnabled ? t("console.tasks.enabled") : t("console.tasks.disabled")}
+                      </Badge>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                       <FieldShell label={t("console.tasks.rule_name_label")}>
                         <Input
                           value={editRuleName}
@@ -358,9 +450,7 @@ export function ConsoleCrawlTasks() {
                       <FieldShell label={t("console.tasks.same_origin_concurrency_label")}>
                         <Input
                           value={editRuleSameOriginConcurrency}
-                          onChange={(event) =>
-                            setEditRuleSameOriginConcurrency(event.target.value)
-                          }
+                          onChange={(event) => setEditRuleSameOriginConcurrency(event.target.value)}
                         />
                       </FieldShell>
                       <FieldShell label={t("console.tasks.scope_label")}>
@@ -381,92 +471,25 @@ export function ConsoleCrawlTasks() {
                           onChange={(event) => setEditRuleMaxDiscovered(event.target.value)}
                         />
                       </FieldShell>
-                      <label className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+                      <label className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground">
                         <Checkbox checked={editRuleEnabled} onCheckedChange={(checked) => setEditRuleEnabled(checked === true)} />
                         <span>{t("console.tasks.enabled")}</span>
                       </label>
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="grid gap-1">
-                      <strong className="text-sm font-semibold text-foreground">{rule.name}</strong>
-                      <span className="break-all text-sm text-muted-foreground">{rule.seed_url}</span>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.interval")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.interval_minutes} min</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.depth")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.max_depth}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.pages_limit")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.max_pages}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.same_origin_concurrency_label")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.same_origin_concurrency}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.created")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.created_at}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.updated")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.updated_at}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.last_enqueue")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.last_enqueued_at ?? t("console.tasks.never")}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.status")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.enabled ? t("console.tasks.enabled") : t("console.tasks.disabled")}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.scope_label")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{getScopeLabel(t, rule.discovery_scope)}</strong>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted/40 p-4">
-                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.tasks.links_per_page")}</span>
-                        <strong className="mt-2 block text-sm font-semibold text-foreground">{rule.max_discovered_urls_per_page}</strong>
-                      </div>
-                    </div>
-                  </>
-                )}
-                <div className="flex flex-wrap items-center gap-2">
-                  {editingRuleId === rule.id ? (
-                    <>
-                      <Button type="button" variant="outline" disabled={busy} onClick={() => void handleSaveRule(rule.id)}>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void handleSaveRule(editingRule.id)}>
                         {t("console.users.save")}
                       </Button>
-                      <Button type="button" variant="ghost" disabled={busy} onClick={handleCancelEdit}>
+                      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={handleCancelEdit}>
                         {t("console.workers.cancel")}
                       </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Badge variant={rule.enabled ? "success" : "outline"}>{rule.enabled ? t("console.tasks.enabled") : t("console.tasks.disabled")}</Badge>
-                      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => handleStartEdit(rule)}>
-                        {t("console.tasks.edit_rule")}
-                      </Button>
-                      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => void handleToggleRule(rule.id, rule.enabled)}>
-                        {rule.enabled ? t("console.tasks.disable_rule") : t("console.tasks.enable_rule")}
-                      </Button>
-                      <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => void handleDeleteRule(rule.id)}>
-                        {t("console.tasks.delete_rule")}
-                      </Button>
-                    </>
-                  )}
-                </div>
-                </CardContent>
-              </Card>
-            ))
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+            </>
           ) : (
-            <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">{t("console.tasks.no_rules")}</div>
+            <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">{t("console.tasks.no_rules")}</div>
           )}
         </div>
       </PanelSection>

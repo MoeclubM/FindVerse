@@ -24,6 +24,10 @@ impl SiteProfile {
         self.preset.prefer_js
     }
 
+    pub fn preset_id(&self) -> &str {
+        &self.preset.id
+    }
+
     pub fn page_action(&self, url: &str) -> PageAction {
         self.preset.page_decision(url).action
     }
@@ -137,7 +141,10 @@ path_regex = "^/$"
                 .expect("detect profile"),
         };
 
-        assert_eq!(profile.page_action("https://docs.example.com/"), PageAction::AllowIndexDiscover);
+        assert_eq!(
+            profile.page_action("https://docs.example.com/"),
+            PageAction::AllowIndexDiscover
+        );
         assert_eq!(
             profile.page_action("https://docs.example.com/wp-admin/edit.php"),
             PageAction::Deny
@@ -180,7 +187,10 @@ path_regex = "^/[^/]+/[^/]+/blob/"
         .expect("load registry");
         let profile = SiteProfile {
             preset: registry
-                .detect("https://github.com/owner/repo", "<html><body></body></html>")
+                .detect(
+                    "https://github.com/owner/repo",
+                    "<html><body></body></html>",
+                )
                 .expect("detect profile"),
         };
 
@@ -196,9 +206,11 @@ path_regex = "^/[^/]+/[^/]+/blob/"
             profile.page_action("https://github.com/owner/repo/blob/main/src/main.rs"),
             PageAction::Deny
         );
-        assert!(profile
-            .filtered_reason("https://github.com/owner/repo/blob/main/src/main.rs")
-            .is_some());
+        assert!(
+            profile
+                .filtered_reason("https://github.com/owner/repo/blob/main/src/main.rs")
+                .is_some()
+        );
     }
 
     #[test]
@@ -207,7 +219,10 @@ path_regex = "^/[^/]+/[^/]+/blob/"
         let registry = loader::load_registry_from_root(&root).expect("load registry");
         let profile = SiteProfile {
             preset: registry
-                .detect("https://unknown.example.com/docs/page", "<html><body>plain html</body></html>")
+                .detect(
+                    "https://unknown.example.com/docs/page",
+                    "<html><body>plain html</body></html>",
+                )
                 .expect("detect profile"),
         };
 
@@ -215,9 +230,142 @@ path_regex = "^/[^/]+/[^/]+/blob/"
             profile.page_action("https://unknown.example.com/docs/page"),
             PageAction::AllowIndexDiscover
         );
-        assert!(profile
-            .filtered_reason("https://unknown.example.com/docs/page")
-            .is_none());
+        assert!(
+            profile
+                .filtered_reason("https://unknown.example.com/docs/page")
+                .is_none()
+        );
         assert!(profile.allows_discovery("https://unknown.example.com/docs/page"));
+    }
+
+    #[test]
+    fn embedded_defaults_are_available_before_any_heartbeat() {
+        let registry = loader::load_embedded_default_registry().expect("load embedded registry");
+        let profile = SiteProfile {
+            preset: registry
+                .detect(
+                    "https://github.com/owner/repo",
+                    r#"<html><body><meta name="application-name" content="GitHub"></body></html>"#,
+                )
+                .expect("detect embedded github profile"),
+        };
+
+        assert_eq!(profile.preset_id(), "github");
+        assert_eq!(
+            profile.page_action("https://github.com/owner/repo"),
+            PageAction::AllowIndexDiscover
+        );
+    }
+
+    #[test]
+    fn embedded_defaults_cover_recent_platform_additions() {
+        let registry = loader::load_embedded_default_registry().expect("load embedded registry");
+
+        let confluence = SiteProfile {
+            preset: registry
+                .detect(
+                    "https://wiki.example.com/wiki/spaces/ENG/pages/123/Intro",
+                    r#"<html><head>
+                        <meta name="application-name" content="Confluence" />
+                        <meta name="ajs-page-id" content="123" />
+                        <meta name="ajs-space-key" content="ENG" />
+                    </head></html>"#,
+                )
+                .expect("detect confluence profile"),
+        };
+        assert_eq!(confluence.preset_id(), "confluence");
+        assert_eq!(
+            confluence.page_action("https://wiki.example.com/wiki/spaces/ENG/pages/123/Intro"),
+            PageAction::AllowIndexDiscover
+        );
+        assert_eq!(
+            confluence.page_action("https://wiki.example.com/wiki/rest/api/content/123"),
+            PageAction::Deny
+        );
+
+        let notion = SiteProfile {
+            preset: registry
+                .detect(
+                    "https://workspace.notion.site/Product-Guide-0123456789abcdef0123456789abcdef",
+                    r#"<html><body><div class="notion-page-content"></div></body></html>"#,
+                )
+                .expect("detect notion profile"),
+        };
+        assert_eq!(notion.preset_id(), "notion");
+        assert_eq!(
+            notion.page_action(
+                "https://workspace.notion.site/Product-Guide-0123456789abcdef0123456789abcdef"
+            ),
+            PageAction::AllowIndexDiscover
+        );
+        assert_eq!(
+            notion.page_action("https://workspace.notion.site/api/v3/loadCachedPageChunk"),
+            PageAction::Deny
+        );
+
+        let gitee = SiteProfile {
+            preset: registry
+                .detect(
+                    "https://gitee.com/team/repo",
+                    r#"<html><head><meta name="generator" content="Gitee" /></head></html>"#,
+                )
+                .expect("detect gitee profile"),
+        };
+        assert_eq!(gitee.preset_id(), "gitee");
+        assert_eq!(
+            gitee.page_action("https://gitee.com/team/repo"),
+            PageAction::AllowIndexDiscover
+        );
+        assert_eq!(
+            gitee.page_action("https://gitee.com/team/repo/blob/master/src/main.rs"),
+            PageAction::Deny
+        );
+        assert_eq!(
+            gitee.page_action("https://gitee.com/team/repo/blob/master/README.md"),
+            PageAction::AllowIndexOnly
+        );
+
+        let bitbucket = SiteProfile {
+            preset: registry
+                .detect(
+                    "https://bitbucket.org/workspace/repo",
+                    r#"<html><head><meta name="application-name" content="Bitbucket" /></head></html>"#,
+                )
+                .expect("detect bitbucket profile"),
+        };
+        assert_eq!(bitbucket.preset_id(), "bitbucket");
+        assert_eq!(
+            bitbucket.page_action("https://bitbucket.org/workspace/repo"),
+            PageAction::AllowIndexDiscover
+        );
+        assert_eq!(
+            bitbucket.page_action("https://bitbucket.org/workspace/repo/src/main/src/lib.rs"),
+            PageAction::Deny
+        );
+        assert_eq!(
+            bitbucket.page_action("https://bitbucket.org/workspace/repo/src/main/README.md"),
+            PageAction::AllowIndexOnly
+        );
+
+        let jira = SiteProfile {
+            preset: registry
+                .detect(
+                    "https://issues.example.com/browse/ENG-42",
+                    r#"<html><head>
+                        <meta name="application-name" content="Jira" />
+                        <meta name="ajs-remote-user" content="alice" />
+                    </head></html>"#,
+                )
+                .expect("detect jira profile"),
+        };
+        assert_eq!(jira.preset_id(), "jira");
+        assert_eq!(
+            jira.page_action("https://issues.example.com/browse/ENG-42"),
+            PageAction::AllowIndexOnly
+        );
+        assert_eq!(
+            jira.page_action("https://issues.example.com/secure/admin/ViewSystemInfo.jspa"),
+            PageAction::Deny
+        );
     }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Copy, KeyRound, Shield, Waypoints } from "lucide-react";
 
@@ -8,6 +8,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { useConsole } from "./ConsoleContext";
 
 type ConfigMap = Record<string, string>;
@@ -18,6 +19,19 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 function toConfigMap(entries: Array<{ key: string; value: string }>): ConfigMap {
   return Object.fromEntries(entries.map((entry) => [entry.key, entry.value]));
+}
+
+function formatJsonValue(value: string | undefined) {
+  if (!value) return "";
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+function countRuleFiles(value: unknown) {
+  return Array.isArray(value) ? value.length : 0;
 }
 
 const INSTALL_SCRIPT_URL =
@@ -33,6 +47,7 @@ export function ConsoleSettings() {
   const [loading, setLoading] = useState(true);
   const [savingCrawler, setSavingCrawler] = useState(false);
   const [savingTor, setSavingTor] = useState(false);
+  const [savingSiteRules, setSavingSiteRules] = useState(false);
   const [crawlerAuthKey, setCrawlerAuthKey] = useState("");
   const [workerConcurrency, setWorkerConcurrency] = useState("16");
   const [jsRenderConcurrency, setJsRenderConcurrency] = useState("1");
@@ -41,6 +56,20 @@ export function ConsoleSettings() {
   const [maxAttempts, setMaxAttempts] = useState("");
   const [torEnabled, setTorEnabled] = useState(false);
   const [torProxyUrl, setTorProxyUrl] = useState("");
+  const [siteRulesBundle, setSiteRulesBundle] = useState("");
+
+  const applyConfigValues = useCallback((nextConfig: ConfigMap) => {
+    setConfig(nextConfig);
+    setCrawlerAuthKey(nextConfig["crawler.auth_key"] ?? "");
+    setWorkerConcurrency(nextConfig["crawler.total_concurrency"] ?? "16");
+    setJsRenderConcurrency(nextConfig["crawler.js_render_concurrency"] ?? "1");
+    setMaxJobs(nextConfig["crawler.max_jobs"] ?? "16");
+    setClaimTimeout(nextConfig["crawler.claim_timeout_secs"] ?? "");
+    setMaxAttempts(nextConfig["crawler.max_attempts"] ?? "");
+    setTorEnabled(nextConfig["crawler.tor_enabled"] === "true");
+    setTorProxyUrl(nextConfig["crawler.tor_proxy_url"] ?? "");
+    setSiteRulesBundle(formatJsonValue(nextConfig["crawler.site_rules_bundle"]));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,16 +77,7 @@ export function ConsoleSettings() {
     getSystemConfig(token)
       .then((response) => {
         if (cancelled) return;
-        const nextConfig = toConfigMap(response.entries);
-        setConfig(nextConfig);
-        setCrawlerAuthKey(nextConfig["crawler.auth_key"] ?? "");
-        setWorkerConcurrency(nextConfig["crawler.total_concurrency"] ?? "16");
-        setJsRenderConcurrency(nextConfig["crawler.js_render_concurrency"] ?? "1");
-        setMaxJobs(nextConfig["crawler.max_jobs"] ?? "16");
-        setClaimTimeout(nextConfig["crawler.claim_timeout_secs"] ?? "");
-        setMaxAttempts(nextConfig["crawler.max_attempts"] ?? "");
-        setTorEnabled(nextConfig["crawler.tor_enabled"] === "true");
-        setTorProxyUrl(nextConfig["crawler.tor_proxy_url"] ?? "");
+        applyConfigValues(toConfigMap(response.entries));
       })
       .catch((error) => {
         if (!cancelled) setFlash(getErrorMessage(error, t("console.settings.save_error")));
@@ -69,7 +89,7 @@ export function ConsoleSettings() {
     return () => {
       cancelled = true;
     };
-  }, [token, setFlash, t]);
+  }, [token, setFlash, t, applyConfigValues]);
 
   const nextWorkerConcurrency = String(Math.max(1, Number(workerConcurrency) || 16));
   const nextJsRenderConcurrency = String(Math.max(1, Number(jsRenderConcurrency) || 1));
@@ -100,6 +120,44 @@ export function ConsoleSettings() {
       torProxyUrl !== (config["crawler.tor_proxy_url"] ?? ""),
     [torEnabled, torProxyUrl, config],
   );
+
+  const siteRulesDirty = useMemo(
+    () => siteRulesBundle !== formatJsonValue(config["crawler.site_rules_bundle"]),
+    [siteRulesBundle, config],
+  );
+
+  const siteRulesSummary = useMemo(() => {
+    if (!siteRulesBundle.trim()) {
+      return {
+        platforms: 0,
+        platformPresets: 0,
+        sites: 0,
+        valid: true,
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(siteRulesBundle) as {
+        platforms?: unknown;
+        platform_presets?: unknown;
+        sites?: unknown;
+      };
+
+      return {
+        platforms: countRuleFiles(parsed.platforms),
+        platformPresets: countRuleFiles(parsed.platform_presets),
+        sites: countRuleFiles(parsed.sites),
+        valid: true,
+      };
+    } catch {
+      return {
+        platforms: 0,
+        platformPresets: 0,
+        sites: 0,
+        valid: false,
+      };
+    }
+  }, [siteRulesBundle]);
 
   const installCommand = crawlerAuthKey.trim()
     ? `tmp="$(mktemp)" && { curl -fsSL ${INSTALL_SCRIPT_URL} -o "$tmp" || curl -fsSL ${INSTALL_SCRIPT_PROXY_URL} -o "$tmp"; } && sudo bash "$tmp" -- --server ${installServer} --crawler-key ${crawlerAuthKey.trim()}; status=$?; rm -f "$tmp"; [ $status -eq 0 ]`
@@ -155,6 +213,30 @@ export function ConsoleSettings() {
       setFlash(getErrorMessage(error, t("console.settings.save_error")));
     } finally {
       setSavingTor(false);
+    }
+  }
+
+  async function handleSaveSiteRulesConfig() {
+    setSavingSiteRules(true);
+    setFlash(null);
+    try {
+      let nextValue: string | null = null;
+      if (siteRulesBundle.trim()) {
+        nextValue = JSON.stringify(JSON.parse(siteRulesBundle));
+      }
+
+      await setSystemConfig(token, "crawler.site_rules_bundle", nextValue);
+      const response = await getSystemConfig(token);
+      applyConfigValues(toConfigMap(response.entries));
+      setFlash(t("console.settings.save_success"));
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        setFlash(t("console.settings.site_rules_invalid_json"));
+      } else {
+        setFlash(getErrorMessage(error, t("console.settings.save_error")));
+      }
+    } finally {
+      setSavingSiteRules(false);
     }
   }
 
@@ -299,6 +381,74 @@ export function ConsoleSettings() {
             <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs leading-6 text-background/90">{installCommand}</pre>
           </div>
         ) : null}
+      </PanelSection>
+
+      <PanelSection title={t("console.settings.site_rules_section")} contentClassName="space-y-5">
+        <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="flex flex-col gap-1">
+            <p className="text-sm text-foreground">{t("console.settings.site_rules_help")}</p>
+            <p className="text-xs text-muted-foreground">{t("console.settings.site_rules_reset_hint")}</p>
+            <code className="pt-1 text-xs text-muted-foreground">crawler.site_rules_bundle</code>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_platforms_label")}</span>
+              <span className="text-sm text-muted-foreground">{siteRulesSummary.platforms}</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_presets_label")}</span>
+              <span className="text-sm text-muted-foreground">{siteRulesSummary.platformPresets}</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_sites_label")}</span>
+              <span className="text-sm text-muted-foreground">{siteRulesSummary.sites}</span>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_status_label")}</span>
+              <span className="text-sm text-muted-foreground">
+                {siteRulesSummary.valid
+                  ? t("console.settings.site_rules_status_ready")
+                  : t("console.settings.site_rules_status_invalid")}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <FieldShell label={t("console.settings.site_rules_label")}>
+          <Textarea
+            value={siteRulesBundle}
+            onChange={(event) => setSiteRulesBundle(event.target.value)}
+            placeholder={t("console.settings.site_rules_placeholder")}
+            className="min-h-80 font-mono text-xs leading-6"
+          />
+        </FieldShell>
+
+        {!siteRulesSummary.valid ? (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {t("console.settings.site_rules_invalid_json")}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={savingSiteRules || !siteRulesDirty || !siteRulesSummary.valid}
+            onClick={() => void handleSaveSiteRulesConfig()}
+          >
+            {t("console.settings.save")}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {t("console.settings.site_rules_effective_note")}
+          </span>
+        </div>
       </PanelSection>
 
       <PanelSection title={t("console.settings.tor_section")} contentClassName="space-y-5">

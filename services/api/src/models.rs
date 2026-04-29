@@ -553,6 +553,8 @@ pub struct CrawlResultInput {
     pub retryable: Option<bool>,
     pub error_kind: Option<String>,
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub site_profile_id: Option<String>,
     #[serde(default = "crate::models::default_network")]
     pub network: String,
     #[serde(default)]
@@ -699,6 +701,7 @@ pub struct CrawlJobDetail {
     pub max_attempts: u32,
     pub source: String,
     pub rule_id: Option<String>,
+    pub site_profile_id: Option<String>,
     pub claimed_by: Option<String>,
     pub discovered_at: DateTime<Utc>,
     pub claimed_at: Option<DateTime<Utc>>,

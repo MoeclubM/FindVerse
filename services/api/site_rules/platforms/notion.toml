@@ -1,0 +1,6 @@
+id = "notion"
+preset = "notion"
+priority = 50
+
+[match]
+host_suffixes = ["notion.site", "notion.so"]

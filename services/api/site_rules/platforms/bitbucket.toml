@@ -1,0 +1,6 @@
+id = "bitbucket"
+preset = "bitbucket"
+priority = 80
+
+[match]
+html_markers = ["content=\"bitbucket", "bitbucket-root", "bitbucket.org"]

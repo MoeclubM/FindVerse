@@ -95,7 +95,28 @@ export function ConsoleJobs() {
     () => new Map((overview?.crawlers ?? []).map((crawler) => [crawler.id, crawler.name])),
     [overview?.crawlers],
   );
+  const ruleNameById = useMemo(
+    () => new Map((overview?.rules ?? []).map((rule) => [rule.id, rule.name])),
+    [overview?.rules],
+  );
   const selectedWorkerName = selectedJob?.claimed_by ? crawlerNameById.get(selectedJob.claimed_by) : null;
+
+  function formatRuleLabel(ruleId: string | null) {
+    if (!ruleId) return null;
+    return ruleNameById.get(ruleId) ?? ruleId;
+  }
+
+  function formatSiteProfileLabel(siteProfileId: string | null) {
+    if (!siteProfileId) return null;
+    return siteProfileId === "unknown"
+      ? t("console.jobs.site_profile_fallback")
+      : siteProfileId;
+  }
+
+  const selectedRuleLabel = selectedJob ? formatRuleLabel(selectedJob.rule_id) : null;
+  const selectedSiteProfileLabel = selectedJob
+    ? formatSiteProfileLabel(selectedJob.site_profile_id)
+    : null;
 
   const cleanupFailedCount = (stats?.failed ?? 0) + (stats?.blocked ?? 0) + (stats?.dead_letter ?? 0);
   const cleanupSucceededCount = stats?.succeeded ?? 0;
@@ -257,7 +278,7 @@ export function ConsoleJobs() {
                 setOffset(0);
               }}
             >
-              <SelectTrigger size="sm" className="w-[180px]">
+              <SelectTrigger size="sm" className="w-45">
                 <SelectValue placeholder={t("console.jobs.all_statuses")} />
               </SelectTrigger>
               <SelectContent>
@@ -342,6 +363,8 @@ export function ConsoleJobs() {
                 : jobs?.jobs.length
                   ? jobs.jobs.map((job) => {
                       const workerName = job.claimed_by ? crawlerNameById.get(job.claimed_by) : null;
+                      const ruleLabel = formatRuleLabel(job.rule_id);
+                      const siteProfileLabel = formatSiteProfileLabel(job.site_profile_id);
                       return (
                       <TableRow key={job.id} data-state={selectedJobId === job.id ? "selected" : undefined}>
                         <TableCell className="max-w-0 whitespace-normal">
@@ -378,6 +401,14 @@ export function ConsoleJobs() {
                               <span>{t("console.jobs.depth_progress", { current: job.depth, max: job.max_depth })}</span>
                               <span>{t("console.jobs.discovered_count", { count: job.discovered_urls_count })}</span>
                             </div>
+                            {ruleLabel || siteProfileLabel ? (
+                              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                {ruleLabel ? <span>{t("console.jobs.rule_name", { name: ruleLabel })}</span> : null}
+                                {siteProfileLabel ? (
+                                  <span>{t("console.jobs.site_profile_name", { name: siteProfileLabel })}</span>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell className="hidden whitespace-normal lg:table-cell">
@@ -527,6 +558,26 @@ export function ConsoleJobs() {
                 {selectedWorkerName && selectedJob.claimed_by ? (
                   <span className="mt-2 block text-xs text-muted-foreground">
                     {t("console.jobs.worker_id", { id: selectedJob.claimed_by })}
+                  </span>
+                ) : null}
+              </div>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.rule")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {selectedRuleLabel ?? "-"}
+                </strong>
+                {selectedRuleLabel && selectedJob.rule_id && selectedRuleLabel !== selectedJob.rule_id ? (
+                  <span className="mt-2 block text-xs text-muted-foreground">{selectedJob.rule_id}</span>
+                ) : null}
+              </div>
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.site_profile")}</span>
+                <strong className="mt-2 block text-sm font-semibold text-foreground">
+                  {selectedSiteProfileLabel ?? "-"}
+                </strong>
+                {selectedJob.site_profile_id === "unknown" ? (
+                  <span className="mt-2 block text-xs text-muted-foreground">
+                    {t("console.jobs.site_profile_fallback_help")}
                   </span>
                 ) : null}
               </div>

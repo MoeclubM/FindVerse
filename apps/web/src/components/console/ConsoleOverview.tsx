@@ -6,7 +6,10 @@ import {
 import { useTranslation } from "react-i18next";
 import { PanelSection, StatStrip } from "../common/PanelPrimitives";
 import { Badge } from "../ui/badge";
-import { Card, CardContent } from "../ui/card";
+
+function formatTimestamp(value: string) {
+  return value.replace("T", " ").replace("Z", "").slice(0, 16);
+}
 
 export function ConsoleOverview() {
   const { overview, users } = useConsole();
@@ -23,9 +26,10 @@ export function ConsoleOverview() {
         meta={t("console.overview.recent_events_count", {
           count: recentEvents.length,
         })}
-        contentClassName="space-y-5"
+        contentClassName="space-y-3"
       >
         <StatStrip
+          compact
           items={[
             {
               label: t("console.overview.indexed_docs"),
@@ -65,54 +69,54 @@ export function ConsoleOverview() {
               value: users.length,
             },
           ]}
-          className="xl:grid-cols-3"
+          className="xl:grid-cols-5 2xl:grid-cols-10"
         />
       </PanelSection>
 
       <PanelSection
         title={t("console.overview.recent_events")}
         meta={t("console.overview.recent_events_meta")}
+        contentClassName="space-y-3"
       >
-        <div className="grid gap-3">
-          {recentEvents.length ? (
-            recentEvents.map((event) => (
-              <Card key={event.id} className="rounded-2xl">
-                <CardContent className="grid min-w-0 gap-3 p-4">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                    <strong className="text-foreground">
+        {recentEvents.length ? (
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            {recentEvents.map((event, index) => (
+              <div
+                key={event.id}
+                className={index === 0 ? "px-3 py-2" : "border-t border-border px-3 py-2"}
+              >
+                <div className="grid gap-2 md:grid-cols-[minmax(0,210px)_110px_130px_minmax(0,1fr)] md:items-start">
+                  <div className="min-w-0 flex flex-wrap items-center gap-1.5">
+                    <strong className="text-xs font-semibold text-foreground">
                       {getConsoleEventKindLabel(t, event.kind)}
                     </strong>
-                    <Badge
-                      variant={event.status === "ok" ? "success" : "outline"}
-                    >
+                    <Badge variant={event.status === "ok" ? "success" : "outline"}>
                       {getConsoleEventStatusLabel(t, event.status)}
                     </Badge>
-                    <span>{event.created_at}</span>
-                    {event.crawler_id ? (
-                      <code className="max-w-full break-all text-xs">
-                        {event.crawler_id}
-                      </code>
-                    ) : null}
                   </div>
-                  <div className="mt-3 grid min-w-0 gap-2">
-                    <span className="break-words text-sm text-foreground">
-                      {event.message}
-                    </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {formatTimestamp(event.created_at)}
+                  </span>
+                  <code className="max-w-full truncate text-[11px] text-muted-foreground">
+                    {event.crawler_id ?? "-"}
+                  </code>
+                  <div className="min-w-0">
+                    <p className="wrap-break-word text-xs leading-5 text-foreground">{event.message}</p>
                     {event.url ? (
-                      <code className="max-w-full break-all text-xs">
+                      <code className="mt-0.5 block max-w-full break-all text-[11px] text-muted-foreground">
                         {event.url}
                       </code>
                     ) : null}
                   </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-              {t("console.overview.no_events")}
-            </div>
-          )}
-        </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+            {t("console.overview.no_events")}
+          </div>
+        )}
       </PanelSection>
     </>
   );

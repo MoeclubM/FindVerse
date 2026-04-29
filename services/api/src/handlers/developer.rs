@@ -10,9 +10,9 @@ use crate::{
     dev_auth::UserIdentity,
     error::ApiError,
     models::{
-        CreateKeyRequest, UserLoginRequest, UserRegisterRequest, UserSessionResponse,
-        DeveloperDomainInsightQuery, DeveloperDomainInsightResponse, DeveloperDomainSubmitRequest,
-        DeveloperDomainSubmitResponse, DeveloperUsageResponse,
+        CreateKeyRequest, DeveloperDomainInsightQuery, DeveloperDomainInsightResponse,
+        DeveloperDomainSubmitRequest, DeveloperDomainSubmitResponse, DeveloperUsageResponse,
+        UserLoginRequest, UserRegisterRequest, UserSessionResponse,
     },
 };
 
