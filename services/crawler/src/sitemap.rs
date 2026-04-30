@@ -299,17 +299,16 @@ fn parse_feed_xml(xml: &str) -> Vec<SitemapEntry> {
             }
             Ok(Event::Text(ref e)) if inside_entry => {
                 if let Ok(text) = e.decode() {
+                    let text = text.trim();
                     match current_tag {
                         FeedTag::Link => {
-                            if loc.trim().is_empty() {
-                                loc.clear();
-                                loc.push_str(&text);
+                            if loc.is_empty() {
+                                loc.push_str(text);
                             }
                         }
                         FeedTag::Updated | FeedTag::Published | FeedTag::PubDate => {
-                            if lastmod.trim().is_empty() {
-                                lastmod.clear();
-                                lastmod.push_str(&text);
+                            if lastmod.is_empty() {
+                                lastmod.push_str(text);
                             }
                         }
                         FeedTag::Other => {}
