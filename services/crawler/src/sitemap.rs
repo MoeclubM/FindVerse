@@ -4,7 +4,7 @@ use std::io::Read;
 
 use anyhow::Result;
 use quick_xml::Reader;
-use quick_xml::events::Event;
+use quick_xml::events::{BytesRef, Event};
 use tracing::info;
 use url::Url;
 
@@ -97,6 +97,25 @@ enum FeedTag {
     Other,
 }
 
+/// Resolves a quick-xml general entity reference (e.g. `&amp;`, `&#x30;`) into
+/// its textual representation. Recognises the five predefined XML entities and
+/// numeric character references; unknown entities are returned as the empty
+/// string so they are silently dropped (matching the prior `unescape()` lossy
+/// behaviour for malformed input).
+fn resolve_entity_ref(e: &BytesRef<'_>) -> String {
+    if let Ok(Some(ch)) = e.resolve_char_ref() {
+        return ch.to_string();
+    }
+    match e.decode().ok().as_deref() {
+        Some("amp") => "&".to_string(),
+        Some("lt") => "<".to_string(),
+        Some("gt") => ">".to_string(),
+        Some("quot") => "\"".to_string(),
+        Some("apos") => "'".to_string(),
+        _ => String::new(),
+    }
+}
+
 fn parse_urlset_xml(xml: &str) -> Vec<SitemapEntry> {
     let mut reader = Reader::from_str(xml);
     let mut entries = Vec::new();
@@ -128,8 +147,7 @@ fn parse_urlset_xml(xml: &str) -> Vec<SitemapEntry> {
                 }
             }
             Ok(Event::Text(ref e)) if inside_url => {
-                if let Ok(text) = e.unescape() {
-                    let text = text.trim().to_string();
+                if let Ok(text) = e.decode() {
                     match current_tag {
                         UrlTag::Loc => loc.push_str(&text),
                         UrlTag::Lastmod => lastmod.push_str(&text),
@@ -137,6 +155,16 @@ fn parse_urlset_xml(xml: &str) -> Vec<SitemapEntry> {
                         UrlTag::Priority => priority_str.push_str(&text),
                         UrlTag::Other => {}
                     }
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) if inside_url => {
+                let text = resolve_entity_ref(e);
+                match current_tag {
+                    UrlTag::Loc => loc.push_str(&text),
+                    UrlTag::Lastmod => lastmod.push_str(&text),
+                    UrlTag::Changefreq => changefreq.push_str(&text),
+                    UrlTag::Priority => priority_str.push_str(&text),
+                    UrlTag::Other => {}
                 }
             }
             Ok(Event::End(ref e)) => {
@@ -186,9 +214,12 @@ fn parse_sitemap_index_xml(xml: &str) -> Vec<String> {
                 }
             }
             Ok(Event::Text(ref e)) if inside_loc => {
-                if let Ok(text) = e.unescape() {
-                    loc.push_str(text.trim());
+                if let Ok(text) = e.decode() {
+                    loc.push_str(&text);
                 }
+            }
+            Ok(Event::GeneralRef(ref e)) if inside_loc => {
+                loc.push_str(&resolve_entity_ref(e));
             }
             Ok(Event::End(ref e)) => {
                 let name = e.local_name();
@@ -267,7 +298,7 @@ fn parse_feed_xml(xml: &str) -> Vec<SitemapEntry> {
                 current_tag = FeedTag::Other;
             }
             Ok(Event::Text(ref e)) if inside_entry => {
-                if let Ok(text) = e.unescape() {
+                if let Ok(text) = e.decode() {
                     let text = text.trim();
                     match current_tag {
                         FeedTag::Link => {
@@ -282,6 +313,16 @@ fn parse_feed_xml(xml: &str) -> Vec<SitemapEntry> {
                         }
                         FeedTag::Other => {}
                     }
+                }
+            }
+            Ok(Event::GeneralRef(ref e)) if inside_entry => {
+                let text = resolve_entity_ref(e);
+                match current_tag {
+                    FeedTag::Link => loc.push_str(&text),
+                    FeedTag::Updated | FeedTag::Published | FeedTag::PubDate => {
+                        lastmod.push_str(&text);
+                    }
+                    FeedTag::Other => {}
                 }
             }
             Ok(Event::End(ref e)) => {
