@@ -10,21 +10,11 @@ import {
   Globe2,
   type LucideIcon,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
-import {
-  AdminUserRecord,
-  CrawlOverview,
-  getCrawlOverview,
-  getUserSession,
-  listAdminUsers,
-  listDocuments,
-  loginUser,
-  logoutUser,
-  UserSession,
-} from "../api";
+import { loginUser, logoutUser } from "../api";
 import { AppTopbar, TopbarActionButton } from "./common/AppTopbar";
 import {
   ConsoleProvider,
@@ -38,6 +28,8 @@ import { ConsoleWorkers } from "./console/ConsoleWorkers";
 import { ConsoleDocuments } from "./console/ConsoleDocuments";
 import { ConsoleJobs } from "./console/ConsoleJobs";
 import { ConsoleSettings } from "./console/ConsoleSettings";
+import { useConsoleData } from "./console/useConsoleData";
+import { useConsoleSession } from "./console/useConsoleSession";
 import type { ThemeMode } from "./ThemeSwitcher";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Button } from "./ui/button";
@@ -66,7 +58,6 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 
-const USER_SESSION_KEY = "findverse_user_session";
 const SITE_NAME =
   (import.meta.env.VITE_FINDVERSE_SITE_NAME || "FindVerse").trim() ||
   "FindVerse";
@@ -97,51 +88,6 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-async function refreshConsoleData(
-  token: string,
-  actions: {
-    setOverview: (value: CrawlOverview | null) => void;
-    setUsers: (value: AdminUserRecord[]) => void;
-    setFlash: (value: string | null) => void;
-  },
-  refreshFailedMessage: string,
-  silent = false,
-) {
-  try {
-    const [overview, users] = await Promise.all([
-      getCrawlOverview(token),
-      listAdminUsers(token),
-    ]);
-    actions.setOverview(overview);
-    actions.setUsers(users);
-  } catch (error) {
-    if (!silent) {
-      actions.setFlash(getErrorMessage(error, refreshFailedMessage));
-    }
-  }
-}
-
-async function refreshDocuments(
-  token: string,
-  actions: {
-    setDocuments: (
-      value: Awaited<ReturnType<typeof listDocuments>> | null,
-    ) => void;
-    setFlash: (value: string | null) => void;
-  },
-  refreshFailedMessage: string,
-  silent = false,
-) {
-  try {
-    const documents = await listDocuments(token);
-    actions.setDocuments(documents);
-  } catch (error) {
-    if (!silent) {
-      actions.setFlash(getErrorMessage(error, refreshFailedMessage));
-    }
-  }
-}
-
 export function ConsolePage(props: {
   theme: "light" | "dark";
   themeMode: ThemeMode;
@@ -151,16 +97,8 @@ export function ConsolePage(props: {
 }) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<ConsoleTab>("overview");
-  const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem(USER_SESSION_KEY),
-  );
-  const [session, setSession] = useState<UserSession | null>(null);
-  const [overview, setOverview] = useState<CrawlOverview | null>(null);
-  const [users, setUsers] = useState<AdminUserRecord[]>([]);
-  const [documents, setDocuments] = useState<Awaited<
-    ReturnType<typeof listDocuments>
-  > | null>(null);
-  const [authLoading, setAuthLoading] = useState(Boolean(token));
+  const { token, session, authLoading, storeSession, clearSession } =
+    useConsoleSession();
   const [busy, setBusy] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState("");
@@ -179,127 +117,19 @@ export function ConsolePage(props: {
     toast(value);
   }, []);
 
-  const refreshAll = useCallback(
-    () =>
-      token && hasConsoleAccess
-        ? refreshConsoleData(
-            token,
-            {
-              setOverview,
-              setUsers,
-              setFlash,
-            },
-            t("console.refresh_failed"),
-          )
-        : Promise.resolve(),
-    [token, hasConsoleAccess, setFlash, t],
-  );
-
-  const refreshDocumentList = useCallback(
-    () =>
-      token && hasConsoleAccess
-        ? refreshDocuments(
-            token,
-            {
-              setDocuments,
-              setFlash,
-            },
-            t("console.refresh_failed"),
-          )
-        : Promise.resolve(),
-    [token, hasConsoleAccess, setFlash, t],
-  );
-
-  useEffect(() => {
-    if (!token) {
-      setAuthLoading(false);
-      setSession(null);
-      return;
-    }
-
-    let cancelled = false;
-    setAuthLoading(true);
-    getUserSession(token)
-      .then((nextSession) => {
-        if (!cancelled) {
-          setSession(nextSession);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          localStorage.removeItem(USER_SESSION_KEY);
-          setToken(null);
-          setSession(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setAuthLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
-  useEffect(() => {
-    if (!token || !session || !hasConsoleAccess) {
-      return;
-    }
-
-    let cancelled = false;
-    let running = false;
-
-    const run = async () => {
-      if (cancelled || running) {
-        return;
-      }
-      running = true;
-      try {
-        await refreshConsoleData(
-          token,
-          {
-            setOverview,
-            setUsers,
-            setFlash,
-          },
-          t("console.refresh_failed"),
-          true,
-        );
-      } finally {
-        running = false;
-      }
-    };
-
-    void run();
-    const timer = window.setInterval(() => {
-      void run();
-    }, 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [token, session, hasConsoleAccess, setFlash, t]);
-
-  useEffect(() => {
-    if (!token || !session || !hasConsoleAccess) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void refreshDocuments(
-        token,
-        {
-          setDocuments,
-          setFlash,
-        },
-        t("console.refresh_failed"),
-        true,
-      );
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [token, session, hasConsoleAccess, setFlash, t]);
+  const {
+    overview,
+    users,
+    documents,
+    refreshAll,
+    refreshDocumentList,
+    clearData,
+  } = useConsoleData({
+    token,
+    enabled: Boolean(session && hasConsoleAccess),
+    setFlash,
+    refreshFailedMessage: t("console.refresh_failed"),
+  });
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -307,9 +137,7 @@ export function ConsolePage(props: {
     setLoginError(null);
     try {
       const nextSession = await loginUser(loginUsername, loginPassword);
-      localStorage.setItem(USER_SESSION_KEY, nextSession.token);
-      setToken(nextSession.token);
-      setSession(nextSession);
+      storeSession(nextSession);
     } catch (error) {
       setLoginError(getErrorMessage(error, t("console.login.error")));
     } finally {
@@ -328,12 +156,8 @@ export function ConsolePage(props: {
     } catch {
       // Ignore logout failures and clear local state anyway.
     } finally {
-      localStorage.removeItem(USER_SESSION_KEY);
-      setToken(null);
-      setSession(null);
-      setOverview(null);
-      setUsers([]);
-      setDocuments(null);
+      clearSession();
+      clearData();
       setLoginError(null);
       setBusy(false);
     }
