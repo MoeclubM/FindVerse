@@ -64,25 +64,25 @@ pub async fn migrate_legacy_control_plane_data(
         temporary_credentials: Vec::new(),
     };
 
-    if let Some(path) = config.dev_auth_store_path.as_ref() {
-        if fs::metadata(path).await.is_ok() {
-            let result = import_legacy_auth_data(&pg_pool, path).await?;
-            summary.auth_file_imported = true;
-            summary.imported_accounts = result.imported_accounts;
-            summary.skipped_legacy_sessions = result.skipped_sessions;
-            summary
-                .temporary_credentials
-                .extend(result.temporary_credentials);
-        }
+    if let Some(path) = config.dev_auth_store_path.as_ref()
+        && fs::metadata(path).await.is_ok()
+    {
+        let result = import_legacy_auth_data(&pg_pool, path).await?;
+        summary.auth_file_imported = true;
+        summary.imported_accounts = result.imported_accounts;
+        summary.skipped_legacy_sessions = result.skipped_sessions;
+        summary
+            .temporary_credentials
+            .extend(result.temporary_credentials);
     }
 
-    if let Some(path) = config.developer_store_path.as_ref() {
-        if fs::metadata(path).await.is_ok() {
-            import_legacy_developer_store(&pg_pool, path)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            summary.developer_store_imported = true;
-        }
+    if let Some(path) = config.developer_store_path.as_ref()
+        && fs::metadata(path).await.is_ok()
+    {
+        import_legacy_developer_store(&pg_pool, path)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        summary.developer_store_imported = true;
     }
 
     let rotated = rotate_non_argon_credentials(&pg_pool).await?;

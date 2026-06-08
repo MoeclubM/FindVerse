@@ -9,8 +9,6 @@ use crate::{
     store::SearchIndex,
 };
 
-const PROJECTION_CONCURRENCY: usize = 8;
-
 #[derive(Debug, Clone)]
 pub struct ProjectionRunner {
     ingest: IngestService,
@@ -33,14 +31,14 @@ impl ProjectionRunner {
             return Ok(0);
         }
 
+        let concurrency = limit.max(1);
         let mut set: JoinSet<(PendingIngestItem, Result<(), ApiError>)> = JoinSet::new();
         let mut pending = items.into_iter();
         let mut in_flight = 0usize;
         let mut processed = 0usize;
 
         loop {
-            // Fill up to concurrency limit
-            while in_flight < PROJECTION_CONCURRENCY {
+            while in_flight < concurrency {
                 let Some(item) = pending.next() else { break };
                 let runner = self.clone();
                 let store = crawler_store.clone();

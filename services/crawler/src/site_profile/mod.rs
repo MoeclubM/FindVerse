@@ -41,10 +41,6 @@ impl SiteProfile {
         })
     }
 
-    pub fn allows_discovery(&self, url: &str) -> bool {
-        self.page_action(url).allows_discovery()
-    }
-
     pub fn discovery_sources(&self, origin: &str) -> Vec<String> {
         self.preset.discovery_sources(origin)
     }
@@ -235,7 +231,10 @@ path_regex = "^/[^/]+/[^/]+/blob/"
                 .filtered_reason("https://unknown.example.com/docs/page")
                 .is_none()
         );
-        assert!(profile.allows_discovery("https://unknown.example.com/docs/page"));
+        assert_eq!(
+            profile.page_action("https://unknown.example.com/docs/page"),
+            PageAction::AllowIndexDiscover
+        );
     }
 
     #[test]

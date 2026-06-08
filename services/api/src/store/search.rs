@@ -122,10 +122,8 @@ impl SearchIndex {
             }
         };
 
-        if should_import {
-            if let Err(error) = self.upsert_documents(documents).await {
-                warn!(?error, "failed to import bootstrap documents");
-            }
+        if should_import && let Err(error) = self.upsert_documents(documents).await {
+            warn!(?error, "failed to import bootstrap documents");
         }
 
         Ok(())
@@ -298,10 +296,10 @@ impl SearchIndex {
     pub async fn search(&self, params: SearchParams) -> SearchResponse {
         let plan = PreparedSearch::from_params(&params);
 
-        if let Some(cache_key) = plan.cache_key.as_deref() {
-            if let Ok(cached) = self.get_cached_search(cache_key).await {
-                return cached;
-            }
+        if let Some(cache_key) = plan.cache_key.as_deref()
+            && let Ok(cached) = self.get_cached_search(cache_key).await
+        {
+            return cached;
         }
 
         let response = match self
@@ -353,10 +351,10 @@ impl SearchIndex {
     }
 
     async fn set_cached_search(&self, key: &str, response: &SearchResponse) {
-        if let Ok(mut conn) = self.redis_client.get_multiplexed_async_connection().await {
-            if let Ok(json) = serde_json::to_string(response) {
-                let _: Result<(), _> = conn.set_ex(key, json, 60).await;
-            }
+        if let Ok(mut conn) = self.redis_client.get_multiplexed_async_connection().await
+            && let Ok(json) = serde_json::to_string(response)
+        {
+            let _: Result<(), _> = conn.set_ex(key, json, 60).await;
         }
     }
 

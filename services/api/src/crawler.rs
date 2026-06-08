@@ -71,6 +71,23 @@ pub struct BlacklistCleanupOutcome {
     pub deleted_origins: usize,
 }
 
+struct EnqueueUrlsRequest<'a> {
+    developer_id: &'a str,
+    urls: Vec<String>,
+    source: &'a str,
+    budget_id: &'a str,
+    depth: i32,
+    max_depth: i32,
+    max_pages: i32,
+    same_origin_concurrency: i32,
+    submitted_by: Option<&'a str>,
+    rule_id: Option<&'a str>,
+    discovery_scope: DiscoveryScope,
+    discovery_host: Option<&'a str>,
+    max_discovered_urls_per_page: i32,
+    allow_revisit: bool,
+}
+
 impl ControlCrawlerStore {
     pub fn new(pg_pool: PgPool, blob_store: BlobStore) -> Self {
         Self {
@@ -734,7 +751,7 @@ impl CrawlerStore {
         let interval_minutes = request.interval_minutes.clamp(1, 10_080) as i64;
         let max_depth = request.max_depth.min(10) as i32;
         let max_pages = request.max_pages.clamp(1, 10_000) as i32;
-        let same_origin_concurrency = request.same_origin_concurrency.clamp(1, 32) as i32;
+        let same_origin_concurrency = request.same_origin_concurrency.max(1) as i32;
         let max_discovered_urls_per_page =
             request.max_discovered_urls_per_page.clamp(1, 200) as i32;
 
@@ -829,7 +846,7 @@ impl CrawlerStore {
             .unwrap_or(row.max_pages as u32) as i32;
         let new_same_origin_concurrency = request
             .same_origin_concurrency
-            .map(|value| value.clamp(1, 32))
+            .map(|value| value.max(1))
             .unwrap_or(row.same_origin_concurrency as u32)
             as i32;
         let new_discovery_scope = request
@@ -1403,22 +1420,22 @@ impl CrawlerStore {
         let budget_id = Uuid::now_v7().to_string();
         let source = format!("developer-property:{submitted_by}:{domain}");
         let accepted_urls = self
-            .enqueue_urls(
-                owner_developer_id,
+            .enqueue_urls(EnqueueUrlsRequest {
+                developer_id: owner_developer_id,
                 urls,
-                &source,
-                &budget_id,
-                0,
-                request.max_depth.min(10) as i32,
-                request.max_pages.clamp(1, 10_000) as i32,
-                request.same_origin_concurrency.clamp(1, 32) as i32,
-                Some(submitted_by),
-                None,
-                DiscoveryScope::SameDomain,
-                Some(&domain),
-                50,
-                request.allow_revisit,
-            )
+                source: &source,
+                budget_id: &budget_id,
+                depth: 0,
+                max_depth: request.max_depth.min(10) as i32,
+                max_pages: request.max_pages.clamp(1, 10_000) as i32,
+                same_origin_concurrency: request.same_origin_concurrency.max(1) as i32,
+                submitted_by: Some(submitted_by),
+                rule_id: None,
+                discovery_scope: DiscoveryScope::SameDomain,
+                discovery_host: Some(&domain),
+                max_discovered_urls_per_page: 50,
+                allow_revisit: request.allow_revisit,
+            })
             .await?;
 
         self.push_event(
@@ -1474,22 +1491,23 @@ impl CrawlerStore {
         let budget_id = Uuid::now_v7().to_string();
 
         let accepted_urls = self
-            .enqueue_urls(
+            .enqueue_urls(EnqueueUrlsRequest {
                 developer_id,
-                request.urls,
-                &source,
-                &budget_id,
-                0,
-                request.max_depth.min(10) as i32,
-                request.max_pages.clamp(1, 10_000) as i32,
-                request.same_origin_concurrency.clamp(1, 32) as i32,
-                Some(developer_id),
-                None,
-                request.discovery_scope,
-                None,
-                request.max_discovered_urls_per_page.clamp(1, 200) as i32,
-                request.allow_revisit,
-            )
+                urls: request.urls,
+                source: &source,
+                budget_id: &budget_id,
+                depth: 0,
+                max_depth: request.max_depth.min(10) as i32,
+                max_pages: request.max_pages.clamp(1, 10_000) as i32,
+                same_origin_concurrency: request.same_origin_concurrency.max(1) as i32,
+                submitted_by: Some(developer_id),
+                rule_id: None,
+                discovery_scope: request.discovery_scope,
+                discovery_host: None,
+                max_discovered_urls_per_page: request.max_discovered_urls_per_page.clamp(1, 200)
+                    as i32,
+                allow_revisit: request.allow_revisit,
+            })
             .await?;
 
         self.push_event(
@@ -1534,7 +1552,7 @@ impl CrawlerStore {
         capabilities: Option<&CrawlerCapabilities>,
     ) -> Result<ClaimJobsResponse, ApiError> {
         let token_hash = bearer_hash(auth_header)?;
-        let max_jobs = request.max_jobs.clamp(1, 100) as i64;
+        let max_jobs = request.max_jobs.max(1) as i64;
         let now = Utc::now();
 
         let crawler = self
@@ -1871,22 +1889,22 @@ impl CrawlerStore {
                         .await;
                     }
 
-                    self.enqueue_urls(
-                        &item.owner_developer_id,
-                        scoped_discovered_urls.clone(),
-                        &finalized_url,
-                        &in_flight.budget_id,
-                        in_flight.depth + 1,
-                        in_flight.max_depth,
-                        in_flight.max_pages,
-                        in_flight.same_origin_concurrency,
-                        Some(&item.owner_developer_id),
-                        in_flight.rule_id.as_deref(),
+                    self.enqueue_urls(EnqueueUrlsRequest {
+                        developer_id: &item.owner_developer_id,
+                        urls: scoped_discovered_urls.clone(),
+                        source: &finalized_url,
+                        budget_id: &in_flight.budget_id,
+                        depth: in_flight.depth + 1,
+                        max_depth: in_flight.max_depth,
+                        max_pages: in_flight.max_pages,
+                        same_origin_concurrency: in_flight.same_origin_concurrency,
+                        submitted_by: Some(&item.owner_developer_id),
+                        rule_id: in_flight.rule_id.as_deref(),
                         discovery_scope,
-                        in_flight.discovery_host.as_deref(),
-                        in_flight.max_discovered_urls_per_page,
-                        false,
-                    )
+                        discovery_host: in_flight.discovery_host.as_deref(),
+                        max_discovered_urls_per_page: in_flight.max_discovered_urls_per_page,
+                        allow_revisit: false,
+                    })
                     .await?;
                 }
 
@@ -1939,7 +1957,7 @@ impl CrawlerStore {
                     .await;
                 }
 
-                search_index.upsert_documents(vec![document]).await?;
+                search_index.upsert_documents(vec![*document]).await?;
 
                 self.push_event(
                     &item.owner_developer_id,
@@ -2009,22 +2027,22 @@ impl CrawlerStore {
                 .map_err(|e| ApiError::Internal(e.into()))?;
 
                 if in_flight.depth < in_flight.max_depth {
-                    self.enqueue_urls(
-                        &item.owner_developer_id,
-                        scoped_discovered_urls.clone(),
-                        &finalized_url,
-                        &in_flight.budget_id,
-                        in_flight.depth + 1,
-                        in_flight.max_depth,
-                        in_flight.max_pages,
-                        in_flight.same_origin_concurrency,
-                        Some(&item.owner_developer_id),
-                        in_flight.rule_id.as_deref(),
+                    self.enqueue_urls(EnqueueUrlsRequest {
+                        developer_id: &item.owner_developer_id,
+                        urls: scoped_discovered_urls.clone(),
+                        source: &finalized_url,
+                        budget_id: &in_flight.budget_id,
+                        depth: in_flight.depth + 1,
+                        max_depth: in_flight.max_depth,
+                        max_pages: in_flight.max_pages,
+                        same_origin_concurrency: in_flight.same_origin_concurrency,
+                        submitted_by: Some(&item.owner_developer_id),
+                        rule_id: in_flight.rule_id.as_deref(),
                         discovery_scope,
-                        in_flight.discovery_host.as_deref(),
-                        in_flight.max_discovered_urls_per_page,
-                        false,
-                    )
+                        discovery_host: in_flight.discovery_host.as_deref(),
+                        max_discovered_urls_per_page: in_flight.max_discovered_urls_per_page,
+                        allow_revisit: false,
+                    })
                     .await?;
                 }
 
@@ -2701,22 +2719,22 @@ impl CrawlerStore {
         for doc in stale_docs {
             let scope = DiscoveryScope::from_db_value(&doc.discovery_scope);
             let _ = self
-                .enqueue_urls(
-                    &doc.owner_developer_id,
-                    vec![doc.canonical_url.clone()],
-                    &doc.canonical_url,
-                    &doc.budget_id,
-                    0, // depth 0 for recrawl
-                    10,
-                    1, // max_pages 1 for individual recrawl
-                    1, // same_origin_concurrency
-                    Some(&doc.owner_developer_id),
-                    doc.rule_id.as_deref(),
-                    scope,
-                    Some(&doc.host),
-                    0,    // max_discovered_urls_per_page - no discovery needed
-                    true, // allow_revisit
-                )
+                .enqueue_urls(EnqueueUrlsRequest {
+                    developer_id: &doc.owner_developer_id,
+                    urls: vec![doc.canonical_url.clone()],
+                    source: &doc.canonical_url,
+                    budget_id: &doc.budget_id,
+                    depth: 0,
+                    max_depth: 10,
+                    max_pages: 1,
+                    same_origin_concurrency: 1,
+                    submitted_by: Some(&doc.owner_developer_id),
+                    rule_id: doc.rule_id.as_deref(),
+                    discovery_scope: scope,
+                    discovery_host: Some(&doc.host),
+                    max_discovered_urls_per_page: 0,
+                    allow_revisit: true,
+                })
                 .await;
         }
         Ok(())
@@ -3208,35 +3226,19 @@ impl CrawlerStore {
         Ok(())
     }
 
-    async fn enqueue_urls(
-        &self,
-        developer_id: &str,
-        urls: Vec<String>,
-        source: &str,
-        budget_id: &str,
-        depth: i32,
-        max_depth: i32,
-        max_pages: i32,
-        same_origin_concurrency: i32,
-        submitted_by: Option<&str>,
-        rule_id: Option<&str>,
-        discovery_scope: DiscoveryScope,
-        discovery_host: Option<&str>,
-        max_discovered_urls_per_page: i32,
-        allow_revisit: bool,
-    ) -> Result<usize, ApiError> {
+    async fn enqueue_urls(&self, request: EnqueueUrlsRequest<'_>) -> Result<usize, ApiError> {
         let mut accepted = 0usize;
         let blacklisted_domains = self.blacklisted_domains().await?;
         let mut budget_used: i64 = sqlx::query_scalar(
             "select count(*) from crawl_jobs where owner_developer_id = $1 and budget_id = $2",
         )
-        .bind(developer_id)
-        .bind(budget_id)
+        .bind(request.developer_id)
+        .bind(request.budget_id)
         .fetch_one(&self.pg_pool)
         .await
         .unwrap_or(0);
-        let max_pages = max_pages.max(1);
-        for url in urls {
+        let max_pages = request.max_pages.max(1);
+        for url in request.urls {
             if budget_used >= i64::from(max_pages) {
                 break;
             }
@@ -3249,11 +3251,12 @@ impl CrawlerStore {
             if url_matches_domain_list(&normalized, &blacklisted_domains) {
                 continue;
             }
-            let resolved_discovery_host = discovery_host
+            let resolved_discovery_host = request
+                .discovery_host
                 .map(ToString::to_string)
                 .or_else(|| extract_host(&normalized));
 
-            if allow_revisit {
+            if request.allow_revisit {
                 // Delete any existing completed job so it can be re-queued
                 sqlx::query(
                     "delete from crawl_jobs
@@ -3261,7 +3264,7 @@ impl CrawlerStore {
                        and url = $2
                        and status in ('succeeded', 'failed', 'blocked', 'dead_letter')",
                 )
-                .bind(developer_id)
+                .bind(request.developer_id)
                 .bind(&normalized)
                 .execute(&self.pg_pool)
                 .await
@@ -3269,10 +3272,10 @@ impl CrawlerStore {
             }
 
             // 计算优先级：深度越浅优先级越高，种子URL最高
-            let priority = if depth == 0 {
+            let priority = if request.depth == 0 {
                 80 // 种子URL
             } else {
-                50 + (10 - depth.min(10)) * 3 // 深度越浅优先级越高
+                50 + (10 - request.depth.min(10)) * 3 // 深度越浅优先级越高
             };
 
             let id = Uuid::now_v7().to_string();
@@ -3308,19 +3311,19 @@ impl CrawlerStore {
                  on conflict (owner_developer_id, url) do nothing",
             )
             .bind(&id)
-            .bind(developer_id)
+            .bind(request.developer_id)
             .bind(&normalized)
-            .bind(depth)
-            .bind(max_depth)
-            .bind(source)
-            .bind(budget_id)
-            .bind(submitted_by)
-            .bind(rule_id)
-            .bind(discovery_scope.as_str())
+            .bind(request.depth)
+            .bind(request.max_depth)
+            .bind(request.source)
+            .bind(request.budget_id)
+            .bind(request.submitted_by)
+            .bind(request.rule_id)
+            .bind(request.discovery_scope.as_str())
             .bind(resolved_discovery_host.as_deref())
             .bind(max_pages)
-            .bind(same_origin_concurrency.max(1))
-            .bind(max_discovered_urls_per_page.max(1))
+            .bind(request.same_origin_concurrency.max(1))
+            .bind(request.max_discovered_urls_per_page.max(1))
             .bind(&origin_key)
             .bind(network)
             .bind(priority)
@@ -3341,7 +3344,7 @@ impl CrawlerStore {
                      values ($1, $2, 'unknown', now(), 0, now())
                      on conflict (owner_developer_id, origin_key) do nothing",
                 )
-                .bind(developer_id)
+                .bind(request.developer_id)
                 .bind(&origin_key)
                 .execute(&self.pg_pool)
                 .await
@@ -3399,23 +3402,24 @@ impl CrawlerStore {
                 .await
                 .map_err(|e| ApiError::Internal(e.into()))?;
 
+            let source = format!("rule:{}", rule.name);
             let accepted = self
-                .enqueue_urls(
-                    &rule.owner_developer_id,
-                    vec![rule.seed_url.clone()],
-                    &format!("rule:{}", rule.name),
-                    &budget_id,
-                    0,
-                    rule.max_depth,
-                    rule.max_pages,
-                    rule.same_origin_concurrency,
-                    Some(&rule.owner_developer_id),
-                    Some(&rule.id),
-                    DiscoveryScope::from_db_value(&rule.discovery_scope),
-                    None,
-                    rule.max_discovered_urls_per_page,
-                    true,
-                )
+                .enqueue_urls(EnqueueUrlsRequest {
+                    developer_id: &rule.owner_developer_id,
+                    urls: vec![rule.seed_url.clone()],
+                    source: &source,
+                    budget_id: &budget_id,
+                    depth: 0,
+                    max_depth: rule.max_depth,
+                    max_pages: rule.max_pages,
+                    same_origin_concurrency: rule.same_origin_concurrency,
+                    submitted_by: Some(&rule.owner_developer_id),
+                    rule_id: Some(&rule.id),
+                    discovery_scope: DiscoveryScope::from_db_value(&rule.discovery_scope),
+                    discovery_host: None,
+                    max_discovered_urls_per_page: rule.max_discovered_urls_per_page,
+                    allow_revisit: true,
+                })
                 .await?;
 
             if accepted > 0 {
@@ -4161,7 +4165,7 @@ fn trusted_canonical_url(result: &CrawlResultInput) -> Option<String> {
 }
 
 enum JobOutcome {
-    Succeeded(IndexedDocument),
+    Succeeded(Box<IndexedDocument>),
     Filtered {
         reason: String,
     },
@@ -4218,7 +4222,7 @@ fn classify_job_outcome(result: &CrawlResultInput, job: &InFlightJobRow) -> JobO
 
     if (200..300).contains(&result.status_code) && result.error_kind.is_none() {
         if let Some(document) = build_document(result) {
-            return JobOutcome::Succeeded(document);
+            return JobOutcome::Succeeded(Box::new(document));
         }
         return JobOutcome::Failed {
             failure_kind: "unindexable_document".to_string(),
@@ -4467,7 +4471,7 @@ fn normalize_domain_list(input: Option<&str>) -> Vec<String> {
     let mut domains = BTreeSet::new();
     for token in input
         .unwrap_or_default()
-        .split(|ch| matches!(ch, ',' | '\n' | '\r' | '\t' | ';' | ' '))
+        .split([',', '\n', '\r', '\t', ';', ' '])
     {
         if let Some(domain) = normalize_domain_input(token) {
             domains.insert(domain);
@@ -4478,7 +4482,7 @@ fn normalize_domain_list(input: Option<&str>) -> Vec<String> {
 
 fn validate_domain_list(input: &str) -> Result<Vec<String>, ApiError> {
     let mut domains = BTreeSet::new();
-    for token in input.split(|ch| matches!(ch, ',' | '\n' | '\r' | '\t' | ';' | ' ')) {
+    for token in input.split([',', '\n', '\r', '\t', ';', ' ']) {
         let trimmed = token.trim();
         if trimmed.is_empty() {
             continue;

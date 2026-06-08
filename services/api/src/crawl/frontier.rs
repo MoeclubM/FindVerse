@@ -100,7 +100,7 @@ impl FrontierService {
         .bind(now)
         .bind(&lease_id)
         .bind(owner_developer_id)
-        .bind(max_jobs.clamp(1, 100) as i64)
+        .bind(max_jobs.max(1) as i64)
         .bind(crawler_has_js_render)
         .fetch_all(&self.pg_pool)
         .await

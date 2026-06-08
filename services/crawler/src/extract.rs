@@ -128,12 +128,11 @@ pub fn extract_links(base: &str, html: &str) -> Vec<String> {
     // 提取 <a href>
     if let Ok(selector) = Selector::parse("a[href]") {
         for anchor in document.select(&selector) {
-            if let Some(href) = anchor.value().attr("href") {
-                if let Ok(resolved) = base_url.join(href) {
-                    if let Some(normalized) = normalize_url(resolved.as_ref()) {
-                        links.insert(normalized);
-                    }
-                }
+            if let Some(href) = anchor.value().attr("href")
+                && let Ok(resolved) = base_url.join(href)
+                && let Some(normalized) = normalize_url(resolved.as_ref())
+            {
+                links.insert(normalized);
             }
         }
     }

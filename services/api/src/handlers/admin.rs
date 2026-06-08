@@ -280,17 +280,16 @@ pub async fn admin_set_system_config(
     if matches!(
         key.as_str(),
         "crawler.total_concurrency" | "crawler.js_render_concurrency" | "crawler.max_jobs"
-    ) {
-        if let Some(value) = body.value.as_deref() {
-            let parsed = value
-                .trim()
-                .parse::<usize>()
-                .map_err(|_| ApiError::BadRequest(format!("{key} must be a positive integer")))?;
-            if parsed == 0 {
-                return Err(ApiError::BadRequest(format!(
-                    "{key} must be a positive integer"
-                )));
-            }
+    ) && let Some(value) = body.value.as_deref()
+    {
+        let parsed = value
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| ApiError::BadRequest(format!("{key} must be a positive integer")))?;
+        if parsed == 0 {
+            return Err(ApiError::BadRequest(format!(
+                "{key} must be a positive integer"
+            )));
         }
     }
     state

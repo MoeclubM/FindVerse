@@ -13,13 +13,13 @@ use std::{
 use anyhow::Context;
 use chrono::Utc;
 use flate2::read::GzDecoder;
-use futures::stream::{self, StreamExt};
 use reqwest::header::CONTENT_TYPE;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, Notify, RwLock, Semaphore};
+use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -280,16 +280,17 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         }
     });
 
-    loop {
-        if shutdown_requested.load(Ordering::Relaxed) {
-            info!("shutdown requested, stopping before claiming more jobs");
-            break;
-        }
+    let mut in_flight: JoinSet<anyhow::Result<SubmitCrawlReportResponse>> = JoinSet::new();
+    let mut claimed_once = false;
 
-        if let Some(target_version) = {
-            let state = runtime_state.lock().await;
-            state.pending_target()
-        } {
+    loop {
+        if !shutdown_requested.load(Ordering::Relaxed)
+            && in_flight.is_empty()
+            && let Some(target_version) = {
+                let state = runtime_state.lock().await;
+                state.pending_target()
+            }
+        {
             match apply_pending_update(
                 &api_client,
                 &config,
@@ -311,38 +312,43 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
         }
 
         let current_runtime = *runtime_config.read().await;
-        let claim_batch_size = current_runtime.max_jobs;
-        let claim = claim_jobs(&api_client, &config, claim_batch_size).await?;
-        if claim.jobs.is_empty() {
-            info!(
-                "crawler {} received no jobs, frontier depth {}",
-                claim.crawler_id, claim.frontier_depth
-            );
-            if config.once {
+        let mut received_empty_claim = false;
+        while !shutdown_requested.load(Ordering::Relaxed) && (!config.once || !claimed_once) {
+            if in_flight.len() >= current_runtime.worker_concurrency {
                 break;
             }
-            tokio::select! {
-                _ = sleep(Duration::from_secs(config.poll_interval_secs)) => {}
-                _ = shutdown_notify.notified() => {
-                    info!("shutdown requested while idle, stopping worker");
-                    break;
-                }
-            }
-            continue;
-        }
 
-        let lease_id = claim.lease_id.clone();
-        let js_render_limiter = Arc::new(Semaphore::new(current_runtime.js_render_concurrency));
-        let capabilities = config.capabilities.clone();
-        let pending_results = stream::iter(claim.jobs)
-            .map(|job| {
+            let available_capacity = current_runtime.worker_concurrency - in_flight.len();
+            let claim_batch_size = current_runtime.max_jobs.min(available_capacity).max(1);
+            let claim = claim_jobs(&api_client, &config, claim_batch_size).await?;
+            if claim.jobs.is_empty() {
+                received_empty_claim = true;
+                if in_flight.is_empty() {
+                    info!(
+                        "crawler {} received no jobs, frontier depth {}",
+                        claim.crawler_id, claim.frontier_depth
+                    );
+                }
+                break;
+            }
+
+            let lease_id = claim
+                .lease_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("claim response missing lease_id"))?;
+            let js_render_limiter = Arc::new(Semaphore::new(current_runtime.js_render_concurrency));
+            let capabilities = config.capabilities.clone();
+            for job in claim.jobs {
+                let api_client = api_client.clone();
+                let config = config.clone();
                 let clearnet_clients = clearnet_clients.clone();
                 let tor_clients = tor_clients.clone();
                 let state = Arc::clone(&state);
                 let js_render_limiter = Arc::clone(&js_render_limiter);
                 let allowed_domains = config.allowed_domains.clone();
                 let capabilities = capabilities.clone();
-                async move {
+                let lease_id = lease_id.clone();
+                in_flight.spawn(async move {
                     info!(
                         "processing {} ({}) from {} depth {}/{} attempt {} discovered {}",
                         job.url,
@@ -365,9 +371,8 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                     } else {
                         &clearnet_clients
                     };
-                    process_job(
-                        &effective_clients.page,
-                        &effective_clients.meta,
+                    let result = process_job(
+                        effective_clients,
                         &job,
                         &state,
                         &js_render_limiter,
@@ -375,37 +380,58 @@ pub async fn run_worker(config: WorkerConfig, proxy: Option<String>) -> anyhow::
                         network,
                         &capabilities,
                     )
-                    .await
-                }
-            })
-            .buffer_unordered(current_runtime.worker_concurrency);
-
-        let all_results: Vec<CrawlResultReport> = pending_results.collect().await;
-        let reported_jobs = all_results.len();
-
-        let last_report = if reported_jobs > 0 {
-            Some(submit_report(&api_client, &config, lease_id.as_deref(), all_results).await?)
-        } else {
-            None
-        };
-
-        if let Some(report) = last_report {
-            info!(
-                "crawler {} staged {} results for lease {}, reported {}, pending ingest {}, frontier depth {}",
-                config.crawler_id,
-                report.staged_results,
-                report.lease_id,
-                reported_jobs,
-                report.pending_results,
-                report.frontier_depth,
-            );
+                    .await;
+                    submit_report(&api_client, &config, Some(&lease_id), vec![result]).await
+                });
+            }
+            claimed_once = true;
         }
 
-        if config.once || shutdown_requested.load(Ordering::Relaxed) {
+        if in_flight.is_empty() {
             if shutdown_requested.load(Ordering::Relaxed) {
-                info!("shutdown requested, exiting after reporting current batch");
+                info!("shutdown requested, stopping worker");
+                break;
             }
-            break;
+            if config.once && claimed_once {
+                break;
+            }
+            if config.once && received_empty_claim {
+                break;
+            }
+            if received_empty_claim {
+                tokio::select! {
+                    _ = sleep(Duration::from_secs(config.poll_interval_secs)) => {}
+                    _ = shutdown_notify.notified() => {
+                        info!("shutdown requested while idle, stopping worker");
+                        shutdown_requested.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            continue;
+        }
+
+        tokio::select! {
+            join_result = in_flight.join_next() => {
+                match join_result {
+                    Some(Ok(Ok(report))) => {
+                        info!(
+                            "crawler {} staged 1 result for lease {} (lease total {}), pending ingest {}, frontier depth {}",
+                            config.crawler_id,
+                            report.lease_id,
+                            report.staged_results,
+                            report.pending_results,
+                            report.frontier_depth,
+                        );
+                    }
+                    Some(Ok(Err(error))) => return Err(error),
+                    Some(Err(error)) => return Err(anyhow::anyhow!("crawler job task failed: {error}")),
+                    None => {}
+                }
+            }
+            _ = shutdown_notify.notified() => {
+                info!("shutdown requested, draining in-flight jobs before exit");
+                shutdown_requested.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -777,8 +803,7 @@ fn current_platform_tag() -> anyhow::Result<String> {
 // Process a single crawl job
 // ---------------------------------------------------------------------------
 async fn process_job(
-    page_client: &reqwest::Client,
-    meta_client: &reqwest::Client,
+    clients: &NetworkClients,
     job: &CrawlJob,
     state: &Arc<Mutex<WorkerState>>,
     js_render_limiter: &Arc<Semaphore>,
@@ -787,7 +812,7 @@ async fn process_job(
     capabilities: &CrawlerCapabilities,
 ) -> CrawlResultReport {
     let fetched_at = Utc::now();
-    let initial_robots = inspect_robots(meta_client, state, &job.url).await;
+    let initial_robots = inspect_robots(&clients.meta, state, &job.url).await;
     if !initial_robots.allowed {
         warn!("robots.txt blocks {} ({})", job.url, initial_robots.status);
         return CrawlResultReport {
@@ -804,8 +829,8 @@ async fn process_job(
     }
 
     let fetch = match fetch_with_retry(
-        page_client,
-        meta_client,
+        &clients.page,
+        &clients.meta,
         state,
         &job.url,
         job.etag.as_deref(),
@@ -855,7 +880,7 @@ async fn process_job(
     let retry_after_secs = fetch.retry_after_secs;
     let final_url = normalize_url_advanced(fetch.response.url().as_ref())
         .unwrap_or_else(|| fetch.response.url().to_string());
-    let final_robots = inspect_robots(meta_client, state, &final_url).await;
+    let final_robots = inspect_robots(&clients.meta, state, &final_url).await;
     let etag = fetch
         .response
         .headers()
@@ -1082,45 +1107,43 @@ async fn process_job(
         } else {
             parsed.discovered_urls.clone()
         };
-    if !robots_directives.nofollow && current_page_action == PageAction::AllowIndexDiscover {
-        if let Ok(url) = url::Url::parse(&final_url) {
-            if job.depth == 0 || url.path() == "/" || url.path().is_empty() {
-                let mut discovery_sources = BTreeSet::new();
-                if final_robots.sitemap_urls.is_empty() {
-                    if let Some(origin) = findverse_common::origin_key(&final_url) {
-                        discovery_sources.insert(format!("{origin}/sitemap.xml"));
-                        for source in site_profile.discovery_sources(&origin) {
-                            discovery_sources.insert(source);
-                        }
-                    }
-                } else {
-                    for source in &final_robots.sitemap_urls {
-                        discovery_sources.insert(source.clone());
-                    }
-                    if let Some(origin) = findverse_common::origin_key(&final_url) {
-                        for source in site_profile.discovery_sources(&origin) {
-                            discovery_sources.insert(source);
-                        }
-                    }
+    if !robots_directives.nofollow
+        && current_page_action == PageAction::AllowIndexDiscover
+        && let Ok(url) = url::Url::parse(&final_url)
+        && (job.depth == 0 || url.path() == "/" || url.path().is_empty())
+    {
+        let mut discovery_sources = BTreeSet::new();
+        if final_robots.sitemap_urls.is_empty() {
+            if let Some(origin) = findverse_common::origin_key(&final_url) {
+                discovery_sources.insert(format!("{origin}/sitemap.xml"));
+                for source in site_profile.discovery_sources(&origin) {
+                    discovery_sources.insert(source);
                 }
+            }
+        } else {
+            for source in &final_robots.sitemap_urls {
+                discovery_sources.insert(source.clone());
+            }
+            if let Some(origin) = findverse_common::origin_key(&final_url) {
+                for source in site_profile.discovery_sources(&origin) {
+                    discovery_sources.insert(source);
+                }
+            }
+        }
 
-                for source_url in discovery_sources {
-                    if let Ok(source_entries) =
-                        fetch_and_parse_sitemap(meta_client, &source_url).await
-                    {
-                        let source_urls: Vec<String> = source_entries
-                            .iter()
-                            .map(|entry| entry.url.clone())
-                            .collect();
-                        if !source_urls.is_empty() {
-                            info!(
-                                "discovered {} URLs from structured feed at {}",
-                                source_urls.len(),
-                                source_url
-                            );
-                            all_discovered.extend(source_urls);
-                        }
-                    }
+        for source_url in discovery_sources {
+            if let Ok(source_entries) = fetch_and_parse_sitemap(&clients.meta, &source_url).await {
+                let source_urls: Vec<String> = source_entries
+                    .iter()
+                    .map(|entry| entry.url.clone())
+                    .collect();
+                if !source_urls.is_empty() {
+                    info!(
+                        "discovered {} URLs from structured feed at {}",
+                        source_urls.len(),
+                        source_url
+                    );
+                    all_discovered.extend(source_urls);
                 }
             }
         }

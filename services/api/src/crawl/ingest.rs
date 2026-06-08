@@ -197,7 +197,7 @@ impl IngestService {
              where item.id = picked.id
              returning item.id, item.lease_id, item.owner_developer_id, item.crawler_id, item.crawl_job_id, item.blob_id",
         )
-        .bind(limit.clamp(1, 256) as i64)
+        .bind(limit.max(1) as i64)
         .bind(now)
         .fetch_all(&self.pg_pool)
         .await

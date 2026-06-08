@@ -33,10 +33,9 @@ impl PreparedSearch {
             .lang
             .as_deref()
             .map(|value| value.trim().to_lowercase())
+            && !lang.is_empty()
         {
-            if !lang.is_empty() {
-                filters.push(json!({ "term": { "language": lang } }));
-            }
+            filters.push(json!({ "term": { "language": lang } }));
         }
         if let Some(cutoff) = freshness_cutoff {
             filters.push(json!({ "range": { "fetched_at": { "gte": cutoff } } }));
@@ -44,10 +43,10 @@ impl PreparedSearch {
         if let Some(site_filter) = build_site_filter(params.site.as_deref()) {
             filters.push(site_filter);
         }
-        if let Some(ref net) = params.network {
-            if matches!(net.as_str(), "clearnet" | "tor") {
-                filters.push(serde_json::json!({ "term": { "network": net } }));
-            }
+        if let Some(ref net) = params.network
+            && matches!(net.as_str(), "clearnet" | "tor")
+        {
+            filters.push(serde_json::json!({ "term": { "network": net } }));
         }
 
         let cache_key = if params.offset == 0

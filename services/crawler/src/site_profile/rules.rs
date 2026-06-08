@@ -1,8 +1,7 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::Path,
-};
+use std::collections::{BTreeMap, BTreeSet};
+
+#[cfg(test)]
+use std::{fs, path::Path};
 
 use anyhow::{Context, Result, anyhow};
 use regex::Regex;
@@ -11,24 +10,13 @@ use url::Url;
 
 use crate::models::{SiteRuleBundle, SiteRuleFile};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PageAction {
+    #[default]
     AllowIndexDiscover,
     AllowIndexOnly,
     Deny,
-}
-
-impl Default for PageAction {
-    fn default() -> Self {
-        Self::AllowIndexDiscover
-    }
-}
-
-impl PageAction {
-    pub fn allows_discovery(self) -> bool {
-        matches!(self, Self::AllowIndexDiscover)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +112,7 @@ pub struct RuleRegistry {
 }
 
 impl RuleRegistry {
+    #[cfg(test)]
     pub fn load(platform_dir: &Path, platform_preset_dir: &Path, site_dir: &Path) -> Result<Self> {
         let platform_presets = load_platform_presets(platform_preset_dir)?;
         let mut platform_identifiers = load_platform_identifiers(platform_dir)?;
@@ -259,7 +248,7 @@ impl CompiledMatchRule {
         let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
         let path = url.path().to_ascii_lowercase();
 
-        (self.hosts.is_empty() || self.hosts.iter().any(|candidate| host == *candidate))
+        (self.hosts.is_empty() || self.hosts.contains(&host))
             && (self.host_suffixes.is_empty()
                 || self
                     .host_suffixes
@@ -301,13 +290,13 @@ impl CompiledPageRule {
         let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
         let path = url.path().to_ascii_lowercase();
 
-        (self.hosts.is_empty() || self.hosts.iter().any(|candidate| host == *candidate))
+        (self.hosts.is_empty() || self.hosts.contains(&host))
             && (self.host_suffixes.is_empty()
                 || self
                     .host_suffixes
                     .iter()
                     .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}"))))
-            && (self.path_exacts.is_empty() || self.path_exacts.iter().any(|exact| path == *exact))
+            && (self.path_exacts.is_empty() || self.path_exacts.contains(&path))
             && (self.path_prefixes.is_empty()
                 || self
                     .path_prefixes
@@ -321,7 +310,7 @@ impl CompiledPageRule {
             && (self.query_keys.is_empty()
                 || url.query_pairs().any(|(key, _)| {
                     let key = key.to_ascii_lowercase();
-                    self.query_keys.iter().any(|candidate| key == *candidate)
+                    self.query_keys.contains(&key)
                 }))
             && (self.query_values.is_empty()
                 || url.query_pairs().any(|(key, value)| {
@@ -440,6 +429,7 @@ struct RuleSource {
     contents: String,
 }
 
+#[cfg(test)]
 fn load_platform_identifiers(directory: &Path) -> Result<Vec<PlatformIdentifier>> {
     load_platform_identifiers_from_sources(read_rule_sources(directory)?)
 }
@@ -467,6 +457,7 @@ fn load_platform_identifiers_from_sources(
     Ok(identifiers)
 }
 
+#[cfg(test)]
 fn load_platform_presets(directory: &Path) -> Result<BTreeMap<String, EffectivePreset>> {
     load_platform_presets_from_sources(read_rule_sources(directory)?)
 }
@@ -503,6 +494,7 @@ fn load_platform_presets_from_sources(
     Ok(presets)
 }
 
+#[cfg(test)]
 fn load_site_presets(directory: &Path) -> Result<Vec<SitePreset>> {
     load_site_presets_from_sources(read_rule_sources(directory)?)
 }
@@ -538,6 +530,7 @@ fn load_site_presets_from_sources(sources: Vec<RuleSource>) -> Result<Vec<SitePr
     Ok(presets)
 }
 
+#[cfg(test)]
 fn read_rule_sources(directory: &Path) -> Result<Vec<RuleSource>> {
     let mut sources = Vec::new();
     for path in toml_files(directory)? {
@@ -562,6 +555,7 @@ fn rule_sources_from_bundle(prefix: &str, files: &[SiteRuleFile]) -> Vec<RuleSou
     sources
 }
 
+#[cfg(test)]
 fn toml_files(directory: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
     for entry in fs::read_dir(directory)
@@ -678,10 +672,10 @@ fn validate_registry(
     }
 
     for site in site_presets {
-        if let Some(base) = site.extends.as_deref() {
-            if !platform_presets.contains_key(base) {
-                return Err(anyhow!("site {} extends missing preset {}", site.id, base));
-            }
+        if let Some(base) = site.extends.as_deref()
+            && !platform_presets.contains_key(base)
+        {
+            return Err(anyhow!("site {} extends missing preset {}", site.id, base));
         }
     }
 
