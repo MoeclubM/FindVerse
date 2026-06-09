@@ -141,6 +141,25 @@ systemctl restart findverse-crawler.service
 cat /etc/findverse-crawler/crawler.env
 ```
 
+If OpenSearch marks indexes read-only after disk flood-stage pressure, first free or expand disk until the Docker/OpenSearch data path has at least the configured flood-stage free space. Then apply the current single-node watermarks and remove the existing read-only block:
+
+```bash
+curl -fsS -X PUT "http://127.0.0.1:${FINDVERSE_OPENSEARCH_PORT:-9200}/_cluster/settings" \
+  -H "Content-Type: application/json" \
+  -d '{"persistent":{"cluster.routing.allocation.disk.watermark.low":"10gb","cluster.routing.allocation.disk.watermark.high":"5gb","cluster.routing.allocation.disk.watermark.flood_stage":"1gb","cluster.routing.allocation.disk.watermark.flood_stage.frozen":"1gb"}}'
+
+curl -fsS -X PUT "http://127.0.0.1:${FINDVERSE_OPENSEARCH_PORT:-9200}/_all/_settings" \
+  -H "Content-Type: application/json" \
+  -d '{"index.blocks.read_only_allow_delete":null}'
+```
+
+After the block is removed, rerun the bootstrap and start the stack:
+
+```bash
+docker compose up --build --force-recreate bootstrap
+docker compose up -d --build
+```
+
 Clean reset of local control-plane data:
 
 ```bash
