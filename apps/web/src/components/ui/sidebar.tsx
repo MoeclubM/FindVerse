@@ -47,7 +47,7 @@ function Sidebar({
       <aside
         data-slot="sidebar"
         className={cn(
-          "hidden w-72 shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex md:flex-col md:rounded-[28px] md:border md:shadow-sm",
+          "hidden w-64 shrink-0 overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex md:flex-col md:rounded-xl md:border md:shadow-sm",
           className,
         )}
       >
@@ -114,7 +114,7 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-header"
       className={cn(
-        "flex flex-col gap-4 border-b border-sidebar-border/80 p-4",
+        "flex flex-col gap-3 border-b border-sidebar-border/80 p-3",
         className,
       )}
       {...props}
@@ -127,7 +127,7 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-footer"
       className={cn(
-        "flex flex-col gap-4 border-t border-sidebar-border/80 p-4",
+        "flex flex-col gap-3 border-t border-sidebar-border/80 p-3",
         className,
       )}
       {...props}
@@ -140,7 +140,7 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-content"
       className={cn(
-        "flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4",
+        "flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3",
         className,
       )}
       {...props}
@@ -165,7 +165,7 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sidebar-group"
-      className={cn("flex flex-col gap-2", className)}
+      className={cn("flex flex-col gap-1.5", className)}
       {...props}
     />
   );
@@ -191,7 +191,7 @@ function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
       data-slot="sidebar-menu"
-      className={cn("flex flex-col gap-2", className)}
+      className={cn("flex flex-col gap-1", className)}
       {...props}
     />
   );
@@ -219,7 +219,7 @@ function SidebarMenuButton({
       data-active={isActive ? "true" : undefined}
       variant="ghost"
       className={cn(
-        "h-auto w-full justify-between rounded-2xl border border-transparent px-3 py-3 text-left text-sidebar-foreground shadow-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:border-sidebar-ring focus-visible:ring-sidebar-ring/50 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground",
+        "h-auto w-full justify-between rounded-lg border border-transparent px-2.5 py-2 text-left text-sidebar-foreground shadow-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:border-sidebar-ring focus-visible:ring-sidebar-ring/50 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground",
         className,
       )}
       {...props}

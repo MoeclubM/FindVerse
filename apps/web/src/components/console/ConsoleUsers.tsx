@@ -356,7 +356,7 @@ export function ConsoleUsers() {
     <PanelSection
       title={t("console.users.title")}
       meta={t("console.users.accounts", { count: users.length })}
-      contentClassName="space-y-5"
+      contentClassName="space-y-3"
     >
       <StatStrip
         className="xl:grid-cols-4"
@@ -368,8 +368,8 @@ export function ConsoleUsers() {
         ]}
       />
 
-      <Card className="rounded-2xl border-dashed">
-        <CardContent className="grid gap-4 p-4">
+      <Card className="rounded-lg border-dashed">
+        <CardContent className="grid gap-3 p-3">
           <div className="grid gap-1">
             <strong>{t("console.users.create_title")}</strong>
             <span className="text-sm text-muted-foreground">
@@ -463,9 +463,9 @@ export function ConsoleUsers() {
 
             return (
               <article key={user.user_id} className="grid gap-3">
-                <Card className="rounded-2xl">
-                  <CardContent className="grid gap-4 p-4">
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <Card className="rounded-lg">
+                  <CardContent className="grid gap-3 p-3">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                       <div className="grid gap-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <strong>{user.username}</strong>
@@ -488,19 +488,19 @@ export function ConsoleUsers() {
                         </div>
                       </div>
                       <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[360px]">
-                        <div className="rounded-xl border border-border bg-muted/40 p-4">
+                        <div className="rounded-lg border border-border bg-muted/40 p-3">
                           <span>{t("console.users.daily_limit")}</span>
                           <strong className="mt-2 block text-base font-semibold text-foreground">
                             {dailyLimit}
                           </strong>
                         </div>
-                        <div className="rounded-xl border border-border bg-muted/40 p-4">
+                        <div className="rounded-lg border border-border bg-muted/40 p-3">
                           <span>{t("console.users.usage_today")}</span>
                           <strong className="mt-2 block text-base font-semibold text-foreground">
                             {usageToday}
                           </strong>
                         </div>
-                        <div className="rounded-xl border border-border bg-muted/40 p-4">
+                        <div className="rounded-lg border border-border bg-muted/40 p-3">
                           <span>{t("console.users.keys")}</span>
                           <strong className="mt-2 block text-base font-semibold text-foreground">
                             {keyTotal}
@@ -651,8 +651,8 @@ export function ConsoleUsers() {
                   </CardContent>
                 </Card>
                 {isExpanded ? (
-                  <Card className="rounded-2xl border-dashed">
-                    <CardContent className="grid gap-4 p-4">
+                  <Card className="rounded-lg border-dashed">
+                    <CardContent className="grid gap-3 p-3">
                       <div className="flex flex-col gap-2 border-b border-border pb-3 sm:flex-row sm:items-end sm:justify-between">
                         <div className="space-y-1">
                           <h3 className="text-base font-semibold text-foreground">
@@ -669,7 +669,7 @@ export function ConsoleUsers() {
                         </span>
                       </div>
 
-                      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                      <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
                         <span>
                           {t("console.users.daily_limit_summary")}{" "}
                           <strong className="text-foreground">{dailyLimit}</strong>
@@ -684,7 +684,7 @@ export function ConsoleUsers() {
                         <div className="grid gap-3">
                           {Array.from({ length: 2 }).map((_, index) => (
                             <div
-                              className="grid gap-3 rounded-2xl border border-border bg-muted/30 p-4"
+                              className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3"
                               key={index}
                             >
                               <Skeleton className="h-5 w-32" />
@@ -703,7 +703,7 @@ export function ConsoleUsers() {
                         <div className="grid gap-3">
                           {panel.usage.keys.map((key) => (
                             <div
-                              className="grid gap-3 rounded-2xl border border-border bg-muted/30 p-4"
+                              className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3"
                               key={key.id}
                             >
                               <div className="grid gap-1">
@@ -745,7 +745,7 @@ export function ConsoleUsers() {
                           ))}
                         </div>
                       ) : panel.loading ? null : (
-                        <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                        <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
                           {t("console.users.no_keys")}
                         </div>
                       )}
@@ -756,7 +756,7 @@ export function ConsoleUsers() {
             );
           })
         ) : (
-          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+          <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
             {t("console.users.no_users")}
           </div>
         )}

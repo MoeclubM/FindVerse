@@ -414,8 +414,8 @@ export function SearchPage(props: {
         onThemeModeChange={props.onThemeModeChange}
         containerClassName={
           resultsMode
-            ? "mx-auto flex min-h-10 w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:min-h-14 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4 lg:px-8"
-            : "mx-auto flex min-h-10 w-full max-w-7xl items-center justify-end px-4 py-3 sm:min-h-14 sm:px-6 sm:py-4 lg:px-8"
+            ? "mx-auto flex min-h-10 w-full max-w-7xl flex-col gap-2 px-4 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-2.5 lg:px-8"
+            : "mx-auto flex min-h-10 w-full max-w-7xl items-center justify-end px-4 py-2 sm:px-6 sm:py-2.5 lg:px-8"
         }
         title={
           resultsMode ? (
@@ -438,19 +438,19 @@ export function SearchPage(props: {
         }
       />
 
-      <div className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-[calc(100vh-57px)] w-full max-w-7xl flex-col px-4 py-3 sm:px-6 lg:px-8">
         <main
           className={`flex w-full flex-1 ${
-            resultsMode ? "items-start justify-center py-6" : "items-start justify-center pt-[11vh] pb-14"
+            resultsMode ? "items-start justify-center py-3" : "items-start justify-center pt-[8vh] pb-8"
           }`}
         >
           <section
-            className={`app-stagger w-full ${resultsMode ? "max-w-[820px]" : "max-w-[720px]"} space-y-5`}
+            className={`app-stagger w-full ${resultsMode ? "max-w-[780px]" : "max-w-[640px]"} space-y-3`}
           >
             {!resultsMode ? (
-              <div className="flex flex-col items-center gap-3 pb-3 text-center">
+              <div className="flex flex-col items-center gap-2 pb-2 text-center">
                 <h1
-                  className={`fv-brand-mark text-[clamp(3.8rem,11vw,6.8rem)] ${homeBrandTone}`}
+                  className={`fv-brand-mark text-[clamp(3rem,9vw,5.4rem)] ${homeBrandTone}`}
                 >
                   {SITE_NAME}
                 </h1>
@@ -461,13 +461,13 @@ export function SearchPage(props: {
               className="app-rise-in space-y-3"
             >
               <div
-                className={`flex flex-col gap-3 rounded-[28px] border px-4 py-3 sm:flex-row sm:items-center ${elevatedPanelTone}`}
+                className={`flex flex-col gap-2 rounded-[20px] border px-3 py-2 sm:flex-row sm:items-center ${elevatedPanelTone}`}
               >
-                <div className="flex min-h-12 flex-1 items-center gap-3">
+                <div className="flex min-h-10 flex-1 items-center gap-2.5">
                   <MagnifyingGlassIcon className={`size-4 shrink-0 ${mutedTone}`} />
                   <Input
                     aria-label={t("search.button")}
-                    className={`h-full min-h-12 flex-1 border-0 bg-transparent px-0 py-0 text-base shadow-none focus-visible:ring-0 ${inputTone}`}
+                    className={`h-full min-h-10 flex-1 border-0 bg-transparent px-0 py-0 text-[15px] shadow-none focus-visible:ring-0 ${inputTone}`}
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder={t("search.placeholder")}
@@ -476,14 +476,14 @@ export function SearchPage(props: {
                 <Button
                   type="submit"
                   aria-label={t("search.button")}
-                  className="size-11 shrink-0 rounded-full border-[var(--fv-accent)] bg-[var(--fv-accent)] text-white hover:border-[var(--fv-accent-hover)] hover:bg-[var(--fv-accent-hover)]"
+                  className="size-9 shrink-0 rounded-full border-[var(--fv-accent)] bg-[var(--fv-accent)] text-white hover:border-[var(--fv-accent-hover)] hover:bg-[var(--fv-accent-hover)]"
                 >
                   <MagnifyingGlassIcon className="size-4" />
                 </Button>
               </div>
 
               {suggestions.length > 0 ? (
-                <div className="flex flex-wrap gap-2 pt-1">
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
                   {suggestions.slice(0, 6).map((suggestion) => (
                     <Button
                       key={suggestion}
@@ -515,7 +515,7 @@ export function SearchPage(props: {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)]"
+                      className="h-8 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-3 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)]"
                     >
                       <MixerHorizontalIcon className="size-4" />
                       <span>
@@ -532,7 +532,7 @@ export function SearchPage(props: {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)]"
+                      className="h-8 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-3 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)]"
                       onClick={handleClearFilters}
                     >
                       {t("search.clear_filters")}
@@ -541,11 +541,11 @@ export function SearchPage(props: {
                 </div>
 
                 <Collapsible.Content className="pt-2">
-                  <div className={`grid gap-3 rounded-[24px] border p-4 md:grid-cols-2 xl:grid-cols-4 ${panelTone}`}>
+                  <div className={`grid gap-2.5 rounded-xl border p-3 md:grid-cols-2 xl:grid-cols-4 ${panelTone}`}>
                     <FieldShell className="gap-1.5" label={<span className={labelTone}>{t("search.site_label")}</span>}>
                       <Input
                         aria-label={t("search.site_label")}
-                        className={`h-10 rounded-2xl border-[var(--fv-border)] bg-[var(--fv-panel-soft)] text-sm ${inputTone}`}
+                        className={`h-8 rounded-lg border-[var(--fv-border)] bg-[var(--fv-panel-soft)] text-sm ${inputTone}`}
                         value={siteFilter}
                         onChange={(event) => setSiteFilter(event.target.value)}
                         placeholder={t("search.site_placeholder")}
@@ -554,7 +554,7 @@ export function SearchPage(props: {
                     <FieldShell className="gap-1.5" label={<span className={labelTone}>{t("search.lang_label")}</span>}>
                       <Input
                         aria-label={t("search.lang_label")}
-                        className={`h-10 rounded-2xl border-[var(--fv-border)] bg-[var(--fv-panel-soft)] text-sm ${inputTone}`}
+                        className={`h-8 rounded-lg border-[var(--fv-border)] bg-[var(--fv-panel-soft)] text-sm ${inputTone}`}
                         value={langFilter}
                         onChange={(event) => setLangFilter(event.target.value)}
                         placeholder={t("search.lang_placeholder")}
@@ -569,7 +569,7 @@ export function SearchPage(props: {
                           )
                         }
                       >
-                        <SelectTrigger aria-label={t("search.freshness_label")} className="w-full rounded-2xl">
+                        <SelectTrigger aria-label={t("search.freshness_label")} className="h-8 w-full rounded-lg">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -590,7 +590,7 @@ export function SearchPage(props: {
                           setNetworkFilter(value === "clearnet" || value === "tor" ? value : null)
                         }
                       >
-                        <SelectTrigger aria-label={t("search.network_label")} className="w-full rounded-2xl">
+                        <SelectTrigger aria-label={t("search.network_label")} className="h-8 w-full rounded-lg">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -622,8 +622,8 @@ export function SearchPage(props: {
             ) : null}
 
             {results ? (
-              <section className="space-y-6 pt-2">
-                <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 text-sm ${mutedTone}`}>
+              <section className="space-y-4 pt-1">
+                <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs ${mutedTone}`}>
                   <span>
                     {t("search.results_meta", {
                       mode: usingProtectedSearch
@@ -641,7 +641,7 @@ export function SearchPage(props: {
                         type="button"
                         variant="link"
                         size="sm"
-                        className="h-auto px-0 text-sm font-medium text-[var(--fv-text)]"
+                        className="h-auto px-0 text-xs font-medium text-[var(--fv-text)]"
                         onClick={() => {
                           setQuery(results.did_you_mean ?? "");
                           commitSearch({
@@ -665,7 +665,7 @@ export function SearchPage(props: {
                   {results.results.map((result, index) => (
                     <article
                       key={result.id}
-                      className="app-rise-in group space-y-1.5 border-b border-[var(--fv-border-soft)] py-5 first:pt-0 last:border-b-0 last:pb-0"
+                      className="app-rise-in group space-y-1 border-b border-[var(--fv-border-soft)] py-3 first:pt-0 last:border-b-0 last:pb-0"
                       style={{ animationDelay: `${Math.min(index, 5) * 45}ms` }}
                     >
                       <div className="truncate text-sm text-[var(--fv-text-soft)]" title={result.display_url}>
@@ -679,14 +679,14 @@ export function SearchPage(props: {
                         href={result.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex max-w-full items-center gap-2 text-[1.35rem] font-medium leading-tight tracking-[-0.03em] text-[var(--fv-text)] transition-colors hover:text-[var(--fv-accent)]"
+                        className="inline-flex max-w-full items-center gap-2 text-lg font-medium leading-tight tracking-tight text-[var(--fv-text)] transition-colors hover:text-[var(--fv-accent)]"
                       >
                         <span className="min-w-0 flex-1">
                           {renderHighlightedText(result.title, highlightTerms)}
                         </span>
                         <ExternalLinkIcon className="size-4 shrink-0 opacity-60" />
                       </a>
-                      <p className={`text-[15px] leading-7 ${secondaryTextTone}`}>
+                      <p className={`text-sm leading-6 ${secondaryTextTone}`}>
                         {renderHighlightedText(result.snippet, highlightTerms)}
                       </p>
                     </article>
@@ -694,23 +694,23 @@ export function SearchPage(props: {
                 </div>
 
                 {(submittedSearch.offset > 0 || results.next_offset != null) && (
-                  <div className="flex items-center justify-between gap-3 pt-2">
+                  <div className="flex items-center justify-between gap-3 pt-1">
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)] disabled:opacity-40"
+                      className="h-8 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-3 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)] disabled:opacity-40"
                       disabled={submittedSearch.offset === 0}
                       onClick={handlePrevPage}
                     >
                       {t("search.previous")}
                     </Button>
-                    <span className={`text-sm ${mutedTone}`}>
+                    <span className={`text-xs ${mutedTone}`}>
                       {t("search.page", { page: Math.floor(submittedSearch.offset / 10) + 1 })}
                     </span>
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-10 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-4 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)] disabled:opacity-40"
+                      className="h-8 rounded-full border-[var(--fv-border)] bg-[var(--fv-panel)] px-3 text-[var(--fv-text)] hover:bg-[var(--fv-panel-soft)] disabled:opacity-40"
                       disabled={results.next_offset == null}
                       onClick={handleNextPage}
                     >

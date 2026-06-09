@@ -28,7 +28,7 @@ export function SectionHeader(props: {
   const Heading = props.heading ?? "h2";
 
   return (
-    <div className={cn("flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between", props.className)}>
+    <div className={cn("flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between", props.className)}>
       <div className="space-y-0">
         <Heading
           className={cn(
@@ -38,7 +38,7 @@ export function SectionHeader(props: {
         >
           {props.title}
         </Heading>
-        {props.meta ? <p className="text-[11px] text-muted-foreground sm:text-xs">{props.meta}</p> : null}
+        {props.meta ? <p className="text-[11px] leading-4 text-muted-foreground sm:text-xs">{props.meta}</p> : null}
       </div>
       {props.actions ? <div className="flex flex-wrap items-center gap-1">{props.actions}</div> : null}
     </div>
@@ -57,7 +57,7 @@ export function StatStrip(props: {
     <div className={cn("grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4", props.className)}>
       {props.items.map((item, index) => (
         <Card key={index} className="rounded-md border-border/60 bg-muted/30 shadow-none">
-          <CardContent className={cn(props.compact ? "px-2.5 py-2" : "px-3 py-2.5")}>
+          <CardContent className={cn(props.compact ? "px-2.5 py-1.5" : "px-3 py-2")}>
             <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               {item.label}
             </span>
@@ -96,12 +96,12 @@ export function DetailDialog(props: {
   return (
     <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
       <DialogContent className="max-h-[min(88vh,960px)] overflow-y-auto rounded-xl p-0">
-        <DialogHeader className="border-b border-border px-4 pb-2.5 pt-4">
+        <DialogHeader className="border-b border-border px-3 pb-2 pt-3">
           <DialogTitle>{props.title}</DialogTitle>
           {props.meta ? <DialogDescription>{props.meta}</DialogDescription> : null}
         </DialogHeader>
-        <div className="px-4 py-3">{props.children}</div>
-        <DialogFooter className="border-t border-border px-4 py-2.5">
+        <div className="px-3 py-2.5">{props.children}</div>
+        <DialogFooter className="border-t border-border px-3 py-2">
           {props.actions}
           <DialogClose asChild>
             <Button variant="outline" onClick={props.onClose}>
@@ -124,10 +124,10 @@ export function PanelSection(props: {
 }) {
   return (
     <Card className={cn("rounded-lg shadow-none", props.className)}>
-      <CardHeader className="p-4 pb-2.5">
+      <CardHeader className="p-3 pb-2">
         <SectionHeader title={props.title} meta={props.meta} actions={props.actions} />
       </CardHeader>
-      <CardContent className={cn("px-4 pb-4 pt-0", props.contentClassName)}>{props.children}</CardContent>
+      <CardContent className={cn("px-3 pb-3 pt-0", props.contentClassName)}>{props.children}</CardContent>
     </Card>
   );
 }

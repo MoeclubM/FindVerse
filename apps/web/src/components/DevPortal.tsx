@@ -346,9 +346,9 @@ export function DevPortalPage(props: {
             </TopbarActionButton>
           }
         />
-        <main className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-md items-center px-4 py-10">
-          <Card className="w-full rounded-3xl">
-            <CardHeader className="gap-4 pb-4">
+        <main className="mx-auto flex min-h-[calc(100vh-57px)] w-full max-w-md items-center px-4 py-6">
+          <Card className="w-full rounded-xl">
+            <CardHeader className="gap-3 pb-3">
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant={mode === "login" ? "default" : "outline"} onClick={() => setMode("login")}>
                   {t("dev_portal.auth.sign_in")}
@@ -368,7 +368,7 @@ export function DevPortalPage(props: {
                 </CardDescription>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <form className="grid gap-3" onSubmit={handleAuthSubmit}>
                 <Input
                   value={username}
@@ -436,16 +436,16 @@ export function DevPortalPage(props: {
       />
 
       {flash ? (
-        <div className="mx-auto mt-4 w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto mt-3 w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           <Alert>
             <AlertDescription>{flash}</AlertDescription>
           </Alert>
         </div>
       ) : null}
 
-      <main className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-5 sm:px-6 lg:grid-cols-2 lg:px-8">
-        <Card className="rounded-3xl lg:col-span-2">
-          <CardHeader className="gap-4 pb-4">
+      <main className="mx-auto grid w-full max-w-7xl gap-3 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
+        <Card className="rounded-xl lg:col-span-2">
+          <CardHeader className="gap-3 pb-3">
             <SectionHeader
               title={t("dev_portal.site_console.title")}
               meta={t("dev_portal.site_console.meta")}
@@ -465,7 +465,7 @@ export function DevPortalPage(props: {
               </Button>
             </form>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="space-y-3">
             {propertyInsight ? (
               <>
                 <StatStrip
@@ -482,10 +482,10 @@ export function DevPortalPage(props: {
                   ]}
                 />
 
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.9fr)]">
-                  <div className="grid gap-4">
-                    <Card className="rounded-2xl shadow-none">
-                      <CardHeader className="pb-4">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,0.9fr)]">
+                  <div className="grid gap-3">
+                    <Card className="rounded-lg shadow-none">
+                      <CardHeader className="pb-3">
                         <SectionHeader
                           heading="h3"
                           title={t("dev_portal.site_console.recent_indexed_pages.title")}
@@ -495,9 +495,9 @@ export function DevPortalPage(props: {
                       <CardContent className="grid gap-3">
                         {propertyInsight.recent_documents.length ? (
                           propertyInsight.recent_documents.map((document) => (
-                            <Card key={document.id} className="rounded-2xl bg-muted/30 shadow-none">
-                              <CardContent className="grid gap-3 p-4">
-                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <Card key={document.id} className="rounded-lg bg-muted/30 shadow-none">
+                              <CardContent className="grid gap-2 p-3">
+                                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                                   <a
                                     href={document.url}
                                     target="_blank"
@@ -519,55 +519,55 @@ export function DevPortalPage(props: {
                             </Card>
                           ))
                         ) : (
-                          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                          <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
                             {t("dev_portal.site_console.recent_indexed_pages.empty")}
                           </div>
                         )}
                       </CardContent>
                     </Card>
 
-                    <Card className="rounded-2xl shadow-none">
-                      <CardHeader className="pb-4">
+                    <Card className="rounded-lg shadow-none">
+                      <CardHeader className="pb-3">
                         <SectionHeader
                           heading="h3"
                           title={t("dev_portal.site_console.coverage_facets.title")}
                           meta={t("dev_portal.site_console.coverage_facets.meta")}
                         />
                       </CardHeader>
-                      <CardContent className="grid gap-4 md:grid-cols-2">
-                        <Card className="rounded-2xl bg-muted/30 shadow-none">
-                          <CardHeader className="pb-4">
-                            <CardTitle className="text-base">{t("dev_portal.site_console.coverage_facets.languages")}</CardTitle>
+                      <CardContent className="grid gap-3 md:grid-cols-2">
+                        <Card className="rounded-lg bg-muted/30 shadow-none">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm">{t("dev_portal.site_console.coverage_facets.languages")}</CardTitle>
                           </CardHeader>
                           <CardContent className="grid gap-3">
                             {propertyInsight.top_languages.length ? (
                               propertyInsight.top_languages.map((facet) => (
-                                <div key={`lang-${facet.label}`} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                                <div key={`lang-${facet.label}`} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
                                   <span className="text-sm text-foreground">{facet.label}</span>
                                   <strong className="text-sm font-semibold text-foreground">{facet.count}</strong>
                                 </div>
                               ))
                             ) : (
-                              <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+                              <div className="rounded-lg border border-dashed border-border bg-card px-3 py-5 text-center text-sm text-muted-foreground">
                                 {t("dev_portal.site_console.coverage_facets.no_language_data")}
                               </div>
                             )}
                           </CardContent>
                         </Card>
-                        <Card className="rounded-2xl bg-muted/30 shadow-none">
-                          <CardHeader className="pb-4">
-                            <CardTitle className="text-base">{t("dev_portal.site_console.coverage_facets.content_types")}</CardTitle>
+                        <Card className="rounded-lg bg-muted/30 shadow-none">
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm">{t("dev_portal.site_console.coverage_facets.content_types")}</CardTitle>
                           </CardHeader>
                           <CardContent className="grid gap-3">
                             {propertyInsight.top_content_types.length ? (
                               propertyInsight.top_content_types.map((facet) => (
-                                <div key={`type-${facet.label}`} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                                <div key={`type-${facet.label}`} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
                                   <span className="text-sm text-foreground">{facet.label}</span>
                                   <strong className="text-sm font-semibold text-foreground">{facet.count}</strong>
                                 </div>
                               ))
                             ) : (
-                              <div className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+                              <div className="rounded-lg border border-dashed border-border bg-card px-3 py-5 text-center text-sm text-muted-foreground">
                                 {t("dev_portal.site_console.coverage_facets.no_content_type_data")}
                               </div>
                             )}
@@ -576,8 +576,8 @@ export function DevPortalPage(props: {
                       </CardContent>
                     </Card>
 
-                    <Card className="rounded-2xl shadow-none">
-                      <CardHeader className="pb-4">
+                    <Card className="rounded-lg shadow-none">
+                      <CardHeader className="pb-3">
                         <SectionHeader
                           heading="h3"
                           title={t("dev_portal.site_console.recent_crawl_activity.title")}
@@ -587,9 +587,9 @@ export function DevPortalPage(props: {
                       <CardContent className="grid gap-3">
                         {propertyInsight.recent_jobs.length ? (
                           propertyInsight.recent_jobs.map((job) => (
-                            <Card key={job.id} className="rounded-2xl bg-muted/30 shadow-none">
-                              <CardContent className="grid gap-3 p-4">
-                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <Card key={job.id} className="rounded-lg bg-muted/30 shadow-none">
+                              <CardContent className="grid gap-2 p-3">
+                                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                                   <a
                                     href={job.url}
                                     target="_blank"
@@ -619,7 +619,7 @@ export function DevPortalPage(props: {
                             </Card>
                           ))
                         ) : (
-                          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                          <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
                             {t("dev_portal.site_console.recent_crawl_activity.empty")}
                           </div>
                         )}
@@ -627,16 +627,16 @@ export function DevPortalPage(props: {
                     </Card>
                   </div>
 
-                  <Card className="rounded-2xl shadow-none">
-                    <CardHeader className="pb-4">
+                  <Card className="rounded-lg shadow-none">
+                    <CardHeader className="pb-3">
                       <SectionHeader
                         heading="h3"
                         title={t("dev_portal.site_console.submit_urls.title")}
                         meta={t("dev_portal.site_console.submit_urls.meta")}
                       />
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                      <form className="grid gap-4" onSubmit={handleSubmitProperty}>
+                    <CardContent className="space-y-3">
+                      <form className="grid gap-3" onSubmit={handleSubmitProperty}>
                         <FieldShell label={t("dev_portal.site_console.submit_urls.property")}>
                           <Input
                             id="submit-domain"
@@ -678,7 +678,7 @@ export function DevPortalPage(props: {
                             placeholder={t("dev_portal.site_console.submit_urls.url_list_placeholder")}
                           />
                         </FieldShell>
-                        <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="grid gap-3 sm:grid-cols-2">
                           <FieldShell label={t("dev_portal.site_console.submit_urls.crawl_depth")}>
                             <Input
                               id="submit-depth"
@@ -710,7 +710,7 @@ export function DevPortalPage(props: {
                             />
                           </FieldShell>
                         </div>
-                        <label className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+                        <label className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
                           <Checkbox
                             checked={submitRevisit}
                             onCheckedChange={(checked) => setSubmitRevisit(checked === true)}
@@ -729,14 +729,14 @@ export function DevPortalPage(props: {
                 </div>
               </>
             ) : (
-              <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
                 {t("dev_portal.site_console.empty")}
               </div>
             )}
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl">
+        <Card className="rounded-xl">
           <CardHeader className="pb-4">
             <CardTitle>{t("dev_portal.account.title")}</CardTitle>
             <CardDescription>{t("dev_portal.account.description")}</CardDescription>
@@ -753,12 +753,12 @@ export function DevPortalPage(props: {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl">
+        <Card className="rounded-xl">
           <CardHeader className="pb-4">
             <CardTitle>{t("dev_portal.create_api_key.title")}</CardTitle>
             <CardDescription>{t("dev_portal.create_api_key.description")}</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3">
             <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={handleCreateKey}>
               <Input
                 value={keyName}
@@ -770,7 +770,7 @@ export function DevPortalPage(props: {
               </Button>
             </form>
             {latestKey ? (
-              <div className="space-y-3 rounded-2xl border border-border bg-muted/40 p-4">
+              <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
                 <pre>{latestKey.token}</pre>
                 <Button type="button" variant="outline" onClick={() => handleUseSearchKey(latestKey.token)}>
                   {t("dev_portal.create_api_key.use_for_search")}
@@ -780,7 +780,7 @@ export function DevPortalPage(props: {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl lg:col-span-2">
+        <Card className="rounded-xl lg:col-span-2">
           <CardHeader className="pb-4">
             <CardTitle>{t("dev_portal.api_keys.title")}</CardTitle>
             <CardDescription>{t("dev_portal.api_keys.description")}</CardDescription>
@@ -789,9 +789,9 @@ export function DevPortalPage(props: {
             <div className="grid gap-3">
               {usage?.keys.length ? (
                 usage.keys.map((key) => (
-                  <Card key={key.id} className="rounded-2xl bg-muted/30 shadow-none">
-                    <CardContent className="grid gap-3 p-4">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <Card key={key.id} className="rounded-lg bg-muted/30 shadow-none">
+                    <CardContent className="grid gap-2 p-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                         <div className="grid gap-1">
                           <strong className="text-sm font-semibold text-foreground">{key.name}</strong>
                           <span className="text-sm text-muted-foreground">{key.preview}</span>
@@ -823,7 +823,7 @@ export function DevPortalPage(props: {
                   </Card>
                 ))
               ) : (
-                <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
                   {t("dev_portal.api_keys.empty")}
                 </div>
               )}

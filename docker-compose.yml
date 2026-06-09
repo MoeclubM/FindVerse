@@ -66,6 +66,14 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS "http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=1s" >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
     mem_limit: ${FINDVERSE_OPENSEARCH_MEM_LIMIT:-2g}
 
   blob-storage:
@@ -100,7 +108,7 @@ services:
       valkey:
         condition: service_healthy
       opensearch:
-        condition: service_started
+        condition: service_healthy
       blob-storage:
         condition: service_healthy
     environment:
@@ -132,7 +140,7 @@ services:
       valkey:
         condition: service_healthy
       opensearch:
-        condition: service_started
+        condition: service_healthy
       blob-storage:
         condition: service_healthy
       bootstrap:
@@ -168,7 +176,7 @@ services:
       valkey:
         condition: service_healthy
       opensearch:
-        condition: service_started
+        condition: service_healthy
       blob-storage:
         condition: service_healthy
       bootstrap:
@@ -255,7 +263,7 @@ services:
       valkey:
         condition: service_healthy
       opensearch:
-        condition: service_started
+        condition: service_healthy
       blob-storage:
         condition: service_healthy
       bootstrap:

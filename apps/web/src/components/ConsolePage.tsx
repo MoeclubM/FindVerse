@@ -440,14 +440,14 @@ export function ConsolePage(props: {
   const sidebar = (
     <>
       <SidebarHeader>
-        <div className="rounded-[24px] bg-sidebar-primary px-4 py-5 text-sidebar-primary-foreground">
-          <div className="text-lg font-semibold tracking-[-0.03em]">{SITE_NAME}</div>
+        <div className="rounded-lg bg-sidebar-primary px-3 py-3 text-sidebar-primary-foreground">
+          <div className="text-base font-semibold tracking-tight">{SITE_NAME}</div>
         </div>
       </SidebarHeader>
 
       <SidebarContent>
         {tabGroups.map((group, index) => (
-          <div key={group.label} className="flex flex-col gap-4">
+          <div key={group.label} className="flex flex-col gap-3">
             {index > 0 ? <SidebarSeparator /> : null}
             <SidebarGroup>
               <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
@@ -482,8 +482,8 @@ export function ConsolePage(props: {
       </SidebarContent>
 
       <SidebarFooter>
-        <div className="rounded-2xl border border-sidebar-border bg-sidebar-accent/60 p-4">
-          <div className="flex items-center justify-between gap-3">
+        <div className="rounded-lg border border-sidebar-border bg-sidebar-accent/60 p-3">
+          <div className="flex items-center justify-between gap-2">
             <div>
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-sidebar-foreground/55">
                 {t("console.sidebar.footer.label")}
@@ -494,7 +494,7 @@ export function ConsolePage(props: {
             </div>
             <SidebarMenuBadge>{users.length}</SidebarMenuBadge>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             <div>
               <div className="text-[11px] uppercase tracking-[0.16em] text-sidebar-foreground/55">
                 {t("console.sidebar.footer.rules")}
@@ -545,9 +545,9 @@ export function ConsolePage(props: {
             </TopbarActionButton>
           }
         />
-        <main className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-md items-center px-4 py-10">
-          <Card className="w-full rounded-3xl">
-            <CardHeader className="pb-4">
+        <main className="mx-auto flex min-h-[calc(100vh-57px)] w-full max-w-md items-center px-4 py-6">
+          <Card className="w-full rounded-xl">
+            <CardHeader className="pb-3">
               <CardTitle>{t("console.login.title")}</CardTitle>
               <CardDescription>{SITE_NAME}</CardDescription>
             </CardHeader>
@@ -625,15 +625,15 @@ export function ConsolePage(props: {
             </>
           }
         />
-        <main className="mx-auto flex min-h-[calc(100vh-73px)] w-full max-w-md items-center px-4 py-10">
-          <Card className="w-full rounded-3xl">
-            <CardHeader className="pb-4">
+        <main className="mx-auto flex min-h-[calc(100vh-57px)] w-full max-w-md items-center px-4 py-6">
+          <Card className="w-full rounded-xl">
+            <CardHeader className="pb-3">
               <CardTitle>{t("console.access_denied.title")}</CardTitle>
               <CardDescription>
                 {t("console.access_denied.description")}
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <Alert>
                 <AlertDescription>
                   {t("console.access_denied.current_role", {
@@ -668,7 +668,7 @@ export function ConsolePage(props: {
             theme={props.theme}
             themeMode={props.themeMode}
             onThemeModeChange={props.onThemeModeChange}
-            containerClassName="flex w-full flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4 lg:px-8 xl:px-10"
+            containerClassName="flex w-full flex-col gap-2 px-4 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-2.5 lg:px-8 xl:px-10"
             title={`${SITE_NAME} · ${consoleLabel}`}
             onTitleClick={props.onNavigateHome}
             afterControls={
@@ -693,12 +693,12 @@ export function ConsolePage(props: {
             }
           />
           <div className="bg-background">
-            <div className="flex w-full gap-4 px-4 pb-8 pt-4 sm:px-6 lg:gap-6 lg:px-8 xl:px-10">
-              <Sidebar className="md:sticky md:top-[73px] md:h-[calc(100svh-89px)] md:w-72 xl:w-[19rem]">
+            <div className="flex w-full gap-3 px-4 pb-5 pt-3 sm:px-6 lg:gap-4 lg:px-8 xl:px-10">
+              <Sidebar className="md:sticky md:top-[57px] md:h-[calc(100svh-69px)] md:w-64 xl:w-72">
                 {sidebar}
               </Sidebar>
 
-              <SidebarInset className="flex flex-1 flex-col gap-4 pl-0">
+              <SidebarInset className="flex flex-1 flex-col gap-3 pl-0">
                 <div className="flex items-center justify-between md:hidden">
                   <SidebarTrigger>{activeTabLabel}</SidebarTrigger>
                 </div>

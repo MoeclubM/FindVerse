@@ -275,7 +275,7 @@ export function ConsoleWorkers() {
     <PanelSection
       title={t("console.workers.title")}
       meta={t("console.workers.registered", { count: crawlers.length })}
-      contentClassName="space-y-4"
+      contentClassName="space-y-3"
     >
       <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         {t("console.workers.platform_version_hint", {
@@ -388,7 +388,7 @@ export function ConsoleWorkers() {
           </Table>
         </div>
       ) : (
-        <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
           {t("console.workers.no_workers")}
         </div>
       )}
@@ -434,7 +434,7 @@ export function ConsoleWorkers() {
         }
       >
         {selectedCrawler ? (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {editingId === selectedCrawler.id ? (
               <div className="grid gap-3 rounded-lg border border-border bg-muted/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
                 <div className="grid gap-2">

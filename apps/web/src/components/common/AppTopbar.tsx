@@ -12,7 +12,7 @@ export function TopbarBadge(props: {
   return (
     <Badge
       variant="outline"
-      className="h-9 rounded-full px-3 text-xs font-medium uppercase tracking-[0.12em] sm:h-10"
+      className="h-8 rounded-full px-2.5 text-[11px] font-medium uppercase tracking-[0.12em]"
     >
       {props.children}
     </Badge>
@@ -32,7 +32,7 @@ export function TopbarActionButton(props: {
       type="button"
       variant="outline"
       className={cn(
-        "h-9 rounded-full px-2.5 sm:h-10 sm:px-3",
+        "h-8 rounded-full px-2.5",
         props.compactOnMobile && "sm:gap-1.5",
       )}
       onClick={props.onClick}
@@ -65,17 +65,17 @@ export function AppTopbar(props: {
   const titleBlock = (
     <div className="flex min-w-0 items-center gap-2 sm:items-baseline">
       {props.title ? (
-        <div className="truncate text-base font-semibold tracking-[-0.04em] sm:text-[1.1rem]">
+        <div className="truncate text-sm font-semibold tracking-tight sm:text-base">
           {props.title}
         </div>
       ) : null}
       {props.subtitle ? (
-        <div className={`truncate text-xs sm:text-sm ${subtitleTone}`}>{props.subtitle}</div>
+        <div className={`truncate text-xs ${subtitleTone}`}>{props.subtitle}</div>
       ) : null}
     </div>
   );
   const controlsClassName = cn(
-    "flex max-w-full items-center gap-2 self-start pb-1 sm:self-auto sm:pb-0",
+    "flex max-w-full items-center gap-1.5 self-start pb-1 sm:self-auto sm:pb-0",
     "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
     hasHeading
       ? "w-full overflow-x-auto sm:w-auto sm:flex-wrap sm:justify-end sm:overflow-visible"
@@ -87,7 +87,7 @@ export function AppTopbar(props: {
       <div
         className={
           props.containerClassName ??
-          "mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4 lg:px-8"
+          "mx-auto flex w-full max-w-7xl flex-col gap-2 px-4 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-2.5 lg:px-8"
         }
       >
         {hasHeading ? (

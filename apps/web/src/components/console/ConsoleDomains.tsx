@@ -223,11 +223,11 @@ export function ConsoleDomains() {
   const blacklistDirty = blacklistDomains.join("\n") !== savedBlacklistDomains.join("\n");
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PanelSection
         title={t("console.domains.title")}
         meta={t("console.domains.meta")}
-        contentClassName="space-y-5"
+        contentClassName="space-y-3"
       >
         <form className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]" onSubmit={handleAnalyze}>
           <FieldShell label={t("console.domains.query_label")}>
@@ -272,18 +272,18 @@ export function ConsoleDomains() {
               ]}
             />
 
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
-              <div className="grid gap-4">
-                <Card className="rounded-2xl shadow-none">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-base">{t("dev_portal.site_console.recent_indexed_pages.title")}</CardTitle>
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
+              <div className="grid gap-3">
+                <Card className="rounded-lg shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">{t("dev_portal.site_console.recent_indexed_pages.title")}</CardTitle>
                   </CardHeader>
                   <CardContent className="grid gap-3">
                     {insight.recent_documents.length ? (
                       insight.recent_documents.map((document) => (
-                        <Card key={document.id} className="rounded-2xl bg-muted/30 shadow-none">
-                          <CardContent className="grid gap-3 p-4">
-                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <Card key={document.id} className="rounded-lg bg-muted/30 shadow-none">
+                          <CardContent className="grid gap-2 p-3">
+                            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                               <a
                                 href={document.url}
                                 target="_blank"
@@ -305,23 +305,23 @@ export function ConsoleDomains() {
                         </Card>
                       ))
                     ) : (
-                      <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                      <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
                         {t("dev_portal.site_console.recent_indexed_pages.empty")}
                       </div>
                     )}
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-2xl shadow-none">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-base">{t("dev_portal.site_console.recent_crawl_activity.title")}</CardTitle>
+                <Card className="rounded-lg shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">{t("dev_portal.site_console.recent_crawl_activity.title")}</CardTitle>
                   </CardHeader>
                   <CardContent className="grid gap-3">
                     {insight.recent_jobs.length ? (
                       insight.recent_jobs.map((job) => (
-                        <Card key={job.id} className="rounded-2xl bg-muted/30 shadow-none">
-                          <CardContent className="grid gap-3 p-4">
-                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <Card key={job.id} className="rounded-lg bg-muted/30 shadow-none">
+                          <CardContent className="grid gap-2 p-3">
+                            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                               <a
                                 href={job.url}
                                 target="_blank"
@@ -358,7 +358,7 @@ export function ConsoleDomains() {
                         </Card>
                       ))
                     ) : (
-                      <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+                      <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
                         {t("dev_portal.site_console.recent_crawl_activity.empty")}
                       </div>
                     )}
@@ -366,13 +366,13 @@ export function ConsoleDomains() {
                 </Card>
               </div>
 
-              <div className="grid gap-4">
-                <Card className="rounded-2xl shadow-none">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-base">{t("console.domains.blacklist_title")}</CardTitle>
+              <div className="grid gap-3">
+                <Card className="rounded-lg shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">{t("console.domains.blacklist_title")}</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  <CardContent className="space-y-3">
+                    <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                       {t("console.domains.blacklist_meta")}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -405,12 +405,12 @@ export function ConsoleDomains() {
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-2xl shadow-none">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-base">{t("console.domains.seed_title")}</CardTitle>
+                <Card className="rounded-lg shadow-none">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">{t("console.domains.seed_title")}</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    <form className="grid gap-4" onSubmit={handleSeed}>
+                  <CardContent className="space-y-3">
+                    <form className="grid gap-3" onSubmit={handleSeed}>
                       <FieldShell label={t("dev_portal.site_console.submit_urls.property")}>
                         <Input
                           value={submitDomain}
@@ -450,7 +450,7 @@ export function ConsoleDomains() {
                           placeholder={t("dev_portal.site_console.submit_urls.url_list_placeholder")}
                         />
                       </FieldShell>
-                      <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="grid gap-3 sm:grid-cols-2">
                         <FieldShell label={t("dev_portal.site_console.submit_urls.crawl_depth")}>
                           <Input
                             type="number"
@@ -500,7 +500,7 @@ export function ConsoleDomains() {
                           />
                         </FieldShell>
                       </div>
-                      <label className="flex items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+                      <label className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
                         <Checkbox checked={submitRevisit} onCheckedChange={(checked) => setSubmitRevisit(checked === true)} />
                         <span>{t("dev_portal.site_console.submit_urls.allow_revisit")}</span>
                       </label>
@@ -514,7 +514,7 @@ export function ConsoleDomains() {
             </div>
           </>
         ) : (
-          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
+          <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-5 text-center text-sm text-muted-foreground">
             {t("console.domains.empty")}
           </div>
         )}

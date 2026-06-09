@@ -251,7 +251,7 @@ export function ConsoleJobs() {
       <PanelSection
         title={t("console.jobs.status_title")}
         meta={t("console.jobs.visible_jobs", { count: jobs?.total ?? 0 })}
-        contentClassName="space-y-4"
+        contentClassName="space-y-3"
       >
         <StatStrip
           items={[
@@ -311,9 +311,9 @@ export function ConsoleJobs() {
             </Button>
           </div>
         }
-        contentClassName="space-y-4"
+        contentClassName="space-y-3"
       >
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
           <Table className="table-fixed">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -526,31 +526,31 @@ export function ConsoleJobs() {
         onClose={() => setSelectedJobId(null)}
       >
         {selectedJob ? (
-          <div className="grid gap-4">
+          <div className="grid gap-3">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.status")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {getConsoleJobStatusLabel(t, selectedJob.status)}
                 </strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.http_status")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.http_status ?? "-"}</strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.attempts")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {selectedJob.attempt_count} / {selectedJob.max_attempts}
                 </strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.depth")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {selectedJob.depth} / {selectedJob.max_depth}
                 </strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.worker")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {selectedWorkerName ?? selectedJob.claimed_by ?? "-"}
@@ -561,7 +561,7 @@ export function ConsoleJobs() {
                   </span>
                 ) : null}
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.rule")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {selectedRuleLabel ?? "-"}
@@ -570,7 +570,7 @@ export function ConsoleJobs() {
                   <span className="mt-2 block text-xs text-muted-foreground">{selectedJob.rule_id}</span>
                 ) : null}
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.site_profile")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {selectedSiteProfileLabel ?? "-"}
@@ -581,22 +581,22 @@ export function ConsoleJobs() {
                   </span>
                 ) : null}
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.discovered")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.discovered_urls_count}</strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.retry_after")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {formatRetryTimestamp(selectedJob.status, selectedJob.next_retry_at)}
                 </strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.finished")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{formatTimestamp(selectedJob.finished_at)}</strong>
               </div>
             </div>
-            <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-4">
+            <div className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.url")}</span>
                 <Button type="button" variant="outline" size="sm" onClick={() => void handleCopy(selectedJob.url)}>
@@ -606,7 +606,7 @@ export function ConsoleJobs() {
               <code className="max-w-full break-all text-xs">{selectedJob.url}</code>
             </div>
             {selectedJob.final_url ? (
-              <div className="grid gap-3 rounded-xl border border-border bg-muted/30 p-4">
+              <div className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.final_url")}</span>
                   <Button
@@ -622,15 +622,15 @@ export function ConsoleJobs() {
               </div>
             ) : null}
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.content_type")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.content_type ?? "-"}</strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.document_id")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">{selectedJob.accepted_document_id ?? "-"}</strong>
               </div>
-              <div className="rounded-xl border border-border bg-muted/40 p-4">
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
                 <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.render_mode")}</span>
                 <strong className="mt-2 block text-sm font-semibold text-foreground">
                   {selectedJob.render_mode === "browser"
@@ -640,7 +640,7 @@ export function ConsoleJobs() {
               </div>
             </div>
             {selectedJob.failure_kind || selectedJob.failure_message ? (
-              <div className="grid gap-2 rounded-xl border border-border bg-muted/30 p-4">
+              <div className="grid gap-2 rounded-lg border border-border bg-muted/30 p-3">
                 <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{t("console.jobs.failure")}</span>
                 <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                   {[selectedJob.failure_kind, selectedJob.failure_message].filter(Boolean).join(" · ")}

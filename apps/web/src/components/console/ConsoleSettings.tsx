@@ -252,11 +252,11 @@ export function ConsoleSettings() {
 
   if (loading) {
     return (
-      <div className="grid gap-4">
-        <div className="rounded-2xl border border-border p-6">
-          <div className="grid gap-5">
+      <div className="grid gap-3">
+        <div className="rounded-lg border border-border p-3">
+          <div className="grid gap-3">
             <Skeleton className="h-5 w-56" />
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
               <Skeleton className="h-10 rounded-lg" />
               <Skeleton className="h-10 rounded-lg" />
               <Skeleton className="h-10 rounded-lg" />
@@ -275,11 +275,11 @@ export function ConsoleSettings() {
             </div>
           </div>
         </div>
-        <div className="rounded-2xl border border-border p-6">
-          <div className="grid gap-5">
+        <div className="rounded-lg border border-border p-3">
+          <div className="grid gap-3">
             <Skeleton className="h-5 w-40" />
             <Skeleton className="h-12 rounded-xl" />
-            <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
               <Skeleton className="h-10 rounded-lg" />
               <Skeleton className="h-8 w-24 rounded-lg" />
             </div>
@@ -290,12 +290,12 @@ export function ConsoleSettings() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PanelSection
         title={t("console.settings.crawler_config_section")}
-        contentClassName="space-y-5"
+        contentClassName="space-y-3"
       >
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] xl:items-end">
           <FieldShell className="lg:col-span-1" label={t("console.settings.auth_key_label")}>
             <Input
               value={crawlerAuthKey}
@@ -340,35 +340,35 @@ export function ConsoleSettings() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-6">
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Shield className="size-4" />{t("console.settings.summary.auth")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.auth_key_label")}</p>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.total")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{nextWorkerConcurrency}</p>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.render")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{nextJsRenderConcurrency}</p>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.max_jobs")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{nextMaxJobs}</p>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.claim")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.claim_timeout_label")}</p>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Waypoints className="size-4" />{t("console.settings.summary.retry")}</div>
             <p className="mt-2 text-sm text-muted-foreground">{t("console.settings.max_attempts_label")}</p>
           </div>
         </div>
 
         {installCommand ? (
-          <div className="rounded-2xl border border-border bg-foreground p-4 text-background shadow-sm">
-            <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="rounded-lg border border-border bg-foreground p-3 text-background shadow-sm">
+            <div className="mb-2 flex items-center justify-between gap-2">
               <div>
                 <p className="text-sm font-medium">{t("console.workers.setup_hint")}</p>
                 <p className="text-xs text-background/70">{installServer}</p>
@@ -383,8 +383,8 @@ export function ConsoleSettings() {
         ) : null}
       </PanelSection>
 
-      <PanelSection title={t("console.settings.site_rules_section")} contentClassName="space-y-5">
-        <div className="rounded-xl border border-border bg-muted/40 p-4">
+      <PanelSection title={t("console.settings.site_rules_section")} contentClassName="space-y-3">
+        <div className="rounded-lg border border-border bg-muted/40 p-3">
           <div className="flex flex-col gap-1">
             <p className="text-sm text-foreground">{t("console.settings.site_rules_help")}</p>
             <p className="text-xs text-muted-foreground">{t("console.settings.site_rules_reset_hint")}</p>
@@ -393,25 +393,25 @@ export function ConsoleSettings() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex flex-col gap-1">
               <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_platforms_label")}</span>
               <span className="text-sm text-muted-foreground">{siteRulesSummary.platforms}</span>
             </div>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex flex-col gap-1">
               <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_presets_label")}</span>
               <span className="text-sm text-muted-foreground">{siteRulesSummary.platformPresets}</span>
             </div>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex flex-col gap-1">
               <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_sites_label")}</span>
               <span className="text-sm text-muted-foreground">{siteRulesSummary.sites}</span>
             </div>
           </div>
-          <div className="rounded-xl border border-border bg-muted/40 p-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
             <div className="flex flex-col gap-1">
               <span className="text-sm font-medium text-foreground">{t("console.settings.site_rules_status_label")}</span>
               <span className="text-sm text-muted-foreground">
@@ -433,7 +433,7 @@ export function ConsoleSettings() {
         </FieldShell>
 
         {!siteRulesSummary.valid ? (
-          <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {t("console.settings.site_rules_invalid_json")}
           </div>
         ) : null}
@@ -451,12 +451,12 @@ export function ConsoleSettings() {
         </div>
       </PanelSection>
 
-      <PanelSection title={t("console.settings.tor_section")} contentClassName="space-y-5">
-        <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+      <PanelSection title={t("console.settings.tor_section")} contentClassName="space-y-3">
+        <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
           <span>{t("console.settings.tor_enabled_label")}</span>
           <Switch checked={torEnabled} onCheckedChange={setTorEnabled} />
         </label>
-        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
           <FieldShell className="lg:col-span-1" label={t("console.settings.tor_proxy_url_label")}>
             <Input
               value={torProxyUrl}
